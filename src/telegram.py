@@ -37,7 +37,7 @@ def send_message(
     else:
         print(msg)
 
-chat_id = "-4763317398"
+chat_id = "-4763317398" 
 send_message("ok nice", chat_id=chat_id, token = TOKEN)
 
 # Handle '/start' and '/help'
