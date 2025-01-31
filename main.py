@@ -121,3 +121,45 @@ while True:
         authorized = mt5.login(login = account, password = password, server = server)    
 
         break
+
+                            ####### ENTRY SHORT #######
+    elif (
+        cross_macd_line_signal_line["down"]
+        and first_stoch["k"][-1] > 80
+        and second_stoch["k"][-1] > 50
+        and cross_close_price_ma_short["low"]
+        and cross_close_price_ma_long["low"] 
+        ):
+        print("Match Condition")
+        # DEFINE REQUEST
+        sell_price = mt5.symbol_info_tick(SYMBOL).bid
+        buy_price = mt5.symbol_info_tick(SYMBOL).ask
+        request = {
+            'action': mt5.TRADE_ACTION_DEAL,
+            'symbol': SYMBOL,
+            'price': sell_price,
+            'sl': sell_price*(1 + STOP_LOSS),
+            'tp': sell_price*(1 - TAKE_PROFIT),
+            'deviation': DEVIATION,
+            'type': mt5.ORDER_TYPE_SELL,
+            'volume': LOT,
+            'type_time': mt5.ORDER_TIME_GTC,
+            'type_filling': mt5.ORDER_FILLING_IOC,
+            'comment': 'Py Sell Position'
+        }
+        authorized = mt5.login(login = account, password = password, server = server)
+        print(authorized)
+        result = mt5.order_send(request)
+        if result._asdict()['order'] == 0:
+            error = result._asdict()['comment']
+            print(f'Fail to order due to {error}')
+            dt_object = datetime.fromtimestamp(time.time())
+            print("Time ", dt_object)
+            continue        
+           
+        print('SELL SUCCESSFULLY')
+        dt_object = datetime.fromtimestamp(time.time())
+        print("Time ", dt_object)
+        authorized = mt5.login(login = account, password = password, server = server)    
+
+        break
