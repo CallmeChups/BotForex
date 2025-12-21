@@ -1,1 +1,8 @@
 *.txt
+!requirements.txt
+
+# Ensure Python compiled caches are included in the repo
+!*.pyc
+!**/*.pyc
+!__pycache__/
+!**/__pycache__/

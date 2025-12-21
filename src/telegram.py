@@ -2,7 +2,7 @@ import telebot
 import requests
 import time
 
-TOKEN = "7660136616:AAGysIhUH2JVpBFZd6-o9rjvXZGwcEm9KxU"
+TOKEN = "7363572293:AAHd595bWg7liBafg8qEmasPh8Zx1I2crWo"
 url = f"https://api.telegram.org/bot{TOKEN}"
 bot = telebot.TeleBot(TOKEN)
 
@@ -37,7 +37,7 @@ def send_message(
     else:
         print(msg)
 
-chat_id = "-4763317398" 
+chat_id = "-4870191713" 
 send_message("ok nice", chat_id=chat_id, token = TOKEN)
 
 # Handle '/start' and '/help'
@@ -53,7 +53,6 @@ send_message("ok nice", chat_id=chat_id, token = TOKEN)
 # # @bot.message_handler(func=lambda message: True)
 # # def echo_message(message):
 # #     bot.reply_to(message, message.text)
-
 
 # bot.infinity_polling()
 
