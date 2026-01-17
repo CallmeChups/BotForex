@@ -1,56 +1,87 @@
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from src.calculation import (
-    calculate_ma,
-    calculate_stoch,
-    calculate_macd,
-    check_cross_2_list_updated,
-)
-from icecream import ic
+from dotenv import load_dotenv
+import os
+import requests
 import MetaTrader5 as mt5
-import time
-import numpy as np
 import pandas as pd
+import time
+
+load_dotenv()
+
+######################################## %%%%% TELEGRAM %%%%% ########################################
+
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+TELEGRAM_ERROR_CHAT_ID = os.getenv("TELEGRAM_ERROR_CHAT_ID")
+
+def send_telegram(text: str, is_error: bool = False) -> bool:
+    chat_id = TELEGRAM_ERROR_CHAT_ID if is_error else TELEGRAM_CHAT_ID
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
+    response = requests.post(url, json=payload)
+    return response.ok
 
 ######################################## %%%%% CONNECT WITH MT5 %%%%% ########################################
 
-## Account Info ##
-# Real
-# account = 126787238
-# password = "Taptrade0412@"
-# server = "Exness-MT5Real7"
+account = int(os.getenv("MT5_LOGIN"))
+password = os.getenv("MT5_PASSWORD")
+server = os.getenv("MT5_SERVER")
 
-# Demo
-account = 415016785
-password = "Taptrade211225@"
-server = "Exness-MT5Trial14"
+if not mt5.initialize():
+    send_telegram("❌ MT5 initialization failed", is_error=True)
+    quit()
 
-mt5.initialize()
-ic(mt5.initialize())
-authorized = mt5.login(login=account, password=password, server=server)
-ic(authorized)
-ic(mt5.account_info()._asdict()['leverage'])
-ic(mt5.account_info()._asdict()['balance'])
+if not mt5.login(login=account, password=password, server=server):
+    send_telegram(f"❌ MT5 login failed: {mt5.last_error()}", is_error=True)
+    quit()
+
+account_info = mt5.account_info()._asdict()
+print(f"Connected: {account_info['name']} | Balance: {account_info['balance']} | Leverage: 1:{account_info['leverage']}")
 
 
 ######################################## %%%%% DEFINE VARIABLE %%%%% ########################################
 
-SYMBOL = "BTCUSDm"
+SYMBOL = "ETHUSDm"
 TRADE_FRAME = mt5.TIMEFRAME_M1
 timezone = ZoneInfo("Asia/Ho_Chi_Minh")
 
-n = 2
-
 ######################################## %%%%% GET DATA %%%%% ########################################
 
-date_to = datetime.now(tz=timezone)
-date_from = date_to - timedelta(weeks=1)
-short_data = pd.DataFrame(mt5.copy_rates_range(SYMBOL, TRADE_FRAME, date_from, date_to))
+while True:
+    date_to = datetime.now(tz=timezone)
+    date_from = date_to - timedelta(hours=1)  # Get last 1 hour of data
+    short_data = pd.DataFrame(mt5.copy_rates_range(SYMBOL, TRADE_FRAME, date_from, date_to))
 
-# Thêm cột real_time và chuyển đổi timestamp sang thời gian thực tế
-short_data['real_time'] = pd.to_datetime(short_data['time'], unit='s').dt.tz_localize('UTC').dt.tz_convert(timezone)
+    if short_data.empty:
+        send_telegram(f"❌ No data for {SYMBOL}", is_error=True)
+        mt5.shutdown()
+        quit()
 
-# Định dạng cột real_time (tùy chọn, nếu muốn hiển thị dạng cụ thể như YYYY-MM-DD HH:MM:SS)
-short_data['real_time'] = short_data['real_time'].dt.strftime('%Y-%m-%d %H:%M:%S')
+    # Convert timestamp to readable time
+    short_data['real_time'] = pd.to_datetime(short_data['time'], unit='s').dt.tz_localize('UTC').dt.tz_convert(timezone)
+    short_data['real_time'] = short_data['real_time'].dt.strftime('%Y-%m-%d %H:%M:%S')
+    print(short_data.tail())
+    time.sleep(1)
+######################################## %%%%% SEND TO TELEGRAM %%%%% ########################################
 
-print("short_data /n",short_data)
+# Get latest candle
+latest = short_data.iloc[-1]
+
+message = f"""<b>📊 {SYMBOL} - M5 Data</b>
+
+<b>Time:</b> {latest['real_time']}
+<b>Open:</b> {latest['open']:.2f}
+<b>High:</b> {latest['high']:.2f}
+<b>Low:</b> {latest['low']:.2f}
+<b>Close:</b> {latest['close']:.2f}
+<b>Volume:</b> {int(latest['tick_volume'])}
+
+<i>Total candles fetched: {len(short_data)}</i>"""
+
+if send_telegram(message):
+    print("[OK] Data sent to Telegram")
+else:
+    print("[ERROR] Failed to send to Telegram")
+
+mt5.shutdown()

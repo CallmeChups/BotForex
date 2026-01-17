@@ -1,3 +1,7 @@
+# Environment variables (secrets)
+.env
+.env.*
+
 *.txt
 !requirements.txt
 
@@ -6,3 +10,7 @@
 !**/*.pyc
 !__pycache__/
 !**/__pycache__/
+/.claude
+/docs
+/plans
+CLAUDE.md
