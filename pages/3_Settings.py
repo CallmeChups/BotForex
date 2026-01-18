@@ -16,6 +16,10 @@ st.set_page_config(
     layout="wide",
 )
 
+# Auth check
+from src.auth import require_auth, is_admin, get_user_mt5_credentials, set_user_mt5_credentials, has_mt5_credentials
+username, name = require_auth()
+
 TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
 ENV_FILE = ".env"
 
@@ -23,107 +27,137 @@ ENV_FILE = ".env"
 def main():
     st.title("⚙️ Settings")
 
+    # Show admin status
+    if is_admin(username):
+        st.success(f"Logged in as Admin: {name}")
+    else:
+        st.info(f"Logged in as: {name}")
+
     now = datetime.now(TIMEZONE)
     st.markdown(f"**Current Time:** {now.strftime('%H:%M:%S %d/%m/%Y')} (HCM)")
 
     st.divider()
 
-    # MT5 Settings
-    st.subheader("🔗 MT5 Configuration")
+    # MT5 Settings - Per user
+    st.subheader("Your MT5 Account")
 
-    col1, col2 = st.columns(2)
+    # Get current user's MT5 credentials
+    user_mt5 = get_user_mt5_credentials(username)
 
-    with col1:
-        mt5_login = st.text_input(
-            "MT5 Login",
-            value=os.getenv("MT5_LOGIN", ""),
-            type="default"
-        )
-        mt5_server = st.text_input(
-            "MT5 Server",
-            value=os.getenv("MT5_SERVER", ""),
-        )
+    if has_mt5_credentials(username):
+        st.success("MT5 account configured")
+    else:
+        st.warning("MT5 account not configured. Please enter your credentials below.")
 
-    with col2:
-        mt5_password = st.text_input(
-            "MT5 Password",
-            value=os.getenv("MT5_PASSWORD", ""),
-            type="password"
-        )
-        symbol = st.text_input(
-            "Trading Symbol",
-            value=os.getenv("SYMBOL", "ETHUSDm"),
-            help="Use ETHUSDm for Standard account, ETHUSD for Pro/Raw"
-        )
+    with st.form("mt5_form"):
+        col1, col2 = st.columns(2)
 
-    st.divider()
+        with col1:
+            mt5_login = st.text_input(
+                "MT5 Login",
+                value=user_mt5.get('login', ''),
+                type="default",
+                placeholder="Your MT5 account number"
+            )
+            mt5_server = st.text_input(
+                "MT5 Server",
+                value=user_mt5.get('server', ''),
+                placeholder="e.g., Exness-MT5Trial8"
+            )
 
-    # Telegram Settings
-    st.subheader("📱 Telegram Configuration")
+        with col2:
+            mt5_password = st.text_input(
+                "MT5 Password",
+                value=user_mt5.get('password', ''),
+                type="password",
+                placeholder="Your MT5 password"
+            )
+            symbol = st.text_input(
+                "Trading Symbol",
+                value=os.getenv("SYMBOL", "ETHUSDm"),
+                help="Use ETHUSDm for Standard account, ETHUSD for Pro/Raw"
+            )
 
-    col1, col2 = st.columns(2)
-
-    with col1:
-        telegram_token = st.text_input(
-            "Bot Token",
-            value=os.getenv("TELEGRAM_BOT_TOKEN", ""),
-            type="password"
-        )
-        telegram_chat_id = st.text_input(
-            "Main Chat ID",
-            value=os.getenv("TELEGRAM_CHAT_ID", ""),
-            help="Main group for trade signals"
-        )
-
-    with col2:
-        telegram_error_chat_id = st.text_input(
-            "Error Chat ID",
-            value=os.getenv("TELEGRAM_ERROR_CHAT_ID", ""),
-            help="Group for error notifications"
-        )
-        telegram_test_chat_id = st.text_input(
-            "Test Chat ID",
-            value=os.getenv("TELEGRAM_TEST_CHAT_ID", ""),
-            help="Group for testing"
-        )
-
-    st.divider()
-
-    # Test connections
-    st.subheader("🔬 Test Connections")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        if st.button("🔗 Test MT5 Connection", use_container_width=True):
-            try:
-                import MetaTrader5 as mt5
-            except ImportError:
-                st.error("MT5 not available (Windows only)")
-                st.stop()
-
-            try:
-                if not mt5.initialize():
-                    st.error("MT5 initialization failed")
+        if st.form_submit_button("Save MT5 Credentials", type="primary", use_container_width=True):
+            if not mt5_login or not mt5_password or not mt5_server:
+                st.error("Please fill in all MT5 fields")
+            else:
+                success = set_user_mt5_credentials(username, mt5_login, mt5_password, mt5_server)
+                if success:
+                    st.success("MT5 credentials saved!")
+                    st.rerun()
                 else:
-                    login = int(os.getenv("MT5_LOGIN") or 0)
-                    password = os.getenv("MT5_PASSWORD")
-                    server = os.getenv("MT5_SERVER")
+                    st.error("Failed to save credentials")
 
-                    if not login or not password or not server:
-                        st.error("MT5 credentials not configured")
-                    elif mt5.login(login=login, password=password, server=server):
-                        account = mt5.account_info()._asdict()
-                        st.success(f"Connected! Balance: {account['balance']}")
-                        mt5.shutdown()
-                    else:
-                        st.error(f"Login failed: {mt5.last_error()}")
-                        mt5.shutdown()
-            except Exception as e:
-                st.error(f"Error: {e}")
+    st.divider()
 
-    with col2:
-        if st.button("📱 Test Telegram", use_container_width=True):
+    # Test MT5 connection
+    st.subheader("Test Connection")
+
+    if st.button("Test MT5 Connection", use_container_width=True):
+        try:
+            import MetaTrader5 as mt5
+        except ImportError:
+            st.error("MT5 not available (Windows only)")
+            st.stop()
+
+        # Use user's credentials
+        user_creds = get_user_mt5_credentials(username)
+
+        try:
+            if not mt5.initialize():
+                st.error("MT5 initialization failed")
+            else:
+                login = int(user_creds.get('login') or 0)
+                password = user_creds.get('password', '')
+                server = user_creds.get('server', '')
+
+                if not login or not password or not server:
+                    st.error("MT5 credentials not configured. Please save your credentials above.")
+                elif mt5.login(login=login, password=password, server=server):
+                    account = mt5.account_info()._asdict()
+                    st.success(f"Connected! Balance: ${account['balance']:,.2f}")
+                    mt5.shutdown()
+                else:
+                    st.error(f"Login failed: {mt5.last_error()}")
+                    mt5.shutdown()
+        except Exception as e:
+            st.error(f"Error: {e}")
+
+    # Admin-only sections
+    if is_admin(username):
+        st.divider()
+
+        # Telegram Settings (Admin only)
+        st.subheader("Telegram Configuration (Admin)")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            telegram_token = st.text_input(
+                "Bot Token",
+                value=os.getenv("TELEGRAM_BOT_TOKEN", ""),
+                type="password"
+            )
+            telegram_chat_id = st.text_input(
+                "Main Chat ID",
+                value=os.getenv("TELEGRAM_CHAT_ID", ""),
+                help="Main group for trade signals"
+            )
+
+        with col2:
+            telegram_error_chat_id = st.text_input(
+                "Error Chat ID",
+                value=os.getenv("TELEGRAM_ERROR_CHAT_ID", ""),
+                help="Group for error notifications"
+            )
+            telegram_test_chat_id = st.text_input(
+                "Test Chat ID",
+                value=os.getenv("TELEGRAM_TEST_CHAT_ID", ""),
+                help="Group for testing"
+            )
+
+        if st.button("Test Telegram", use_container_width=True):
             try:
                 import requests
 
@@ -133,7 +167,7 @@ def main():
                 url = f"https://api.telegram.org/bot{token}/sendMessage"
                 payload = {
                     "chat_id": chat_id,
-                    "text": "🔔 Test from BotForex Settings",
+                    "text": "Test from BotForex Settings",
                     "parse_mode": "HTML"
                 }
                 response = requests.post(url, json=payload)
@@ -145,18 +179,13 @@ def main():
             except Exception as e:
                 st.error(f"Error: {e}")
 
-    st.divider()
+        st.divider()
 
-    # Current .env display (read-only)
-    st.subheader("📄 Current Configuration")
+        # Current .env display (Admin only)
+        st.subheader("System Configuration")
 
-    with st.expander("View .env (masked)"):
-        st.code(f"""
-# MT5 Configuration
-MT5_LOGIN={os.getenv('MT5_LOGIN', '')}
-MT5_PASSWORD=********
-MT5_SERVER={os.getenv('MT5_SERVER', '')}
-
+        with st.expander("View .env (masked)"):
+            st.code(f"""
 # Trading
 SYMBOL={os.getenv('SYMBOL', '')}
 
@@ -165,20 +194,15 @@ TELEGRAM_BOT_TOKEN=********
 TELEGRAM_CHAT_ID={os.getenv('TELEGRAM_CHAT_ID', '')}
 TELEGRAM_ERROR_CHAT_ID={os.getenv('TELEGRAM_ERROR_CHAT_ID', '')}
 TELEGRAM_TEST_CHAT_ID={os.getenv('TELEGRAM_TEST_CHAT_ID', '')}
-        """)
+            """)
 
     st.divider()
 
     # Info
-    st.subheader("ℹ️ Information")
+    st.subheader("Information")
 
     st.markdown("""
-    **Note:** To change settings permanently, edit the `.env` file directly.
-
-    **File locations:**
-    - `.env` - Environment variables
-    - `data/signals.csv` - Signal history
-    - `.streamlit/config.toml` - Streamlit theme
+    **MT5 Account:** Each user has their own MT5 credentials.
 
     **Account Types:**
     - Standard account: Use symbols with `m` suffix (ETHUSDm, BTCUSDm)

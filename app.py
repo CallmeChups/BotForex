@@ -11,29 +11,67 @@ import os
 
 load_dotenv()
 
-# Page config
+# Page config - MUST be first Streamlit command
 st.set_page_config(
     page_icon="📈",
     page_title="BotForex Dashboard",
     layout="wide",
 )
 
+# Import auth after page config
+from src.auth import get_authenticator, check_auth, get_user_role, is_admin
+
 TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
 SYMBOL = os.getenv("SYMBOL", "ETHUSDm")
 
 
-def get_status_color(status: str) -> str:
-    """Return color based on status"""
-    colors = {
-        "RUNNING": "🟢",
-        "STOPPED": "🔴",
-        "WAITING": "🟡",
-    }
-    return colors.get(status, "⚪")
+def show_login_page():
+    """Show login page"""
+    st.title("📈 BotForex")
+    st.subheader("Login to Dashboard")
+
+    authenticator, config = get_authenticator()
+
+    # Login form
+    authenticator.login(location='main')
+
+    auth_status = st.session_state.get('authentication_status')
+
+    if auth_status == False:
+        st.error("Username/password is incorrect")
+    elif auth_status == None:
+        st.info("Please enter your username and password")
+
+        # Show default credentials for testing
+        with st.expander("Demo Credentials"):
+            st.code("""
+Admin:
+  Username: admin
+  Password: admin123
+
+User:
+  Username: user
+  Password: user123
+            """)
 
 
-def main():
-    # Header
+def show_dashboard():
+    """Show main dashboard after login"""
+    authenticator, config = get_authenticator()
+
+    # Sidebar with user info and logout
+    with st.sidebar:
+        st.markdown(f"### Welcome, {st.session_state['name']}!")
+
+        username = st.session_state['username']
+        role = get_user_role(username)
+        st.caption(f"Role: {role.upper()}")
+
+        st.divider()
+
+        authenticator.logout("Logout", "sidebar")
+
+    # Main content
     st.title("📈 BotForex Dashboard")
     st.caption(f"Master Candle Strategy | {SYMBOL} | M5")
 
@@ -102,7 +140,6 @@ def main():
     # Recent signals placeholder
     st.subheader("📊 Recent Signals")
 
-    # Placeholder data - will be replaced with real data later
     signals_data = {
         "Time": ["--"],
         "Direction": ["--"],
@@ -156,6 +193,16 @@ def main():
     # Footer
     st.divider()
     st.caption("BotForex v0.1.0 | Master Candle Strategy")
+
+
+def main():
+    """Main entry point"""
+    auth_status, username, name = check_auth()
+
+    if auth_status:
+        show_dashboard()
+    else:
+        show_login_page()
 
 
 if __name__ == "__main__":

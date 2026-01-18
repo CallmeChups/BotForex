@@ -17,6 +17,10 @@ st.set_page_config(
     layout="wide",
 )
 
+# Auth check
+from src.auth import require_auth
+username, name = require_auth()
+
 TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
 SYMBOL = os.getenv("SYMBOL", "ETHUSDm")
 SL_PIPS = 30

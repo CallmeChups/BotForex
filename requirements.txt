@@ -1,7 +1,9 @@
-# MetaTrader5  # Windows only - comment out for cloud deployment
+MetaTrader5
 python-telegram-bot
 streamlit
+streamlit-authenticator
 pyyaml
 pandas
 python-dotenv
 requests
+bcrypt

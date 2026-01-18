@@ -1,0 +1,50 @@
+id: master_candle
+name: Master Candle Strategy
+version: "1.0"
+description: |
+  Daily M5 candle strategy at 21:05 HCM timezone.
+  Entry based on candle direction (bullish=BUY, bearish=SELL).
+  TP is price-based (immediate), SL is close-based (delayed).
+  Time limit of 7 candles (~35 min) if neither TP nor SL hit.
+author: admin
+created: "2025-01-18"
+enabled: true
+
+# Entry configuration
+entry:
+  timeframe: M5
+  time: "21:05"
+  timezone: Asia/Ho_Chi_Minh
+  rules:
+    bullish: "close > open -> BUY"
+    bearish: "close < open -> SELL"
+    doji: "close == open -> SKIP"
+
+# Exit configuration
+exit:
+  tp:
+    type: price_based
+    description: "Immediate exit when price touches TP level"
+    formula: "entry + (risk * rr_ratio) for BUY, entry - (risk * rr_ratio) for SELL"
+  sl:
+    type: close_based
+    description: "Exit only when candle CLOSES beyond SL level"
+    formula: "low - sl_pips for BUY, high + sl_pips for SELL"
+  time_limit:
+    enabled: true
+    max_candles: 7
+    description: "Close position after 7 M5 candles if no TP/SL"
+
+# Default parameters
+parameters:
+  sl_pips: 30
+  rr_ratio: 2.0
+  lot_size: 0.01
+
+# Supported symbols
+symbols:
+  - ETHUSDm
+  - BTCUSDm
+  - XAUUSDm
+  - ETHUSD
+  - BTCUSD

@@ -1,0 +1,323 @@
+"""
+Bot Manager Module
+
+Start, stop, and list trading bot processes.
+Works on Windows (subprocess) and Linux (nohup).
+"""
+
+import os
+import sys
+import subprocess
+import json
+import signal
+from datetime import datetime
+from zoneinfo import ZoneInfo
+from typing import Optional
+import platform
+
+TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
+BOTS_FILE = "data/running_bots.json"
+BOT_SCRIPT = "src/bot_runner.py"
+
+
+def get_bots_file() -> str:
+    """Get bots file path"""
+    os.makedirs("data", exist_ok=True)
+    return BOTS_FILE
+
+
+def load_bots() -> list:
+    """Load running bots from file"""
+    bots_file = get_bots_file()
+    if os.path.exists(bots_file):
+        try:
+            with open(bots_file, 'r') as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+
+def save_bots(bots: list):
+    """Save bots to file"""
+    bots_file = get_bots_file()
+    with open(bots_file, 'w') as f:
+        json.dump(bots, f, indent=2)
+
+
+def is_process_running(pid: int) -> bool:
+    """Check if process is running"""
+    if platform.system() == "Windows":
+        try:
+            # Use tasklist on Windows
+            output = subprocess.check_output(
+                f'tasklist /FI "PID eq {pid}"',
+                shell=True,
+                stderr=subprocess.DEVNULL
+            ).decode()
+            return str(pid) in output
+        except Exception:
+            return False
+    else:
+        # Unix: check /proc
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
+
+def start_bot(
+    strategy: str,
+    symbol: str,
+    user: str,
+    test: bool = True,
+    lot_size: float = None,
+    sl_pips: float = None,
+    rr_ratio: float = None,
+    max_candles: int = None,
+    interval: int = 60
+) -> tuple:
+    """
+    Start a new bot process
+
+    Returns:
+        (success, message, bot_info)
+    """
+    # Check for duplicate
+    bots = load_bots()
+    for bot in bots:
+        if (bot['strategy'] == strategy and
+            bot['symbol'] == symbol and
+            bot['user'] == user and
+            is_process_running(bot['pid'])):
+            return False, f"Bot already running for {strategy}/{symbol}/{user}", None
+
+    # Build command
+    python_exe = sys.executable
+    script_path = os.path.abspath(BOT_SCRIPT)
+
+    cmd = [
+        python_exe,
+        script_path,
+        "--strategy", strategy,
+        "--symbol", symbol,
+        "--user", user,
+        "--test", "1" if test else "0",
+        "--interval", str(interval)
+    ]
+
+    if lot_size:
+        cmd.extend(["--lot_size", str(lot_size)])
+    if sl_pips:
+        cmd.extend(["--sl_pips", str(sl_pips)])
+    if rr_ratio:
+        cmd.extend(["--rr_ratio", str(rr_ratio)])
+    if max_candles:
+        cmd.extend(["--max_candles", str(max_candles)])
+
+    try:
+        # Start process
+        if platform.system() == "Windows":
+            # Windows: use CREATE_NEW_PROCESS_GROUP
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+            )
+        else:
+            # Unix: use nohup-like behavior
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True
+            )
+
+        pid = process.pid
+
+        # Save bot info
+        bot_info = {
+            'id': f"{strategy}_{symbol}_{user}_{pid}",
+            'pid': pid,
+            'strategy': strategy,
+            'symbol': symbol,
+            'user': user,
+            'test': test,
+            'lot_size': lot_size,
+            'sl_pips': sl_pips,
+            'rr_ratio': rr_ratio,
+            'max_candles': max_candles,
+            'interval': interval,
+            'started_at': datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M:%S'),
+            'command': ' '.join(cmd)
+        }
+
+        bots.append(bot_info)
+        save_bots(bots)
+
+        return True, f"Bot started with PID {pid}", bot_info
+
+    except Exception as e:
+        return False, str(e), None
+
+
+def stop_bot(pid: int) -> tuple:
+    """
+    Stop a bot by PID
+
+    Returns:
+        (success, message)
+    """
+    if not is_process_running(pid):
+        # Remove from list anyway
+        bots = load_bots()
+        bots = [b for b in bots if b['pid'] != pid]
+        save_bots(bots)
+        return True, f"Process {pid} not running (removed from list)"
+
+    try:
+        if platform.system() == "Windows":
+            # Windows: use taskkill
+            subprocess.run(
+                f'taskkill /PID {pid} /F',
+                shell=True,
+                check=True,
+                capture_output=True
+            )
+        else:
+            # Unix: send SIGTERM
+            os.kill(pid, signal.SIGTERM)
+
+        # Remove from list
+        bots = load_bots()
+        bots = [b for b in bots if b['pid'] != pid]
+        save_bots(bots)
+
+        return True, f"Bot stopped (PID {pid})"
+
+    except Exception as e:
+        return False, str(e)
+
+
+def stop_all_bots(user: str = None) -> tuple:
+    """
+    Stop all bots (optionally filtered by user)
+
+    Returns:
+        (stopped_count, message)
+    """
+    bots = load_bots()
+    stopped = 0
+    errors = []
+
+    for bot in bots:
+        if user and bot['user'] != user:
+            continue
+
+        success, msg = stop_bot(bot['pid'])
+        if success:
+            stopped += 1
+        else:
+            errors.append(msg)
+
+    if errors:
+        return stopped, f"Stopped {stopped}, Errors: {'; '.join(errors)}"
+    return stopped, f"Stopped {stopped} bot(s)"
+
+
+def list_bots(user: str = None, refresh: bool = True) -> list:
+    """
+    List running bots
+
+    Args:
+        user: Filter by user (None = all)
+        refresh: Check if processes are still running
+
+    Returns:
+        List of bot info dicts
+    """
+    bots = load_bots()
+
+    if refresh:
+        # Filter out dead processes
+        alive_bots = []
+        for bot in bots:
+            if is_process_running(bot['pid']):
+                bot['status'] = 'running'
+                alive_bots.append(bot)
+            else:
+                bot['status'] = 'stopped'
+                # Optionally keep stopped bots for history
+                # alive_bots.append(bot)
+
+        # Update file with only alive bots
+        save_bots(alive_bots)
+        bots = alive_bots
+
+    # Filter by user
+    if user:
+        bots = [b for b in bots if b['user'] == user]
+
+    return bots
+
+
+def get_bot(pid: int) -> Optional[dict]:
+    """Get bot info by PID"""
+    bots = load_bots()
+    for bot in bots:
+        if bot['pid'] == pid:
+            bot['status'] = 'running' if is_process_running(pid) else 'stopped'
+            return bot
+    return None
+
+
+def restart_bot(pid: int) -> tuple:
+    """
+    Restart a bot
+
+    Returns:
+        (success, message, new_bot_info)
+    """
+    bot = get_bot(pid)
+    if not bot:
+        return False, f"Bot not found: {pid}", None
+
+    # Stop the bot
+    stop_bot(pid)
+
+    # Start with same parameters
+    return start_bot(
+        strategy=bot['strategy'],
+        symbol=bot['symbol'],
+        user=bot['user'],
+        test=bot.get('test', True),
+        lot_size=bot.get('lot_size'),
+        sl_pips=bot.get('sl_pips'),
+        rr_ratio=bot.get('rr_ratio'),
+        max_candles=bot.get('max_candles'),
+        interval=bot.get('interval', 60)
+    )
+
+
+def get_bot_stats() -> dict:
+    """Get bot statistics"""
+    bots = list_bots(refresh=True)
+
+    total = len(bots)
+    test_mode = len([b for b in bots if b.get('test', True)])
+    live_mode = total - test_mode
+
+    strategies = set(b['strategy'] for b in bots)
+    symbols = set(b['symbol'] for b in bots)
+    users = set(b['user'] for b in bots)
+
+    return {
+        'total': total,
+        'test_mode': test_mode,
+        'live_mode': live_mode,
+        'strategies': list(strategies),
+        'symbols': list(symbols),
+        'users': list(users)
+    }
