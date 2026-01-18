@@ -35,14 +35,29 @@ def get_pip_value(symbol: str) -> float:
     return 0.0001
 
 
+def is_mt5_available() -> bool:
+    """Check if MT5 is available (Windows only)"""
+    try:
+        import MetaTrader5
+        return True
+    except ImportError:
+        return False
+
+
 def run_simulation():
     """Run strategy simulation with MT5 data"""
     try:
         import MetaTrader5 as mt5
+    except ImportError:
+        return None, "MT5 not available (Windows only). Use local machine for live simulation."
 
-        account = int(os.getenv("MT5_LOGIN"))
+    try:
+        account = int(os.getenv("MT5_LOGIN") or 0)
         password = os.getenv("MT5_PASSWORD")
         server = os.getenv("MT5_SERVER")
+
+        if not account or not password or not server:
+            return None, "MT5 credentials not configured. Check Settings page."
 
         if not mt5.initialize():
             return None, "MT5 initialization failed"
@@ -168,6 +183,13 @@ def main():
 
     now = datetime.now(TIMEZONE)
     st.markdown(f"**Current Time:** {now.strftime('%H:%M:%S %d/%m/%Y')} (HCM)")
+
+    # MT5 availability check
+    mt5_available = is_mt5_available()
+    if mt5_available:
+        st.success("✅ MT5 available - Live simulation enabled")
+    else:
+        st.warning("⚠️ MT5 not available (Windows only) - Demo mode")
 
     st.divider()
 

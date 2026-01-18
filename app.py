@@ -131,11 +131,23 @@ def main():
 
     with col2:
         if st.button("📤 Test Telegram", use_container_width=True):
-            from src.strategy import send_telegram
-            if send_telegram("🔔 Test message from BotForex Dashboard"):
-                st.success("Message sent!")
-            else:
-                st.error("Failed to send message")
+            try:
+                import requests
+                token = os.getenv("TELEGRAM_BOT_TOKEN")
+                chat_id = os.getenv("TELEGRAM_TEST_CHAT_ID") or os.getenv("TELEGRAM_CHAT_ID")
+
+                if not token or not chat_id:
+                    st.error("Telegram not configured. Check Settings.")
+                else:
+                    url = f"https://api.telegram.org/bot{token}/sendMessage"
+                    payload = {"chat_id": chat_id, "text": "🔔 Test from BotForex Dashboard"}
+                    response = requests.post(url, json=payload)
+                    if response.ok:
+                        st.success("Message sent!")
+                    else:
+                        st.error("Failed to send message")
+            except Exception as e:
+                st.error(f"Error: {e}")
 
     with col3:
         if st.button("📊 Run Simulation", use_container_width=True):

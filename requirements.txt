@@ -1,8 +1,7 @@
-MetaTrader5
+# MetaTrader5  # Windows only - comment out for cloud deployment
 python-telegram-bot
 streamlit
 pyyaml
 pandas
 python-dotenv
 requests
-icecream

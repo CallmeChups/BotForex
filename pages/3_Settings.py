@@ -98,15 +98,21 @@ def main():
         if st.button("🔗 Test MT5 Connection", use_container_width=True):
             try:
                 import MetaTrader5 as mt5
+            except ImportError:
+                st.error("MT5 not available (Windows only)")
+                st.stop()
 
+            try:
                 if not mt5.initialize():
                     st.error("MT5 initialization failed")
                 else:
-                    login = int(os.getenv("MT5_LOGIN"))
+                    login = int(os.getenv("MT5_LOGIN") or 0)
                     password = os.getenv("MT5_PASSWORD")
                     server = os.getenv("MT5_SERVER")
 
-                    if mt5.login(login=login, password=password, server=server):
+                    if not login or not password or not server:
+                        st.error("MT5 credentials not configured")
+                    elif mt5.login(login=login, password=password, server=server):
                         account = mt5.account_info()._asdict()
                         st.success(f"Connected! Balance: {account['balance']}")
                         mt5.shutdown()
