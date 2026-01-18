@@ -3,4 +3,6 @@ python-telegram-bot
 streamlit
 pyyaml
 pandas
+python-dotenv
+requests
 icecream
