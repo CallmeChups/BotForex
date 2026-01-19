@@ -20,6 +20,8 @@ import os
 import requests
 import MetaTrader5 as mt5
 
+from src.utils import get_pip_value, check_exit
+
 load_dotenv()
 
 # Constants
@@ -43,64 +45,6 @@ def send_telegram(text: str, is_error: bool = False) -> bool:
     payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
     response = requests.post(url, json=payload)
     return response.ok
-
-
-def get_pip_value(symbol: str) -> float:
-    """
-    Pip value = price movement per 1 pip
-    - ETH: 1 pip = 0.1 price (10 pips = $1)
-    - BTC: 1 pip = 1.0 price (1 pip = $1)
-    - XAU: 1 pip = 0.1 price
-    - JPY pairs: 1 pip = 0.01
-    - Other forex: 1 pip = 0.0001
-    """
-    if "BTC" in symbol:
-        return 1.0
-    elif "ETH" in symbol:
-        return 0.1
-    elif "XAU" in symbol:
-        return 0.1
-    elif "JPY" in symbol:
-        return 0.01
-    else:
-        return 0.0001
-
-
-def check_exit(direction: str, candle: dict, tp: float, sl: float) -> tuple:
-    """
-    Check exit conditions for a candle.
-
-    TP: Price-based (immediate) - check High/Low
-    SL: Close-based - check Close only
-
-    Args:
-        direction: "BUY" or "SELL"
-        candle: dict with "high", "low", "close"
-        tp: Take profit level
-        sl: Stop loss level
-
-    Returns:
-        (exit_type, exit_price) or (None, None)
-        exit_type: "TP", "SL", or None
-    """
-    h, l, c = candle["high"], candle["low"], candle["close"]
-
-    if direction == "BUY":
-        # TP: Price touches (High >= TP) - immediate
-        if h >= tp:
-            return ("TP", tp)
-        # SL: Close-based (Close <= SL) - delayed
-        if c <= sl:
-            return ("SL", c)
-    else:  # SELL
-        # TP: Price touches (Low <= TP) - immediate
-        if l <= tp:
-            return ("TP", tp)
-        # SL: Close-based (Close >= SL) - delayed
-        if c >= sl:
-            return ("SL", c)
-
-    return (None, None)
 
 
 def is_master_candle_time(candle_time: datetime) -> bool:

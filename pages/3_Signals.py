@@ -165,8 +165,8 @@ def main():
                 return 'color: red'
             return ''
 
-        styled_df = filtered_df.style.applymap(color_pnl, subset=['PnL_Pips'])
-        st.dataframe(styled_df, use_container_width=True, hide_index=True)
+        styled_df = filtered_df.style.map(color_pnl, subset=['PnL_Pips'])
+        st.dataframe(styled_df, width='stretch', hide_index=True)
 
     st.divider()
 
@@ -179,7 +179,7 @@ def main():
         with col1:
             signal_date = st.date_input("Date", value=datetime.now(TIMEZONE).date())
             signal_time = st.time_input("Time", value=datetime.now(TIMEZONE).time())
-            signal_symbol = st.text_input("Symbol", value=os.getenv("SYMBOL", "ETHUSDm"))
+            signal_symbol = st.text_input("Symbol", value=os.getenv("SYMBOL", "XAUUSD"))
             signal_direction = st.selectbox("Direction", ["BUY", "SELL"])
             signal_entry = st.number_input("Entry", value=3300.0, format="%.2f")
 

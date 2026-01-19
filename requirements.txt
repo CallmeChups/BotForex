@@ -7,3 +7,4 @@ pandas
 python-dotenv
 requests
 bcrypt
+plotly

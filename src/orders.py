@@ -11,19 +11,12 @@ from dotenv import load_dotenv
 import os
 import pandas as pd
 
+from src.utils import is_mt5_available, get_pip_value
+
 load_dotenv()
 
 TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
 ORDERS_FILE = "data/orders.csv"
-
-
-def is_mt5_available() -> bool:
-    """Check if MT5 is available"""
-    try:
-        import MetaTrader5
-        return True
-    except ImportError:
-        return False
 
 
 def get_mt5_connection(credentials: dict = None):
@@ -233,19 +226,6 @@ def close_all_positions(symbol: str = None, credentials: dict = None) -> tuple:
     return closed, None
 
 
-def get_pip_value(symbol: str) -> float:
-    """Get pip value for symbol"""
-    if "BTC" in symbol:
-        return 1.0
-    elif "ETH" in symbol:
-        return 0.1
-    elif "XAU" in symbol:
-        return 0.1
-    elif "JPY" in symbol:
-        return 0.01
-    return 0.0001
-
-
 def log_order_close(ticket: int, exit_type: str, exit_price: float, profit: float):
     """Log order close to CSV"""
     os.makedirs("data", exist_ok=True)
@@ -304,6 +284,139 @@ def get_account_info(credentials: dict = None) -> tuple:
             "name": account.name,
             "server": account.server,
             "currency": account.currency
+        }
+
+        mt5.shutdown()
+        return info, None
+
+    except Exception as e:
+        mt5.shutdown()
+        return None, str(e)
+
+
+def place_order(
+    symbol: str,
+    direction: str,
+    volume: float,
+    sl: float = None,
+    tp: float = None,
+    credentials: dict = None
+) -> tuple:
+    """
+    Place a market order
+
+    Args:
+        symbol: Trading symbol
+        direction: "BUY" or "SELL"
+        volume: Lot size
+        sl: Stop loss price (optional)
+        tp: Take profit price (optional)
+        credentials: MT5 credentials dict
+
+    Returns:
+        (success, message, ticket)
+    """
+    mt5, error = get_mt5_connection(credentials)
+    if error:
+        return False, error, None
+
+    try:
+        import MetaTrader5 as mt5_module
+
+        # Check symbol
+        symbol_info = mt5.symbol_info(symbol)
+        if symbol_info is None:
+            mt5.shutdown()
+            return False, f"Symbol {symbol} not found", None
+
+        if not symbol_info.visible:
+            if not mt5.symbol_select(symbol, True):
+                mt5.shutdown()
+                return False, f"Failed to select {symbol}", None
+
+        # Get current price
+        tick = mt5.symbol_info_tick(symbol)
+        if tick is None:
+            mt5.shutdown()
+            return False, f"Failed to get price for {symbol}", None
+
+        # Determine order type and price
+        if direction.upper() == "BUY":
+            order_type = mt5_module.ORDER_TYPE_BUY
+            price = tick.ask
+        else:
+            order_type = mt5_module.ORDER_TYPE_SELL
+            price = tick.bid
+
+        # Prepare order request
+        request = {
+            "action": mt5_module.TRADE_ACTION_DEAL,
+            "symbol": symbol,
+            "volume": volume,
+            "type": order_type,
+            "price": price,
+            "deviation": 20,
+            "magic": 123456,
+            "comment": "Manual_Order",
+            "type_time": mt5_module.ORDER_TIME_GTC,
+            "type_filling": mt5_module.ORDER_FILLING_IOC,
+        }
+
+        # Add SL/TP if provided
+        if sl is not None and sl > 0:
+            request["sl"] = sl
+        if tp is not None and tp > 0:
+            request["tp"] = tp
+
+        # Send order
+        result = mt5.order_send(request)
+        mt5.shutdown()
+
+        if result is None:
+            return False, "Order failed: No response from MT5", None
+
+        if result.retcode != mt5_module.TRADE_RETCODE_DONE:
+            return False, f"Order failed: {result.comment} (code: {result.retcode})", None
+
+        return True, f"Order placed at {price:.5f}", result.order
+
+    except Exception as e:
+        mt5.shutdown()
+        return False, str(e), None
+
+
+def get_symbol_info(symbol: str, credentials: dict = None) -> tuple:
+    """
+    Get symbol information (for validation and price display)
+
+    Args:
+        symbol: Trading symbol
+        credentials: MT5 credentials dict
+
+    Returns:
+        (info_dict, error)
+    """
+    mt5, error = get_mt5_connection(credentials)
+    if error:
+        return None, error
+
+    try:
+        symbol_info = mt5.symbol_info(symbol)
+        if symbol_info is None:
+            mt5.shutdown()
+            return None, f"Symbol {symbol} not found"
+
+        tick = mt5.symbol_info_tick(symbol)
+
+        info = {
+            "symbol": symbol,
+            "bid": tick.bid if tick else 0,
+            "ask": tick.ask if tick else 0,
+            "spread": symbol_info.spread,
+            "digits": symbol_info.digits,
+            "volume_min": symbol_info.volume_min,
+            "volume_max": symbol_info.volume_max,
+            "volume_step": symbol_info.volume_step,
         }
 
         mt5.shutdown()

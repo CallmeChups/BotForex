@@ -43,8 +43,9 @@ parameters:
 
 # Supported symbols
 symbols:
-  - ETHUSDm
-  - BTCUSDm
-  - XAUUSDm
-  - ETHUSD
+  - XAUUSD
   - BTCUSD
+  - ETHUSD
+  - XAUUSDm
+  - BTCUSDm
+  - ETHUSDm

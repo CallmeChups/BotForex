@@ -74,8 +74,8 @@ def main():
             )
             symbol = st.text_input(
                 "Trading Symbol",
-                value=os.getenv("SYMBOL", "ETHUSDm"),
-                help="Use ETHUSDm for Standard account, ETHUSD for Pro/Raw"
+                value=os.getenv("SYMBOL", "XAUUSD"),
+                help="Use XAUUSDm for Standard account, XAUUSD for Pro/Raw"
             )
 
         if st.form_submit_button("Save MT5 Credentials", type="primary", use_container_width=True):

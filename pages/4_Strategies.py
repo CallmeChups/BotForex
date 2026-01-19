@@ -170,7 +170,7 @@ def show_create_form():
 
         symbols = st.text_input(
             "Symbols (comma-separated)",
-            value="ETHUSDm, BTCUSDm, XAUUSDm"
+            value="XAUUSD, BTCUSD, ETHUSD"
         )
 
         submitted = st.form_submit_button("Create Strategy", type="primary", use_container_width=True)

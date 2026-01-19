@@ -8,31 +8,108 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import pandas as pd
 
+from src.utils import get_pip_value, check_exit
+
 TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
 
 
-def get_pip_value(symbol: str) -> float:
-    """Get pip value for symbol"""
-    if "BTC" in symbol:
-        return 1.0
-    elif "ETH" in symbol:
-        return 0.1
-    elif "XAU" in symbol:
-        return 0.1
-    elif "JPY" in symbol:
-        return 0.01
-    return 0.0001
-
-
-def fetch_historical_data(symbol: str, start_date: datetime, end_date: datetime, credentials: dict = None) -> tuple:
+def get_pip_value_per_lot(symbol: str) -> float:
     """
-    Fetch historical M5 candles from MT5
+    Get dollar value per pip per 1 standard lot.
+
+    For XAUUSD: 1 lot = 100 oz, 1 pip = $0.1 → $10 per pip per lot
+    For BTCUSD: 1 lot = 1 BTC, 1 pip = $1 → $1 per pip per lot
+    For ETHUSD: 1 lot = 1 ETH, 1 pip = $0.1 → $0.1 per pip per lot
+    For Forex: 1 lot = 100,000 units, 1 pip = 0.0001 → $10 per pip per lot
+    """
+    symbol_upper = symbol.upper()
+    if "XAU" in symbol_upper:
+        return 10.0  # 100 oz × $0.1 pip
+    elif "BTC" in symbol_upper:
+        return 1.0   # 1 BTC × $1 pip
+    elif "ETH" in symbol_upper:
+        return 0.1   # 1 ETH × $0.1 pip
+    elif "JPY" in symbol_upper:
+        return 10.0  # 100,000 × 0.01 pip / 100
+    return 10.0  # Standard forex: 100,000 × 0.0001 = $10
+
+
+def calculate_flex_lot_size(
+    equity: float,
+    risk_percent: float,
+    sl_pips: float,
+    symbol: str,
+    min_lot: float = 0.01,
+    lot_step: float = 0.01
+) -> float:
+    """
+    Calculate lot size based on risk percentage.
+
+    Formula: lot_size = risk_amount / (sl_pips × pip_value_per_lot)
+
+    Example (XAUUSD):
+        equity = $1000, risk = 0.5%, sl_pips = 50.5
+        risk_amount = $1000 × 0.5% = $5
+        lot_size = $5 / (50.5 × $10) = 0.0099 ≈ 0.01 lots
+        Verify: 0.01 lots × 50.5 pips × $10/pip = $5.05 ✓
+
+    Args:
+        equity: Current account equity in USD
+        risk_percent: Risk percentage per trade (e.g., 0.5 for 0.5%)
+        sl_pips: Stop loss distance in pips
+        symbol: Trading symbol
+        min_lot: Minimum lot size (default 0.01)
+        lot_step: Lot step increment (default 0.01)
+
+    Returns:
+        Calculated lot size (rounded down to lot_step)
+    """
+    if sl_pips <= 0:
+        return min_lot
+
+    # risk_amount = max allowable loss in USD
+    risk_amount = equity * (risk_percent / 100)
+
+    # Get pip value per lot for symbol
+    pip_value_per_lot = get_pip_value_per_lot(symbol)
+
+    # lot_size = risk_amount / (sl_pips × pip_value_per_lot)
+    lot_size = risk_amount / (sl_pips * pip_value_per_lot)
+
+    # Round down to lot step
+    lot_size = max(min_lot, (lot_size // lot_step) * lot_step)
+
+    return round(lot_size, 2)
+
+
+def get_mt5_timeframe(timeframe: str):
+    """Convert timeframe string to MT5 constant"""
+    try:
+        import MetaTrader5 as mt5
+        mapping = {
+            "M1": mt5.TIMEFRAME_M1,
+            "M5": mt5.TIMEFRAME_M5,
+            "M15": mt5.TIMEFRAME_M15,
+            "M30": mt5.TIMEFRAME_M30,
+            "H1": mt5.TIMEFRAME_H1,
+            "H4": mt5.TIMEFRAME_H4,
+            "D1": mt5.TIMEFRAME_D1,
+        }
+        return mapping.get(timeframe, mt5.TIMEFRAME_M5)
+    except ImportError:
+        return None
+
+
+def fetch_historical_data(symbol: str, start_date: datetime, end_date: datetime, credentials: dict = None, timeframe: str = "M5") -> tuple:
+    """
+    Fetch historical candles from MT5
 
     Args:
         symbol: Trading symbol
         start_date: Start date
         end_date: End date
         credentials: MT5 credentials dict
+        timeframe: Timeframe string (M1, M5, M15, M30, H1, H4, D1)
 
     Returns:
         (DataFrame with OHLC data, error message)
@@ -60,11 +137,14 @@ def fetch_historical_data(symbol: str, start_date: datetime, end_date: datetime,
             mt5.shutdown()
             return None, f"MT5 login failed: {error}"
 
-    # Fetch M5 candles
+    # Get MT5 timeframe constant
+    mt5_timeframe = get_mt5_timeframe(timeframe)
+
+    # Fetch candles
     try:
         rates = mt5.copy_rates_range(
             symbol,
-            mt5.TIMEFRAME_M5,
+            mt5_timeframe,
             start_date,
             end_date
         )
@@ -86,40 +166,19 @@ def fetch_historical_data(symbol: str, start_date: datetime, end_date: datetime,
         return None, str(e)
 
 
-def check_exit(direction: str, candle: dict, tp: float, sl: float) -> tuple:
-    """
-    Check exit conditions for a candle.
-
-    TP: Price-based (immediate) - check High/Low
-    SL: Close-based - check Close only
-
-    Returns:
-        (exit_type, exit_price) or (None, None)
-    """
-    h, l, c = candle["high"], candle["low"], candle["close"]
-
-    if direction == "BUY":
-        if h >= tp:
-            return ("TP", tp)
-        if c <= sl:
-            return ("SL", c)
-    else:  # SELL
-        if l <= tp:
-            return ("TP", tp)
-        if c >= sl:
-            return ("SL", c)
-
-    return (None, None)
-
-
 def run_backtest(
     df: pd.DataFrame,
     symbol: str,
     entry_hour: int = 21,
     entry_minute: int = 5,
-    sl_pips: float = 30,
+    sl_pips: float = 0,
     rr_ratio: float = 2.0,
-    max_candles: int = 7
+    max_candles: int = 7,
+    lot_mode: str = "fixed",
+    fixed_lot: float = 0.01,
+    risk_percent: float = 0.5,
+    buffer_k: float = 5.0,
+    starting_equity: float = 1000.0
 ) -> dict:
     """
     Run backtest on historical data
@@ -129,18 +188,30 @@ def run_backtest(
         symbol: Trading symbol
         entry_hour: Entry candle hour (default 21)
         entry_minute: Entry candle minute (default 5)
-        sl_pips: Stop loss in pips
+        sl_pips: Deprecated, not used (kept for compatibility)
         rr_ratio: Risk:Reward ratio
         max_candles: Max candles before time exit
+        lot_mode: "fixed" or "flex"
+        fixed_lot: Lot size for fixed mode
+        risk_percent: Risk % for flex mode (e.g., 0.5 = 0.5%)
+        buffer_k: Buffer pips added to candle body for SL (both modes)
+        starting_equity: Starting equity in USD for flex mode
+
+    SL Calculation (both modes):
+        BUY: SL pips = (Close - Low) / pip_value + buffer_k
+        SELL: SL pips = (High - Close) / pip_value + buffer_k
 
     Returns:
         dict with results
     """
     pip_value = get_pip_value(symbol)
-    sl_distance = sl_pips * pip_value
 
     trades = []
-    equity_curve = [0]  # Start at 0
+    equity_curve_pips = [0]  # P&L in pips
+    equity_curve_usd = [starting_equity]  # Equity in USD
+
+    # Current equity for flex mode
+    current_equity = starting_equity
 
     # Group by date to find entry candles
     df['date'] = df['time'].dt.date
@@ -154,22 +225,53 @@ def run_backtest(
         entry_time = entry_row['time']
         o, h, l, c = entry_row['open'], entry_row['high'], entry_row['low'], entry_row['close']
 
-        # Determine direction
+        # Determine direction and calculate SL
+        # SL pips (total risk) = candle body + buffer_k
+        # SL price = Low - buffer_k (BUY) or High + buffer_k (SELL)
         if c > o:
             direction = "BUY"
             entry_price = c
-            stop_loss = l - sl_distance
+
+            # buffer_k * pip_value = price offset AND pip contribution
+            buffer_offset = buffer_k * pip_value
+
+            # SL is placed buffer_offset below the Low
+            stop_loss = l - buffer_offset
+
+            # Total SL pips = candle body pips + buffer pips
+            candle_sl_pips = (c - l) / pip_value + buffer_offset
+
             risk = entry_price - stop_loss
             take_profit = entry_price + (risk * rr_ratio)
+
         elif c < o:
             direction = "SELL"
             entry_price = c
-            stop_loss = h + sl_distance
+
+            # buffer_k * pip_value = price offset AND pip contribution
+            buffer_offset = buffer_k * pip_value
+
+            # SL is placed buffer_offset above the High
+            stop_loss = h + buffer_offset
+
+            # Total SL pips = candle body pips + buffer pips
+            candle_sl_pips = (h - c) / pip_value + buffer_offset
             risk = stop_loss - entry_price
             take_profit = entry_price - (risk * rr_ratio)
         else:
             # Doji - skip
             continue
+
+        # Calculate lot size
+        if lot_mode == "flex":
+            lot_size = calculate_flex_lot_size(
+                equity=current_equity,
+                risk_percent=risk_percent,
+                sl_pips=candle_sl_pips,
+                symbol=symbol
+            )
+        else:
+            lot_size = fixed_lot
 
         # Get next candles for exit check
         entry_idx = df.index.get_loc(idx)
@@ -212,6 +314,14 @@ def run_backtest(
         else:
             pnl_pips = (entry_price - exit_price) / pip_value
 
+        # Calculate P&L in USD
+        # pnl_usd = lot_size * pnl_pips * pip_value_per_lot
+        pip_value_per_lot = get_pip_value_per_lot(symbol)
+        pnl_usd = lot_size * pnl_pips * pip_value_per_lot
+
+        # Update equity
+        current_equity += pnl_usd
+
         trades.append({
             "date": entry_time.strftime("%Y-%m-%d"),
             "time": entry_time.strftime("%H:%M"),
@@ -219,25 +329,34 @@ def run_backtest(
             "entry": entry_price,
             "sl": stop_loss,
             "tp": take_profit,
+            "sl_pips": round(candle_sl_pips, 1),
+            "lot": lot_size,
             "exit_type": exit_type,
             "exit_price": exit_price,
             "exit_time": exit_time.strftime("%H:%M") if exit_time else "",
             "candles": candles_held,
-            "pnl_pips": round(pnl_pips, 1)
+            "pnl_pips": round(pnl_pips, 1),
+            "pnl_usd": round(pnl_usd, 2)
         })
 
-        # Update equity curve
-        equity_curve.append(equity_curve[-1] + pnl_pips)
+        # Update equity curves
+        equity_curve_pips.append(equity_curve_pips[-1] + pnl_pips)
+        equity_curve_usd.append(current_equity)
 
     # Calculate statistics
-    stats = calculate_stats(trades)
-    stats["equity_curve"] = equity_curve
+    stats = calculate_stats(trades, lot_mode)
+    stats["equity_curve"] = equity_curve_pips
+    stats["equity_curve_usd"] = equity_curve_usd
     stats["trades"] = trades
+    stats["lot_mode"] = lot_mode
+    stats["final_equity"] = current_equity
+    stats["starting_equity"] = starting_equity
+    stats["ohlc_data"] = df  # Include OHLC data for interactive charts
 
     return stats
 
 
-def calculate_stats(trades: list) -> dict:
+def calculate_stats(trades: list, lot_mode: str = "fixed") -> dict:
     """Calculate backtest statistics"""
     if not trades:
         return {
@@ -246,7 +365,9 @@ def calculate_stats(trades: list) -> dict:
             "losses": 0,
             "win_rate": 0,
             "total_pnl": 0,
+            "total_pnl_usd": 0,
             "avg_pnl": 0,
+            "avg_pnl_usd": 0,
             "best_trade": 0,
             "worst_trade": 0,
             "profit_factor": 0,
@@ -258,6 +379,7 @@ def calculate_stats(trades: list) -> dict:
         }
 
     pnls = [t["pnl_pips"] for t in trades]
+    pnls_usd = [t.get("pnl_usd", 0) for t in trades]
     wins = [p for p in pnls if p > 0]
     losses = [p for p in pnls if p < 0]
 
@@ -300,9 +422,13 @@ def calculate_stats(trades: list) -> dict:
         "losses": loss_count,
         "win_rate": round(win_count / total_trades * 100, 1) if total_trades > 0 else 0,
         "total_pnl": round(sum(pnls), 1),
+        "total_pnl_usd": round(sum(pnls_usd), 2),
         "avg_pnl": round(sum(pnls) / total_trades, 1) if total_trades > 0 else 0,
+        "avg_pnl_usd": round(sum(pnls_usd) / total_trades, 2) if total_trades > 0 else 0,
         "best_trade": round(max(pnls), 1) if pnls else 0,
         "worst_trade": round(min(pnls), 1) if pnls else 0,
+        "best_trade_usd": round(max(pnls_usd), 2) if pnls_usd else 0,
+        "worst_trade_usd": round(min(pnls_usd), 2) if pnls_usd else 0,
         "profit_factor": round(profit_factor, 2) if profit_factor != float('inf') else "Inf",
         "max_consecutive_wins": max_consec_wins,
         "max_consecutive_losses": max_consec_losses,

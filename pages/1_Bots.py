@@ -44,7 +44,7 @@ def main():
     # Check MT5 credentials
     if not has_mt5_credentials(username):
         st.warning("MT5 account not configured. Please go to Settings first.")
-        st.page_link("pages/3_Settings.py", label="Go to Settings", icon="⚙️")
+        st.page_link("pages/8_Settings.py", label="Go to Settings", icon="⚙️")
 
     # Stats overview
     stats = get_bot_stats()
@@ -179,7 +179,7 @@ def show_create_bot():
 
     if not enabled_strategies:
         st.warning("No strategies available. Create one in the Strategies page.")
-        st.page_link("pages/7_Strategies.py", label="Go to Strategies", icon="📖")
+        st.page_link("pages/4_Strategies.py", label="Go to Strategies", icon="📖")
         return
 
     with st.form("create_bot"):
@@ -199,7 +199,7 @@ def show_create_bot():
 
             symbol = st.text_input(
                 "Symbol*",
-                value=params.get('symbols', ['ETHUSDm'])[0] if params.get('symbols') else os.getenv("SYMBOL", "ETHUSDm")
+                value=params.get('symbols', ['XAUUSD'])[0] if params.get('symbols') else os.getenv("SYMBOL", "XAUUSD")
             )
 
             test_mode = st.checkbox("Test Mode", value=True, help="No real trades, only simulation")
@@ -284,10 +284,10 @@ def show_create_bot():
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        if st.button("ETHUSDm", use_container_width=True):
+        if st.button("XAUUSD", use_container_width=True):
             success, msg, _ = start_bot(
                 strategy=enabled_strategies[0]['id'],
-                symbol="ETHUSDm",
+                symbol="XAUUSD",
                 user=username,
                 test=True
             )
@@ -298,10 +298,10 @@ def show_create_bot():
                 st.error(msg)
 
     with col2:
-        if st.button("BTCUSDm", use_container_width=True):
+        if st.button("BTCUSD", use_container_width=True):
             success, msg, _ = start_bot(
                 strategy=enabled_strategies[0]['id'],
-                symbol="BTCUSDm",
+                symbol="BTCUSD",
                 user=username,
                 test=True
             )
@@ -312,10 +312,10 @@ def show_create_bot():
                 st.error(msg)
 
     with col3:
-        if st.button("XAUUSDm", use_container_width=True):
+        if st.button("ETHUSD", use_container_width=True):
             success, msg, _ = start_bot(
                 strategy=enabled_strategies[0]['id'],
-                symbol="XAUUSDm",
+                symbol="ETHUSD",
                 user=username,
                 test=True
             )

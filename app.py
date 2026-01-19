@@ -22,7 +22,7 @@ st.set_page_config(
 from src.auth import get_authenticator, check_auth, get_user_role, is_admin
 
 TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
-SYMBOL = os.getenv("SYMBOL", "ETHUSDm")
+SYMBOL = os.getenv("SYMBOL", "XAUUSD")
 
 
 def show_login_page():
@@ -151,7 +151,7 @@ def show_dashboard():
     }
 
     signals_df = pd.DataFrame(signals_data)
-    st.dataframe(signals_df, use_container_width=True, hide_index=True)
+    st.dataframe(signals_df, width='stretch', hide_index=True)
 
     st.caption("No signals yet. Bot will trigger at 21:05 HCM.")
 

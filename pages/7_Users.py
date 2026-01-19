@@ -54,7 +54,7 @@ def main():
         })
 
     if users_data:
-        st.dataframe(users_data, use_container_width=True, hide_index=True)
+        st.dataframe(users_data, width='stretch', hide_index=True)
     else:
         st.info("No users found")
 

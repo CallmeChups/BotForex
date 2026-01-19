@@ -74,12 +74,29 @@ def check_auth():
 def require_auth():
     """
     Require authentication to access the page.
+    Reads cookie to restore session if needed.
     If not authenticated, shows login form and stops execution.
     """
+    # First check if already authenticated in session
     auth_status, username, name = check_auth()
+
+    # If not authenticated, try to restore from cookie
+    if not auth_status:
+        try:
+            authenticator, config = get_authenticator()
+            # This reads the cookie and restores session
+            authenticator.login()
+
+            # Check again after cookie read
+            auth_status = st.session_state.get('authentication_status')
+            username = st.session_state.get('username')
+            name = st.session_state.get('name')
+        except Exception as e:
+            pass
 
     if not auth_status:
         st.warning("Please log in from the main page to access this content.")
+        st.page_link("app.py", label="Go to Login", icon="🔐")
         st.stop()
 
     return username, name

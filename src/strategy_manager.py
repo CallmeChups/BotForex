@@ -257,5 +257,5 @@ def create_default_strategy() -> dict:
             'rr_ratio': 2.0,
             'lot_size': 0.01
         },
-        'symbols': ['ETHUSDm', 'BTCUSDm']
+        'symbols': ['XAUUSD', 'BTCUSD', 'ETHUSD']
     }

@@ -14,3 +14,5 @@
 /docs
 /plans
 CLAUDE.md
+*py.tmp*
+*.pyc
