@@ -40,10 +40,11 @@ def calculate_flex_lot_size(
     sl_pips: float,
     symbol: str,
     min_lot: float = 0.01,
-    lot_step: float = 0.01
+    lot_step: float = 0.01,
+    risk_amount: float = 0.0
 ) -> float:
     """
-    Calculate lot size based on risk percentage.
+    Calculate lot size based on risk percentage or fixed amount.
 
     Formula: lot_size = risk_amount / (sl_pips × pip_value_per_lot)
 
@@ -60,6 +61,7 @@ def calculate_flex_lot_size(
         symbol: Trading symbol
         min_lot: Minimum lot size (default 0.01)
         lot_step: Lot step increment (default 0.01)
+        risk_amount: Fixed risk amount in USD (if > 0, overrides risk_percent)
 
     Returns:
         Calculated lot size (rounded down to lot_step)
@@ -67,14 +69,17 @@ def calculate_flex_lot_size(
     if sl_pips <= 0:
         return min_lot
 
-    # risk_amount = max allowable loss in USD
-    risk_amount = equity * (risk_percent / 100)
+    # Use fixed risk_amount if provided, otherwise calculate from equity and percent
+    if risk_amount > 0:
+        actual_risk = risk_amount
+    else:
+        actual_risk = equity * (risk_percent / 100)
 
     # Get pip value per lot for symbol
     pip_value_per_lot = get_pip_value_per_lot(symbol)
 
     # lot_size = risk_amount / (sl_pips × pip_value_per_lot)
-    lot_size = risk_amount / (sl_pips * pip_value_per_lot)
+    lot_size = actual_risk / (sl_pips * pip_value_per_lot)
 
     # Round down to lot step
     lot_size = max(min_lot, (lot_size // lot_step) * lot_step)
@@ -177,8 +182,12 @@ def run_backtest(
     lot_mode: str = "fixed",
     fixed_lot: float = 0.01,
     risk_percent: float = 0.5,
+    risk_amount: float = 0.0,
+    risk_mode: str = "percent",
     buffer_k: float = 5.0,
-    starting_equity: float = 1000.0
+    starting_equity: float = 1000.0,
+    tp_type: str = "price_based",
+    sl_type: str = "close_based"
 ) -> dict:
     """
     Run backtest on historical data
@@ -190,12 +199,16 @@ def run_backtest(
         entry_minute: Entry candle minute (default 5)
         sl_pips: Deprecated, not used (kept for compatibility)
         rr_ratio: Risk:Reward ratio
-        max_candles: Max candles before time exit
+        max_candles: Max candles before time exit (0 = no limit)
         lot_mode: "fixed" or "flex"
         fixed_lot: Lot size for fixed mode
         risk_percent: Risk % for flex mode (e.g., 0.5 = 0.5%)
+        risk_amount: Fixed risk amount in USD for flex mode
+        risk_mode: "percent" (risk changes with equity) or "fixed_amount" (constant risk)
         buffer_k: Buffer pips added to candle body for SL (both modes)
         starting_equity: Starting equity in USD for flex mode
+        tp_type: "price_based" (immediate on wick) or "close_based" (delayed on close)
+        sl_type: "close_based" (delayed on close) or "price_based" (immediate on wick)
 
     SL Calculation (both modes):
         BUY: SL pips = (Close - Low) / pip_value + buffer_k
@@ -264,18 +277,34 @@ def run_backtest(
 
         # Calculate lot size
         if lot_mode == "flex":
-            lot_size = calculate_flex_lot_size(
-                equity=current_equity,
-                risk_percent=risk_percent,
-                sl_pips=candle_sl_pips,
-                symbol=symbol
-            )
+            if risk_mode == "fixed_amount":
+                # Fixed dollar amount risk - constant per trade
+                lot_size = calculate_flex_lot_size(
+                    equity=current_equity,
+                    risk_percent=0,
+                    sl_pips=candle_sl_pips,
+                    symbol=symbol,
+                    risk_amount=risk_amount
+                )
+            else:
+                # Percentage risk - changes with equity
+                lot_size = calculate_flex_lot_size(
+                    equity=current_equity,
+                    risk_percent=risk_percent,
+                    sl_pips=candle_sl_pips,
+                    symbol=symbol
+                )
         else:
             lot_size = fixed_lot
 
         # Get next candles for exit check
         entry_idx = df.index.get_loc(idx)
-        next_candles = df.iloc[entry_idx + 1: entry_idx + 1 + max_candles]
+
+        # max_candles=0 means no limit - get all remaining candles
+        if max_candles > 0:
+            next_candles = df.iloc[entry_idx + 1: entry_idx + 1 + max_candles]
+        else:
+            next_candles = df.iloc[entry_idx + 1:]
 
         exit_type = None
         exit_price = None
@@ -290,21 +319,21 @@ def run_backtest(
                 "close": candle_row['close']
             }
 
-            exit_type, exit_price = check_exit(direction, candle, take_profit, stop_loss)
+            exit_type, exit_price = check_exit(direction, candle, take_profit, stop_loss, tp_type, sl_type)
 
             if exit_type:
                 exit_time = candle_row['time']
                 break
 
-        # Time exit if no TP/SL hit
-        if not exit_type and len(next_candles) > 0:
+        # Time exit if no TP/SL hit (only when max_candles is enabled)
+        if not exit_type and len(next_candles) > 0 and max_candles > 0:
             exit_type = "TIME"
             last_candle = next_candles.iloc[-1]
             exit_price = last_candle['close']
             exit_time = last_candle['time']
             candles_held = len(next_candles)
 
-        # Skip if no exit data (end of dataset)
+        # Skip if no exit data (end of dataset or no TP/SL hit when max_candles disabled)
         if not exit_type:
             continue
 

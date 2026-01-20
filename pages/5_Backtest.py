@@ -185,17 +185,59 @@ def main():
             help=f"Default: {params.get('rr_ratio', 2.0)}"
         )
 
-        max_candles = st.number_input(
-            "Max Candles",
-            value=int(params.get('max_candles', 7)),
-            min_value=1,
-            max_value=50,
-            help=f"Default: {params.get('max_candles', 7)} candles"
+        use_max_candles = st.checkbox(
+            "Enable Max Candles",
+            value=True,
+            help="Uncheck to disable time-based exit (only TP/SL)"
         )
 
+        if use_max_candles:
+            max_candles = st.number_input(
+                "Max Candles",
+                value=int(params.get('max_candles', 7)),
+                min_value=1,
+                max_value=50,
+                help=f"Default: {params.get('max_candles', 7)} candles"
+            )
+        else:
+            max_candles = 0  # 0 means no limit
+            st.caption("Time exit disabled - trades exit only on TP or SL")
+
     # Show strategy info
-    st.caption(f"Strategy: **{selected_strategy_name}** | Timeframe: {timeframe} | "
-               f"TP: {params.get('tp_type', 'price_based')} | SL: {params.get('sl_type', 'close_based')}")
+    st.caption(f"Strategy: **{selected_strategy_name}** | Timeframe: {timeframe}")
+
+    st.divider()
+
+    # Exit Type Configuration
+    st.subheader("Exit Types")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        tp_type = st.radio(
+            "Take Profit (TP) Exit",
+            options=["price_based", "close_based"],
+            format_func=lambda x: "Price-based (Immediate)" if x == "price_based" else "Close-based (Delayed)",
+            horizontal=True,
+            help="Price-based: Exit when wick touches TP | Close-based: Exit when candle closes beyond TP"
+        )
+        if tp_type == "price_based":
+            st.caption("TP triggers when High/Low touches TP level (exits at TP price)")
+        else:
+            st.caption("TP triggers when candle CLOSES beyond TP (exits at close price)")
+
+    with col2:
+        sl_type = st.radio(
+            "Stop Loss (SL) Exit",
+            options=["close_based", "price_based"],
+            format_func=lambda x: "Close-based (Delayed)" if x == "close_based" else "Price-based (Immediate)",
+            horizontal=True,
+            help="Close-based: Exit when candle closes beyond SL | Price-based: Exit when wick touches SL"
+        )
+        if sl_type == "close_based":
+            st.caption("SL triggers when candle CLOSES beyond SL (exits at close price)")
+        else:
+            st.caption("SL triggers when High/Low touches SL level (exits at SL price)")
 
     st.divider()
 
@@ -237,6 +279,8 @@ def main():
             )
         # Placeholders for flex params
         risk_percent = 0.5
+        risk_amount = 0.0
+        risk_mode = "percent"
         starting_equity = 1000.0
     else:
         col1, col2, col3 = st.columns(3)
@@ -252,20 +296,41 @@ def main():
             )
 
         with col2:
-            risk_percent = st.number_input(
-                "Risk per Trade (%)",
-                value=0.5,
-                min_value=0.1,
-                max_value=5.0,
-                step=0.1,
-                format="%.1f",
-                help="Percentage of equity to risk per trade"
+            risk_mode = st.radio(
+                "Risk Mode",
+                options=["percent", "fixed_amount"],
+                format_func=lambda x: "Percentage (%)" if x == "percent" else "Fixed Amount ($)",
+                horizontal=True,
+                help="Percent: risk changes with equity | Fixed: constant risk per trade"
             )
 
-        # Calculate example
-        example_equity = starting_equity
-        example_r = example_equity * (risk_percent / 100)
-        st.caption(f"Example: Equity ${example_equity:.0f} × {risk_percent}% = Risk ${example_r:.2f} per trade")
+        with col3:
+            if risk_mode == "percent":
+                risk_percent = st.number_input(
+                    "Risk per Trade (%)",
+                    value=0.5,
+                    min_value=0.1,
+                    max_value=5.0,
+                    step=0.1,
+                    format="%.1f",
+                    help="Percentage of current equity to risk"
+                )
+                risk_amount = 0.0
+                # Calculate example
+                example_r = starting_equity * (risk_percent / 100)
+                st.caption(f"Initial: ${starting_equity:.0f} × {risk_percent}% = ${example_r:.2f}/trade")
+            else:
+                risk_amount = st.number_input(
+                    "Risk per Trade ($)",
+                    value=5.0,
+                    min_value=1.0,
+                    max_value=1000.0,
+                    step=1.0,
+                    format="%.2f",
+                    help="Fixed dollar amount to risk per trade"
+                )
+                risk_percent = 0.0
+                st.caption(f"Constant ${risk_amount:.2f} risk per trade")
 
         fixed_lot = 0.01  # Not used in flex mode
 
@@ -306,8 +371,12 @@ def main():
                 lot_mode=lot_mode,
                 fixed_lot=fixed_lot,
                 risk_percent=risk_percent,
+                risk_amount=risk_amount,
+                risk_mode=risk_mode,
                 buffer_k=buffer_k,
-                starting_equity=starting_equity
+                starting_equity=starting_equity,
+                tp_type=tp_type,
+                sl_type=sl_type
             )
 
         # Store results in session state
@@ -316,6 +385,8 @@ def main():
         st.session_state['backtest_strategy'] = selected_strategy_name
         st.session_state['backtest_lot_mode'] = lot_mode
         st.session_state['backtest_timeframe'] = timeframe
+        st.session_state['backtest_tp_type'] = tp_type
+        st.session_state['backtest_sl_type'] = sl_type
 
     # Display results if available
     if 'backtest_results' in st.session_state:
@@ -324,11 +395,13 @@ def main():
             st.session_state.get('backtest_symbol', ''),
             st.session_state.get('backtest_strategy', ''),
             st.session_state.get('backtest_lot_mode', 'fixed'),
-            st.session_state.get('backtest_timeframe', 'M5')
+            st.session_state.get('backtest_timeframe', 'M5'),
+            st.session_state.get('backtest_tp_type', 'price_based'),
+            st.session_state.get('backtest_sl_type', 'close_based')
         )
 
 
-def display_results(results: dict, symbol: str, strategy_name: str = "", lot_mode: str = "fixed", timeframe: str = "M5"):
+def display_results(results: dict, symbol: str, strategy_name: str = "", lot_mode: str = "fixed", timeframe: str = "M5", tp_type: str = "price_based", sl_type: str = "close_based"):
     """Display backtest results"""
 
     st.divider()
@@ -338,9 +411,11 @@ def display_results(results: dict, symbol: str, strategy_name: str = "", lot_mod
         st.warning("No trades found in the selected period")
         return
 
-    # Show lot mode
+    # Show config summary
     mode_label = "Fixed Lot" if lot_mode == "fixed" else "Flex (Risk-based)"
-    st.caption(f"Lot Mode: **{mode_label}**")
+    tp_label = "Price-based" if tp_type == "price_based" else "Close-based"
+    sl_label = "Close-based" if sl_type == "close_based" else "Price-based"
+    st.caption(f"Lot: **{mode_label}** | TP: **{tp_label}** | SL: **{sl_label}**")
 
     # Summary stats
     col1, col2, col3, col4 = st.columns(4)

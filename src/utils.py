@@ -45,18 +45,24 @@ def get_pip_value(symbol: str) -> float:
     return 0.0001
 
 
-def check_exit(direction: str, candle: dict, tp: float, sl: float) -> tuple:
+def check_exit(
+    direction: str,
+    candle: dict,
+    tp: float,
+    sl: float,
+    tp_type: str = "price_based",
+    sl_type: str = "close_based"
+) -> tuple:
     """
     Check exit conditions for a candle.
-
-    TP: Price-based (immediate) - check High/Low
-    SL: Close-based - check Close only
 
     Args:
         direction: "BUY" or "SELL"
         candle: dict with "high", "low", "close"
         tp: Take profit level
         sl: Stop loss level
+        tp_type: "price_based" (immediate on wick) or "close_based" (delayed on close)
+        sl_type: "close_based" (delayed on close) or "price_based" (immediate on wick)
 
     Returns:
         (exit_type, exit_price) or (None, None)
@@ -65,18 +71,45 @@ def check_exit(direction: str, candle: dict, tp: float, sl: float) -> tuple:
     h, l, c = candle["high"], candle["low"], candle["close"]
 
     if direction == "BUY":
-        # TP: Price touches (High >= TP) - immediate
-        if h >= tp:
-            return ("TP", tp)
-        # SL: Close-based (Close <= SL) - delayed
-        if c <= sl:
-            return ("SL", c)
+        # TP check
+        if tp_type == "price_based":
+            # Immediate: wick touches TP
+            if h >= tp:
+                return ("TP", tp)
+        else:  # close_based
+            # Delayed: close beyond TP
+            if c >= tp:
+                return ("TP", c)
+
+        # SL check
+        if sl_type == "close_based":
+            # Delayed: close beyond SL
+            if c <= sl:
+                return ("SL", c)
+        else:  # price_based
+            # Immediate: wick touches SL
+            if l <= sl:
+                return ("SL", sl)
+
     else:  # SELL
-        # TP: Price touches (Low <= TP) - immediate
-        if l <= tp:
-            return ("TP", tp)
-        # SL: Close-based (Close >= SL) - delayed
-        if c >= sl:
-            return ("SL", c)
+        # TP check
+        if tp_type == "price_based":
+            # Immediate: wick touches TP
+            if l <= tp:
+                return ("TP", tp)
+        else:  # close_based
+            # Delayed: close beyond TP
+            if c <= tp:
+                return ("TP", c)
+
+        # SL check
+        if sl_type == "close_based":
+            # Delayed: close beyond SL
+            if c >= sl:
+                return ("SL", c)
+        else:  # price_based
+            # Immediate: wick touches SL
+            if h >= sl:
+                return ("SL", sl)
 
     return (None, None)
