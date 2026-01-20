@@ -187,7 +187,9 @@ def run_backtest(
     buffer_k: float = 5.0,
     starting_equity: float = 1000.0,
     tp_type: str = "price_based",
-    sl_type: str = "close_based"
+    sl_type: str = "close_based",
+    entry_mode: str = "close",
+    entry_percent: float = 0.0
 ) -> dict:
     """
     Run backtest on historical data
@@ -209,6 +211,8 @@ def run_backtest(
         starting_equity: Starting equity in USD for flex mode
         tp_type: "price_based" (immediate on wick) or "close_based" (delayed on close)
         sl_type: "close_based" (delayed on close) or "price_based" (immediate on wick)
+        entry_mode: "close" (enter at close) or "range_percent" (enter at % of H-L range)
+        entry_percent: For range_percent mode - BUY: High - X%(H-L), SELL: Low + X%(H-L)
 
     SL Calculation (both modes):
         BUY: SL pips = (Close - Low) / pip_value + buffer_k
@@ -238,37 +242,51 @@ def run_backtest(
         entry_time = entry_row['time']
         o, h, l, c = entry_row['open'], entry_row['high'], entry_row['low'], entry_row['close']
 
-        # Determine direction and calculate SL
-        # SL pips (total risk) = candle body + buffer_k
+        # Determine direction and calculate entry/SL/TP
         # SL price = Low - buffer_k (BUY) or High + buffer_k (SELL)
+        candle_range = h - l
+
         if c > o:
             direction = "BUY"
-            entry_price = c
 
-            # buffer_k * pip_value = price offset AND pip contribution
+            # Calculate entry price based on entry_mode
+            if entry_mode == "range_percent":
+                # BUY: High - X% of range
+                entry_price = h - (entry_percent / 100) * candle_range
+            else:
+                entry_price = c
+
+            # buffer_k * pip_value = price offset
             buffer_offset = buffer_k * pip_value
 
             # SL is placed buffer_offset below the Low
             stop_loss = l - buffer_offset
 
-            # Total SL pips = candle body pips + buffer pips
-            candle_sl_pips = (c - l) / pip_value + buffer_offset
+            # SL pips from entry to SL
+            candle_sl_pips = (entry_price - stop_loss) / pip_value
 
             risk = entry_price - stop_loss
             take_profit = entry_price + (risk * rr_ratio)
 
         elif c < o:
             direction = "SELL"
-            entry_price = c
 
-            # buffer_k * pip_value = price offset AND pip contribution
+            # Calculate entry price based on entry_mode
+            if entry_mode == "range_percent":
+                # SELL: Low + X% of range
+                entry_price = l + (entry_percent / 100) * candle_range
+            else:
+                entry_price = c
+
+            # buffer_k * pip_value = price offset
             buffer_offset = buffer_k * pip_value
 
             # SL is placed buffer_offset above the High
             stop_loss = h + buffer_offset
 
-            # Total SL pips = candle body pips + buffer pips
-            candle_sl_pips = (h - c) / pip_value + buffer_offset
+            # SL pips from entry to SL
+            candle_sl_pips = (stop_loss - entry_price) / pip_value
+
             risk = stop_loss - entry_price
             take_profit = entry_price - (risk * rr_ratio)
         else:

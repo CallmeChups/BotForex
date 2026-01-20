@@ -208,6 +208,37 @@ def main():
 
     st.divider()
 
+    # Entry Configuration
+    st.subheader("Entry")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        entry_mode = st.radio(
+            "Entry Mode",
+            options=["close", "range_percent"],
+            format_func=lambda x: "Close Price" if x == "close" else "Range Percent (%)",
+            horizontal=True,
+            help="Close: Enter at candle close | Range %: Enter at % of High-Low range"
+        )
+
+    with col2:
+        if entry_mode == "range_percent":
+            entry_percent = st.number_input(
+                "Entry Percent (%)",
+                value=30.0,
+                min_value=0.0,
+                max_value=100.0,
+                step=5.0,
+                help="BUY: High - X%(H-L) | SELL: Low + X%(H-L)"
+            )
+            st.caption(f"BUY: High - {entry_percent}% | SELL: Low + {entry_percent}%")
+        else:
+            entry_percent = 0.0
+            st.caption("Entry at candle Close price")
+
+    st.divider()
+
     # Exit Type Configuration
     st.subheader("Exit Types")
 
@@ -376,7 +407,9 @@ def main():
                 buffer_k=buffer_k,
                 starting_equity=starting_equity,
                 tp_type=tp_type,
-                sl_type=sl_type
+                sl_type=sl_type,
+                entry_mode=entry_mode,
+                entry_percent=entry_percent
             )
 
         # Store results in session state
