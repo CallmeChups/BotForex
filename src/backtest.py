@@ -244,15 +244,15 @@ def run_backtest(
 
         # Determine direction and calculate entry/SL/TP
         # SL price = Low - buffer_k (BUY) or High + buffer_k (SELL)
-        candle_range = h - l
+        candle_body = abs(c - o)
 
         if c > o:
             direction = "BUY"
 
             # Calculate entry price based on entry_mode
             if entry_mode == "range_percent":
-                # BUY: High - X% of range
-                entry_price = h - (entry_percent / 100) * candle_range
+                # BUY: Close - X% of body (Close - Open)
+                entry_price = c - (entry_percent / 100) * candle_body
             else:
                 entry_price = c
 
@@ -273,8 +273,8 @@ def run_backtest(
 
             # Calculate entry price based on entry_mode
             if entry_mode == "range_percent":
-                # SELL: Low + X% of range
-                entry_price = l + (entry_percent / 100) * candle_range
+                # SELL: Close + X% of body (Open - Close)
+                entry_price = c + (entry_percent / 100) * candle_body
             else:
                 entry_price = c
 

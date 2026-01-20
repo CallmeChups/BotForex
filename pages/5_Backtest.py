@@ -217,9 +217,9 @@ def main():
         entry_mode = st.radio(
             "Entry Mode",
             options=["close", "range_percent"],
-            format_func=lambda x: "Close Price" if x == "close" else "Range Percent (%)",
+            format_func=lambda x: "Close Price" if x == "close" else "Body Percent (%)",
             horizontal=True,
-            help="Close: Enter at candle close | Range %: Enter at % of High-Low range"
+            help="Close: Enter at candle close | Body %: Enter at % of candle body (Close-Open)"
         )
 
     with col2:
@@ -230,9 +230,9 @@ def main():
                 min_value=0.0,
                 max_value=100.0,
                 step=5.0,
-                help="BUY: High - X%(H-L) | SELL: Low + X%(H-L)"
+                help="BUY: Close - X%(C-O) | SELL: Close + X%(O-C)"
             )
-            st.caption(f"BUY: High - {entry_percent}% | SELL: Low + {entry_percent}%")
+            st.caption(f"BUY: Close - {entry_percent}%(body) | SELL: Close + {entry_percent}%(body)")
         else:
             entry_percent = 0.0
             st.caption("Entry at candle Close price")
