@@ -26,6 +26,14 @@ username, name = require_auth()
 from src.backtest import fetch_historical_data, run_backtest
 from src.utils import is_mt5_available
 from src.strategy_manager import list_strategies, get_strategy_parameters
+from src.backtest_history import (
+    save_backtest_result,
+    get_history,
+    delete_history_record,
+    history_to_dataframe,
+    create_excel_export,
+    HISTORY_COLUMNS
+)
 
 TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
 
@@ -412,6 +420,30 @@ def main():
                 entry_percent=entry_percent
             )
 
+        # Build config dict for export/history
+        backtest_config = {
+            'timeframe': timeframe,
+            'start_date': str(start_date),
+            'end_date': str(end_date),
+            'entry_time': entry_time.strftime('%H:%M'),
+            'entry_mode': entry_mode,
+            'entry_percent': entry_percent,
+            'rr_ratio': rr_ratio,
+            'max_candles': max_candles,
+            'buffer_k': buffer_k,
+            'lot_mode': lot_mode,
+            'tp_type': tp_type,
+            'sl_type': sl_type,
+        }
+
+        if lot_mode == 'fixed':
+            backtest_config['fixed_lot'] = fixed_lot
+        else:
+            backtest_config['starting_equity'] = starting_equity
+            backtest_config['risk_mode'] = risk_mode
+            backtest_config['risk_percent'] = risk_percent
+            backtest_config['risk_amount'] = risk_amount
+
         # Store results in session state
         st.session_state['backtest_results'] = results
         st.session_state['backtest_symbol'] = symbol
@@ -420,6 +452,16 @@ def main():
         st.session_state['backtest_timeframe'] = timeframe
         st.session_state['backtest_tp_type'] = tp_type
         st.session_state['backtest_sl_type'] = sl_type
+        st.session_state['backtest_config'] = backtest_config
+
+        # Auto-save to history
+        if results.get('total_trades', 0) > 0:
+            save_backtest_result(
+                config=backtest_config,
+                results=results,
+                strategy_name=selected_strategy_name,
+                symbol=symbol
+            )
 
     # Display results if available
     if 'backtest_results' in st.session_state:
@@ -430,12 +472,17 @@ def main():
             st.session_state.get('backtest_lot_mode', 'fixed'),
             st.session_state.get('backtest_timeframe', 'M5'),
             st.session_state.get('backtest_tp_type', 'price_based'),
-            st.session_state.get('backtest_sl_type', 'close_based')
+            st.session_state.get('backtest_sl_type', 'close_based'),
+            st.session_state.get('backtest_config', {})
         )
 
+    # Show history section
+    show_history_section()
 
-def display_results(results: dict, symbol: str, strategy_name: str = "", lot_mode: str = "fixed", timeframe: str = "M5", tp_type: str = "price_based", sl_type: str = "close_based"):
+
+def display_results(results: dict, symbol: str, strategy_name: str = "", lot_mode: str = "fixed", timeframe: str = "M5", tp_type: str = "price_based", sl_type: str = "close_based", config: dict = None):
     """Display backtest results"""
+    config = config or {}
 
     st.divider()
     st.subheader(f"Results: {strategy_name}" if strategy_name else "Results")
@@ -556,13 +603,15 @@ def display_results(results: dict, symbol: str, strategy_name: str = "", lot_mod
         )
 
         if view_mode == "Table":
-            show_trade_table(trades, lot_mode, strategy_name, symbol)
+            show_trade_table(trades, lot_mode, strategy_name, symbol, config, results)
         else:
             show_interactive_chart(trades, ohlc_data, symbol)
 
 
-def show_trade_table(trades: list, lot_mode: str, strategy_name: str, symbol: str):
+def show_trade_table(trades: list, lot_mode: str, strategy_name: str, symbol: str, config: dict = None, results: dict = None):
     """Show trades as a table"""
+    config = config or {}
+    results = results or {}
     trades_df = pd.DataFrame(trades)
 
     # Rename columns for display
@@ -606,16 +655,38 @@ def show_trade_table(trades: list, lot_mode: str, strategy_name: str, symbol: st
     styled_df = trades_df.style.map(color_pnl, subset=['P&L (pips)'])
     st.dataframe(styled_df, width='stretch', hide_index=True)
 
-    # Download button
-    csv = trades_df.to_csv(index=False)
+    # Download buttons
     filename_parts = [strategy_name.replace(' ', '_')] if strategy_name else []
     filename_parts.extend([symbol, datetime.now().strftime('%Y%m%d')])
-    st.download_button(
-        label="Download CSV",
-        data=csv,
-        file_name=f"backtest_{'_'.join(filename_parts)}.csv",
-        mime="text/csv"
-    )
+    base_filename = f"backtest_{'_'.join(filename_parts)}"
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        # CSV download (trades only)
+        csv = trades_df.to_csv(index=False)
+        st.download_button(
+            label="Download CSV (Trades)",
+            data=csv,
+            file_name=f"{base_filename}.csv",
+            mime="text/csv"
+        )
+
+    with col2:
+        # Excel download (Config + Summary + Trades)
+        excel_buffer = create_excel_export(
+            config=config,
+            results=results,
+            trades_df=trades_df,
+            strategy_name=strategy_name,
+            symbol=symbol
+        )
+        st.download_button(
+            label="Download Excel (Full Report)",
+            data=excel_buffer,
+            file_name=f"{base_filename}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
 
 def show_interactive_chart(trades: list, ohlc_data: pd.DataFrame, symbol: str):
@@ -841,6 +912,169 @@ def show_demo_results():
         y='Cumulative P&L (pips)',
         width='stretch'
     )
+
+
+def show_history_section():
+    """Show backtest history for comparison"""
+
+    st.divider()
+    st.subheader("Backtest History")
+
+    history = get_history()
+
+    if not history:
+        st.info("No backtest history yet. Run a backtest to start building your comparison history.")
+        return
+
+    # Convert to DataFrame for display
+    history_df = history_to_dataframe(history)
+
+    # Filter and column options
+    col1, col2, col3 = st.columns([2, 2, 1])
+
+    with col1:
+        strategies = ['All'] + list(history_df['Strategy'].unique())
+        filter_strategy = st.selectbox(
+            "Filter by Strategy",
+            options=strategies,
+            key="history_filter_strategy"
+        )
+
+    with col2:
+        symbols = ['All'] + list(history_df['Symbol'].unique())
+        filter_symbol = st.selectbox(
+            "Filter by Symbol",
+            options=symbols,
+            key="history_filter_symbol"
+        )
+
+    with col3:
+        sort_by = st.selectbox(
+            "Sort by",
+            options=['Date', 'Win Rate %', 'Total Pips', 'P/F', 'Trades'],
+            index=0,
+            key="history_sort"
+        )
+
+    # Optional columns selector
+    with st.expander("Customize Columns"):
+        st.caption("Select additional columns to display")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("**Config Columns**")
+            selected_config = st.multiselect(
+                "Config",
+                options=HISTORY_COLUMNS['config'],
+                default=HISTORY_COLUMNS['default_optional'],
+                key="history_config_cols",
+                label_visibility="collapsed"
+            )
+
+        with col2:
+            st.markdown("**Summary Columns**")
+            selected_summary = st.multiselect(
+                "Summary",
+                options=HISTORY_COLUMNS['summary'],
+                default=[],
+                key="history_summary_cols",
+                label_visibility="collapsed"
+            )
+
+    # Apply filters
+    filtered_df = history_df.copy()
+    if filter_strategy != 'All':
+        filtered_df = filtered_df[filtered_df['Strategy'] == filter_strategy]
+    if filter_symbol != 'All':
+        filtered_df = filtered_df[filtered_df['Symbol'] == filter_symbol]
+
+    # Sort
+    if sort_by == 'Date':
+        filtered_df = filtered_df.sort_values('Date', ascending=False)
+    else:
+        filtered_df = filtered_df.sort_values(sort_by, ascending=False)
+
+    # Build display columns: core + selected optional
+    display_cols = HISTORY_COLUMNS['core'].copy()
+
+    # Insert config columns after Symbol
+    for col in selected_config:
+        if col not in display_cols:
+            display_cols.append(col)
+
+    # Add summary columns at the end
+    for col in selected_summary:
+        if col not in display_cols:
+            display_cols.append(col)
+
+    # Filter to only existing columns
+    display_df = filtered_df[[c for c in display_cols if c in filtered_df.columns]]
+
+    # Color functions
+    def color_win_rate(val):
+        if isinstance(val, (int, float)):
+            if val >= 60:
+                return 'color: green'
+            elif val < 50:
+                return 'color: red'
+        return ''
+
+    def color_pips(val):
+        if isinstance(val, (int, float)):
+            if val > 0:
+                return 'color: green'
+            elif val < 0:
+                return 'color: red'
+        return ''
+
+    # Apply styling
+    style_subsets = []
+    if 'Win Rate %' in display_df.columns:
+        style_subsets.append(('Win Rate %', color_win_rate))
+    if 'Total Pips' in display_df.columns:
+        style_subsets.append(('Total Pips', color_pips))
+    if 'Total USD' in display_df.columns:
+        style_subsets.append(('Total USD', color_pips))
+    if 'Avg Pips' in display_df.columns:
+        style_subsets.append(('Avg Pips', color_pips))
+
+    styled_history = display_df.style
+    for col, func in style_subsets:
+        styled_history = styled_history.map(func, subset=[col])
+
+    st.dataframe(styled_history, use_container_width=True, hide_index=True)
+
+    st.caption(f"Showing {len(filtered_df)} of {len(history_df)} records | {len(display_cols)} columns")
+
+    # Delete functionality
+    st.markdown("---")
+
+    with st.expander("Manage History"):
+        st.warning("Delete records from history")
+
+        # Select record to delete
+        record_options = {
+            f"{r['Date']} - {r['Strategy']} - {r['Symbol']} ({r['Win Rate %']}% WR)": r['ID']
+            for _, r in filtered_df.iterrows()
+        }
+
+        if record_options:
+            selected_record = st.selectbox(
+                "Select record to delete",
+                options=list(record_options.keys()),
+                key="delete_record_select"
+            )
+
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                if st.button("Delete Selected", type="secondary"):
+                    record_id = record_options[selected_record]
+                    if delete_history_record(record_id):
+                        st.success("Record deleted!")
+                        st.rerun()
+                    else:
+                        st.error("Failed to delete record")
 
 
 if __name__ == "__main__":
