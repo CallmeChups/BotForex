@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(repomix --version:*)",
+      "Bash(wc:*)",
+      "Bash(powershell -Command \"Get-Content ''e:/VHL Project/Bio Zone/VHL_Biology/data/GGA/File txt/N4-VS1-25-03-2024/10-5/N4-10-5-01042024-Q=49.81mL_phút-3.txt'' -Encoding Unicode | Select-Object -First 100\")",
+      "Bash(powershell:*)",
+      "Bash(python:*)",
+      "Bash(\"e:/VHL Project/Bio Zone/VHL_Biology/.venv/Scripts/python.exe\" -c:*)",
+      "Bash(\"e:/VHL Project/Bio Zone/VHL_Biology/.venv/Scripts/python.exe\":*)"
+    ]
+  }
+}
