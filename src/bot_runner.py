@@ -45,6 +45,39 @@ def get_args():
     parser.add_argument("--max_candles", type=int, default=None,
                         help="Max candles before time exit (default: from strategy)")
 
+    # New parameters matching backtest config
+    parser.add_argument("--timeframe", type=str, default=None,
+                        help="Timeframe (e.g., M5, M15, H1)")
+    parser.add_argument("--entry_time", type=str, default=None,
+                        help="Entry time in HH:MM format")
+    parser.add_argument("--entry_mode", type=str, default=None,
+                        choices=["close", "range_percent", "signal"],
+                        help="Entry mode: close (at close price) or range_percent")
+    parser.add_argument("--entry_percent", type=float, default=None,
+                        help="Entry percent for range_percent mode (0-100)")
+    parser.add_argument("--buffer_k", type=float, default=None,
+                        help="Buffer K pips added to SL")
+    parser.add_argument("--lot_mode", type=str, default=None,
+                        choices=["fixed", "flex"],
+                        help="Lot mode: fixed or flex (risk-based)")
+    parser.add_argument("--starting_equity", type=float, default=None,
+                        help="Starting equity for flex mode")
+    parser.add_argument("--risk_mode", type=str, default=None,
+                        choices=["percent", "amount", "fixed_amount"],
+                        help="Risk mode: percent or fixed_amount")
+    parser.add_argument("--risk_percent", type=float, default=None,
+                        help="Risk percent of equity")
+    parser.add_argument("--risk_amount", type=float, default=None,
+                        help="Risk amount in USD")
+    parser.add_argument("--risk_compounding", type=int, default=None,
+                        help="Risk compounding: 1=compound (use current equity), 0=fixed (use starting equity)")
+    parser.add_argument("--tp_type", type=str, default=None,
+                        choices=["price_based", "close_based"],
+                        help="TP type: price_based or close_based")
+    parser.add_argument("--sl_type", type=str, default=None,
+                        choices=["price_based", "close_based"],
+                        help="SL type: price_based or close_based")
+
     # Bot control
     parser.add_argument("--test", type=int, default=1,
                         help="Test mode: 1=test (no real trades), 0=live")
@@ -109,16 +142,9 @@ def get_mt5_connection(credentials: dict):
 
 
 def get_pip_value(symbol: str) -> float:
-    """Get pip value for symbol"""
-    if "BTC" in symbol:
-        return 1.0
-    elif "ETH" in symbol:
-        return 0.1
-    elif "XAU" in symbol:
-        return 0.1
-    elif "JPY" in symbol:
-        return 0.01
-    return 0.0001
+    """Get pip size (price movement per 1 pip) - Industry Standard."""
+    from src.utils import get_pip_value as _get_pip_value
+    return _get_pip_value(symbol)
 
 
 def check_entry_time(entry_time: str) -> bool:
@@ -179,11 +205,29 @@ def run_bot(args):
     rr_ratio = args.rr_ratio or params.get('rr_ratio', 2.0)
     lot_size = args.lot_size or params.get('lot_size', 0.01)
     max_candles = args.max_candles or params.get('max_candles', 7)
-    entry_time = params.get('entry_time', '21:05')
-    timeframe = params.get('timeframe', 'M5')
+    entry_time = args.entry_time or params.get('entry_time', '21:05')
+    timeframe = args.timeframe or params.get('timeframe', 'M5')
 
-    log(f"Parameters: SL={sl_pips} pips, RR={rr_ratio}, Lot={lot_size}, MaxCandles={max_candles}")
-    log(f"Entry time: {entry_time}, Timeframe: {timeframe}")
+    # New parameters
+    entry_mode = args.entry_mode or 'close'
+    # Normalize "signal" to "close" for backward compatibility
+    if entry_mode == 'signal':
+        entry_mode = 'close'
+    entry_percent = args.entry_percent if args.entry_percent is not None else 30.0
+    buffer_k = args.buffer_k if args.buffer_k is not None else params.get('buffer_k', 0)
+    lot_mode = args.lot_mode or 'fixed'
+    starting_equity = args.starting_equity or 1000.0
+    risk_mode = args.risk_mode or 'percent'
+    risk_percent = args.risk_percent if args.risk_percent is not None else 1.0
+    risk_amount = args.risk_amount if args.risk_amount is not None else 10.0
+    risk_compounding = bool(args.risk_compounding) if args.risk_compounding is not None else True
+    tp_type = args.tp_type or 'price_based'
+    sl_type = args.sl_type or 'close_based'
+
+    log(f"Parameters: RR={rr_ratio}, MaxCandles={max_candles}, Buffer={buffer_k}")
+    log(f"Entry: {entry_time}, Timeframe: {timeframe}, Mode: {entry_mode}")
+    log(f"Lot: {lot_mode} ({'Lot=' + str(lot_size) if lot_mode == 'fixed' else 'Risk=' + str(risk_percent) + '%'})")
+    log(f"Exit: TP={tp_type}, SL={sl_type}")
 
     # Get user's MT5 credentials
     credentials = get_user_mt5_credentials(args.user)
@@ -228,21 +272,38 @@ def run_bot(args):
 
                 o, h, l, c = candle['open'], candle['high'], candle['low'], candle['close']
                 pip_value = get_pip_value(args.symbol)
-                sl_distance = sl_pips * pip_value
+                buffer_offset = buffer_k * pip_value
+                candle_body = abs(c - o)
 
-                # Determine direction
+                # Determine direction and entry price
                 if c > o:
                     direction = "BUY"
-                    entry_price = c
-                    stop_loss = l - sl_distance
+                    # Calculate entry price based on entry_mode
+                    if entry_mode == "range_percent":
+                        # BUY: Close - X% of body (Close - Open)
+                        entry_price = c - (entry_percent / 100) * candle_body
+                    else:
+                        entry_price = c
+
+                    # SL is placed buffer_offset below the Low
+                    stop_loss = l - buffer_offset
                     risk = entry_price - stop_loss
                     take_profit = entry_price + (risk * rr_ratio)
+
                 elif c < o:
                     direction = "SELL"
-                    entry_price = c
-                    stop_loss = h + sl_distance
+                    # Calculate entry price based on entry_mode
+                    if entry_mode == "range_percent":
+                        # SELL: Close + X% of body (Open - Close)
+                        entry_price = c + (entry_percent / 100) * candle_body
+                    else:
+                        entry_price = c
+
+                    # SL is placed buffer_offset above the High
+                    stop_loss = h + buffer_offset
                     risk = stop_loss - entry_price
                     take_profit = entry_price - (risk * rr_ratio)
+
                 else:
                     log("Doji candle - no trade")
                     mt5.shutdown()

@@ -177,6 +177,7 @@ def history_to_dataframe(history: list) -> pd.DataFrame:
             'Risk Mode': config.get('risk_mode', ''),
             'Risk %': config.get('risk_percent', ''),
             'Risk $': config.get('risk_amount', ''),
+            'Risk Compound': 'Yes' if config.get('risk_compounding', True) else 'No',
 
             # Summary - Core
             'Trades': summary.get('total_trades', 0),
@@ -207,24 +208,31 @@ def history_to_dataframe(history: list) -> pd.DataFrame:
 # Column definitions for UI
 HISTORY_COLUMNS = {
     # Always shown (core)
-    'core': ['Date', 'Strategy', 'Symbol', 'Trades', 'Win Rate %', 'P/F', 'Total Pips'],
+    'core': ['Date'],
 
     # Config columns (optional)
     'config': [
         'Timeframe', 'Entry Time', 'Lot Mode', 'RR Ratio', 'Date Range',
         'Entry Mode', 'Entry %', 'Max Candles', 'Buffer K',
         'TP Type', 'SL Type', 'Fixed Lot', 'Start Equity',
-        'Risk Mode', 'Risk %', 'Risk $'
+        'Risk Mode', 'Risk %', 'Risk $', 'Risk Compound'
     ],
 
     # Summary columns (optional)
     'summary': [
         'Wins', 'Losses', 'Avg Pips', 'Total USD', 'Best', 'Worst',
-        'Max Wins', 'Max Losses', 'TP Exits', 'SL Exits', 'Time Exits', 'Final Equity'
+        'Max Wins', 'Max Losses', 'TP Exits', 'SL Exits', 'Time Exits', 'Final Equity',
+        'Trades', 'Win Rate %', 'P/F', 'Total Pips'
     ],
 
-    # Default optional columns to show
-    'default_optional': ['Timeframe', 'Lot Mode', 'RR Ratio']
+    # Default columns to show (in order)
+    'default_optional': [
+        'Date Range', 'Trades', 'Win Rate %', 'Total Pips', 'Total USD',
+        'Start Equity', 'Final Equity', 'Entry Time', 'Lot Mode',
+        'Entry Mode', 'Entry %', 'Max Candles', 'Buffer K',
+        'TP Type', 'SL Type', 'Fixed Lot', 'Risk Mode', 'Risk %',
+        'TP Exits', 'SL Exits', 'Time Exits', 'Risk Compound'
+    ]
 }
 
 
@@ -281,6 +289,7 @@ def create_excel_export(
             config_summary_data.append(['Risk Mode', config.get('risk_mode', '')])
             if config.get('risk_mode') == 'percent':
                 config_summary_data.append(['Risk %', f"{config.get('risk_percent', 0)}%"])
+                config_summary_data.append(['Risk Compounding', 'Yes' if config.get('risk_compounding', True) else 'No'])
             else:
                 config_summary_data.append(['Risk Amount', f"${config.get('risk_amount', 0):.2f}"])
         else:

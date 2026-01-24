@@ -8,30 +8,9 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import pandas as pd
 
-from src.utils import get_pip_value, check_exit
+from src.utils import get_pip_value, get_pip_value_per_lot, check_exit
 
 TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
-
-
-def get_pip_value_per_lot(symbol: str) -> float:
-    """
-    Get dollar value per pip per 1 standard lot.
-
-    For XAUUSD: 1 lot = 100 oz, 1 pip = $0.1 → $10 per pip per lot
-    For BTCUSD: 1 lot = 1 BTC, 1 pip = $1 → $1 per pip per lot
-    For ETHUSD: 1 lot = 1 ETH, 1 pip = $0.1 → $0.1 per pip per lot
-    For Forex: 1 lot = 100,000 units, 1 pip = 0.0001 → $10 per pip per lot
-    """
-    symbol_upper = symbol.upper()
-    if "XAU" in symbol_upper:
-        return 10.0  # 100 oz × $0.1 pip
-    elif "BTC" in symbol_upper:
-        return 1.0   # 1 BTC × $1 pip
-    elif "ETH" in symbol_upper:
-        return 0.1   # 1 ETH × $0.1 pip
-    elif "JPY" in symbol_upper:
-        return 10.0  # 100,000 × 0.01 pip / 100
-    return 10.0  # Standard forex: 100,000 × 0.0001 = $10
 
 
 def calculate_flex_lot_size(
@@ -184,6 +163,7 @@ def run_backtest(
     risk_percent: float = 0.5,
     risk_amount: float = 0.0,
     risk_mode: str = "percent",
+    risk_compounding: bool = True,
     buffer_k: float = 5.0,
     starting_equity: float = 1000.0,
     tp_type: str = "price_based",
@@ -206,7 +186,8 @@ def run_backtest(
         fixed_lot: Lot size for fixed mode
         risk_percent: Risk % for flex mode (e.g., 0.5 = 0.5%)
         risk_amount: Fixed risk amount in USD for flex mode
-        risk_mode: "percent" (risk changes with equity) or "fixed_amount" (constant risk)
+        risk_mode: "percent" or "fixed_amount"
+        risk_compounding: If True, % risk based on current equity. If False, % risk based on starting equity
         buffer_k: Buffer pips added to candle body for SL (both modes)
         starting_equity: Starting equity in USD for flex mode
         tp_type: "price_based" (immediate on wick) or "close_based" (delayed on close)
@@ -221,6 +202,10 @@ def run_backtest(
     Returns:
         dict with results
     """
+    # Normalize risk_mode for backward compatibility
+    if risk_mode == "amount":
+        risk_mode = "fixed_amount"
+
     pip_value = get_pip_value(symbol)
 
     trades = []
@@ -305,9 +290,11 @@ def run_backtest(
                     risk_amount=risk_amount
                 )
             else:
-                # Percentage risk - changes with equity
+                # Percentage risk
+                # Use starting_equity if not compounding, current_equity if compounding
+                equity_for_risk = starting_equity if not risk_compounding else current_equity
                 lot_size = calculate_flex_lot_size(
-                    equity=current_equity,
+                    equity=equity_for_risk,
                     risk_percent=risk_percent,
                     sl_pips=candle_sl_pips,
                     symbol=symbol

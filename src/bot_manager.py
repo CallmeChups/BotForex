@@ -76,7 +76,21 @@ def start_bot(
     sl_pips: float = None,
     rr_ratio: float = None,
     max_candles: int = None,
-    interval: int = 60
+    interval: int = 60,
+    # New parameters matching backtest config
+    timeframe: str = None,
+    entry_time: str = None,
+    entry_mode: str = None,
+    entry_percent: float = None,
+    buffer_k: float = None,
+    lot_mode: str = None,
+    starting_equity: float = None,
+    risk_mode: str = None,
+    risk_percent: float = None,
+    risk_amount: float = None,
+    risk_compounding: bool = None,
+    tp_type: str = None,
+    sl_type: str = None
 ) -> tuple:
     """
     Start a new bot process
@@ -84,14 +98,8 @@ def start_bot(
     Returns:
         (success, message, bot_info)
     """
-    # Check for duplicate
+    # Load existing bots
     bots = load_bots()
-    for bot in bots:
-        if (bot['strategy'] == strategy and
-            bot['symbol'] == symbol and
-            bot['user'] == user and
-            is_process_running(bot['pid'])):
-            return False, f"Bot already running for {strategy}/{symbol}/{user}", None
 
     # Build command
     python_exe = sys.executable
@@ -115,6 +123,34 @@ def start_bot(
         cmd.extend(["--rr_ratio", str(rr_ratio)])
     if max_candles:
         cmd.extend(["--max_candles", str(max_candles)])
+
+    # New parameters
+    if timeframe:
+        cmd.extend(["--timeframe", timeframe])
+    if entry_time:
+        cmd.extend(["--entry_time", entry_time])
+    if entry_mode:
+        cmd.extend(["--entry_mode", entry_mode])
+    if entry_percent is not None:
+        cmd.extend(["--entry_percent", str(entry_percent)])
+    if buffer_k is not None:
+        cmd.extend(["--buffer_k", str(buffer_k)])
+    if lot_mode:
+        cmd.extend(["--lot_mode", lot_mode])
+    if starting_equity:
+        cmd.extend(["--starting_equity", str(starting_equity)])
+    if risk_mode:
+        cmd.extend(["--risk_mode", risk_mode])
+    if risk_percent is not None:
+        cmd.extend(["--risk_percent", str(risk_percent)])
+    if risk_amount is not None:
+        cmd.extend(["--risk_amount", str(risk_amount)])
+    if risk_compounding is not None:
+        cmd.extend(["--risk_compounding", "1" if risk_compounding else "0"])
+    if tp_type:
+        cmd.extend(["--tp_type", tp_type])
+    if sl_type:
+        cmd.extend(["--sl_type", sl_type])
 
     try:
         # Start process
@@ -150,6 +186,19 @@ def start_bot(
             'rr_ratio': rr_ratio,
             'max_candles': max_candles,
             'interval': interval,
+            'timeframe': timeframe,
+            'entry_time': entry_time,
+            'entry_mode': entry_mode,
+            'entry_percent': entry_percent,
+            'buffer_k': buffer_k,
+            'lot_mode': lot_mode,
+            'starting_equity': starting_equity,
+            'risk_mode': risk_mode,
+            'risk_percent': risk_percent,
+            'risk_amount': risk_amount,
+            'risk_compounding': risk_compounding,
+            'tp_type': tp_type,
+            'sl_type': sl_type,
             'started_at': datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M:%S'),
             'command': ' '.join(cmd)
         }
@@ -297,7 +346,20 @@ def restart_bot(pid: int) -> tuple:
         sl_pips=bot.get('sl_pips'),
         rr_ratio=bot.get('rr_ratio'),
         max_candles=bot.get('max_candles'),
-        interval=bot.get('interval', 60)
+        interval=bot.get('interval', 60),
+        timeframe=bot.get('timeframe'),
+        entry_time=bot.get('entry_time'),
+        entry_mode=bot.get('entry_mode'),
+        entry_percent=bot.get('entry_percent'),
+        buffer_k=bot.get('buffer_k'),
+        lot_mode=bot.get('lot_mode'),
+        starting_equity=bot.get('starting_equity'),
+        risk_mode=bot.get('risk_mode'),
+        risk_percent=bot.get('risk_percent'),
+        risk_amount=bot.get('risk_amount'),
+        risk_compounding=bot.get('risk_compounding'),
+        tp_type=bot.get('tp_type'),
+        sl_type=bot.get('sl_type')
     )
 
 
