@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import pandas as pd
 
-from src.utils import get_pip_value, get_pip_value_per_lot, check_exit
+from src.utils import get_pip_value, get_point_value, get_pip_value_per_lot, check_exit
 
 TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
 
@@ -169,7 +169,10 @@ def run_backtest(
     tp_type: str = "price_based",
     sl_type: str = "close_based",
     entry_mode: str = "close",
-    entry_percent: float = 0.0
+    entry_percent: float = 0.0,
+    move_sl_to_breakeven: bool = False,
+    breakeven_trigger_percent: float = 50.0,
+    pending_order_max_candles: int = 3
 ) -> dict:
     """
     Run backtest on historical data
@@ -188,12 +191,14 @@ def run_backtest(
         risk_amount: Fixed risk amount in USD for flex mode
         risk_mode: "percent" or "fixed_amount"
         risk_compounding: If True, % risk based on current equity. If False, % risk based on starting equity
-        buffer_k: Buffer pips added to candle body for SL (both modes)
+        buffer_k: Buffer points added to SL beyond candle wick
         starting_equity: Starting equity in USD for flex mode
         tp_type: "price_based" (immediate on wick) or "close_based" (delayed on close)
         sl_type: "close_based" (delayed on close) or "price_based" (immediate on wick)
         entry_mode: "close" (enter at close) or "range_percent" (enter at % of H-L range)
         entry_percent: For range_percent mode - BUY: High - X%(H-L), SELL: Low + X%(H-L)
+        move_sl_to_breakeven: If True, move SL to entry when price reaches breakeven_trigger_percent of TP
+        breakeven_trigger_percent: % of TP distance to trigger SL move (default 50%)
 
     SL Calculation (both modes):
         BUY: SL pips = (Close - Low) / pip_value + buffer_k
@@ -207,6 +212,7 @@ def run_backtest(
         risk_mode = "fixed_amount"
 
     pip_value = get_pip_value(symbol)
+    point_value = get_point_value(symbol)
 
     trades = []
     equity_curve_pips = [0]  # P&L in pips
@@ -241,8 +247,8 @@ def run_backtest(
             else:
                 entry_price = c
 
-            # buffer_k * pip_value = price offset
-            buffer_offset = buffer_k * pip_value
+            # buffer_k * point_value = price offset (uses point, not pip)
+            buffer_offset = buffer_k * point_value
 
             # SL is placed buffer_offset below the Low
             stop_loss = l - buffer_offset
@@ -263,8 +269,8 @@ def run_backtest(
             else:
                 entry_price = c
 
-            # buffer_k * pip_value = price offset
-            buffer_offset = buffer_k * pip_value
+            # buffer_k * point_value = price offset (uses point, not pip)
+            buffer_offset = buffer_k * point_value
 
             # SL is placed buffer_offset above the High
             stop_loss = h + buffer_offset
@@ -302,6 +308,69 @@ def run_backtest(
         else:
             lot_size = fixed_lot
 
+        # Simulate pending order for range_percent mode (LIMIT only, no market fallback)
+        if entry_mode == "range_percent":
+            # Get entry index
+            entry_idx = df.index.get_loc(idx)
+
+            # Check next candles to see if price touches entry_price
+            # pending_order_max_candles=0 means unlimited wait (check all remaining)
+            order_filled = False
+            fill_candle_idx = None
+            if pending_order_max_candles > 0:
+                pending_candles_to_check = df.iloc[entry_idx + 1: entry_idx + 1 + pending_order_max_candles]
+            else:
+                pending_candles_to_check = df.iloc[entry_idx + 1:]
+
+            for check_idx, check_candle in pending_candles_to_check.iterrows():
+                # Safety: if price moved past SL before filling, invalidate
+                if direction == "BUY" and check_candle['low'] <= stop_loss:
+                    break  # Price hit SL zone before entry — skip
+                elif direction == "SELL" and check_candle['high'] >= stop_loss:
+                    break  # Price hit SL zone before entry — skip
+
+                # Check if price touched entry_price
+                if direction == "BUY":
+                    # BUY LIMIT: price must go down to entry_price (or below)
+                    if check_candle['low'] <= entry_price:
+                        order_filled = True
+                        fill_candle_idx = check_idx
+                        break
+                else:  # SELL
+                    # SELL LIMIT: price must go up to entry_price (or above)
+                    if check_candle['high'] >= entry_price:
+                        order_filled = True
+                        fill_candle_idx = check_idx
+                        break
+
+            # If order not filled within max candles, mark as MISSED
+            if not order_filled:
+                miss_reason = f"LIMIT not filled after {pending_order_max_candles} candles" if pending_order_max_candles > 0 else "LIMIT never filled (unlimited wait)"
+                trades.append({
+                    "date": entry_time.strftime("%Y-%m-%d"),
+                    "time": entry_time.strftime("%H:%M"),
+                    "direction": direction,
+                    "entry": entry_price,
+                    "sl": stop_loss,
+                    "tp": take_profit,
+                    "sl_pips": round(candle_sl_pips, 1),
+                    "tp_pips": round(candle_sl_pips * rr_ratio, 1),
+                    "exit_type": "MISSED",
+                    "exit_price": None,
+                    "pnl_pips": 0,
+                    "pnl_usd": 0,
+                    "lot": lot_size,
+                    "candles": 0,
+                    "sl_moved_to_breakeven": False,
+                    "final_sl": stop_loss,
+                    "status": "MISSED",
+                    "miss_reason": miss_reason
+                })
+                continue  # Skip to next entry candle
+
+            # Order filled - use fill_candle_idx as new entry point
+            idx = fill_candle_idx
+
         # Get next candles for exit check
         entry_idx = df.index.get_loc(idx)
 
@@ -315,6 +384,8 @@ def run_backtest(
         exit_price = None
         exit_time = None
         candles_held = 0
+        sl_moved_to_breakeven = False
+        current_sl = stop_loss  # Track current SL (may change if moved to breakeven)
 
         for candle_idx, candle_row in next_candles.iterrows():
             candles_held += 1
@@ -324,7 +395,24 @@ def run_backtest(
                 "close": candle_row['close']
             }
 
-            exit_type, exit_price = check_exit(direction, candle, take_profit, stop_loss, tp_type, sl_type)
+            # Check if we should move SL to breakeven
+            if move_sl_to_breakeven and not sl_moved_to_breakeven:
+                if direction == "BUY":
+                    tp_distance = take_profit - entry_price
+                    trigger_price = entry_price + (tp_distance * breakeven_trigger_percent / 100)
+                    # Check if price reached trigger (use HIGH for BUY)
+                    if candle['high'] >= trigger_price:
+                        current_sl = entry_price  # Move SL to breakeven
+                        sl_moved_to_breakeven = True
+                else:  # SELL
+                    tp_distance = entry_price - take_profit
+                    trigger_price = entry_price - (tp_distance * breakeven_trigger_percent / 100)
+                    # Check if price reached trigger (use LOW for SELL)
+                    if candle['low'] <= trigger_price:
+                        current_sl = entry_price  # Move SL to breakeven
+                        sl_moved_to_breakeven = True
+
+            exit_type, exit_price = check_exit(direction, candle, take_profit, current_sl, tp_type, sl_type)
 
             if exit_type:
                 exit_time = candle_row['time']
@@ -370,7 +458,9 @@ def run_backtest(
             "exit_time": exit_time.strftime("%H:%M") if exit_time else "",
             "candles": candles_held,
             "pnl_pips": round(pnl_pips, 1),
-            "pnl_usd": round(pnl_usd, 2)
+            "pnl_usd": round(pnl_usd, 2),
+            "sl_moved_to_breakeven": sl_moved_to_breakeven,
+            "final_sl": current_sl
         })
 
         # Update equity curves

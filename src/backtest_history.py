@@ -45,7 +45,8 @@ def save_backtest_result(
     config: dict,
     results: dict,
     strategy_name: str,
-    symbol: str
+    symbol: str,
+    username: str = None
 ) -> str:
     """
     Save a backtest result to history.
@@ -55,18 +56,21 @@ def save_backtest_result(
         results: Backtest results dict
         strategy_name: Name of the strategy
         symbol: Trading symbol
+        username: Username who ran the backtest
 
     Returns:
         ID of the saved record
     """
     history = _load_history()
 
-    # Generate unique ID
-    record_id = datetime.now().strftime('%Y%m%d_%H%M%S')
+    # Generate unique ID with username
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    record_id = f"{username}_{timestamp}" if username else timestamp
 
     record = {
         'id': record_id,
         'timestamp': datetime.now().isoformat(),
+        'user': username or 'unknown',
         'strategy': strategy_name,
         'symbol': symbol,
         'config': config,
@@ -98,14 +102,28 @@ def save_backtest_result(
     return record_id
 
 
-def get_history() -> list:
-    """Get all backtest history records (without trades for performance)"""
+def get_history(username: str = None) -> list:
+    """
+    Get backtest history records (without trades for performance)
+
+    Args:
+        username: Optional username to filter by. If None, returns all records.
+
+    Returns:
+        List of history records
+    """
     history = _load_history()
+
+    # Filter by username if provided
+    if username:
+        history = [r for r in history if r.get('user') == username]
+
     # Return without trades for listing (lighter)
     return [
         {
             'id': r['id'],
             'timestamp': r['timestamp'],
+            'user': r.get('user', 'unknown'),
             'strategy': r['strategy'],
             'symbol': r['symbol'],
             'config': r['config'],
@@ -154,6 +172,7 @@ def history_to_dataframe(history: list) -> pd.DataFrame:
         row = {
             # Core info
             'ID': r['id'],
+            'User': r.get('user', 'unknown'),
             'Date': datetime.fromisoformat(r['timestamp']).strftime('%Y-%m-%d %H:%M'),
             'Strategy': r.get('strategy', ''),
             'Symbol': r.get('symbol', ''),
@@ -162,21 +181,21 @@ def history_to_dataframe(history: list) -> pd.DataFrame:
             'Timeframe': config.get('timeframe', ''),
             'Entry Time': config.get('entry_time', ''),
             'Lot Mode': config.get('lot_mode', ''),
-            'RR Ratio': config.get('rr_ratio', ''),
+            'RR Ratio': config.get('rr_ratio') if config.get('rr_ratio') is not None else None,
 
             # Config - Optional
             'Date Range': f"{config.get('start_date', '')} ~ {config.get('end_date', '')}",
             'Entry Mode': config.get('entry_mode', ''),
-            'Entry %': config.get('entry_percent', ''),
-            'Max Candles': config.get('max_candles', '') or 'Off',
-            'Buffer K': config.get('buffer_k', ''),
+            'Entry %': config.get('entry_percent') if config.get('entry_percent') is not None else None,
+            'Max Candles': config.get('max_candles') or 'Off',
+            'Buffer K': config.get('buffer_k') if config.get('buffer_k') is not None else None,
             'TP Type': config.get('tp_type', ''),
             'SL Type': config.get('sl_type', ''),
-            'Fixed Lot': config.get('fixed_lot', ''),
-            'Start Equity': config.get('starting_equity', ''),
+            'Fixed Lot': config.get('fixed_lot') if config.get('fixed_lot') is not None else None,
+            'Start Equity': config.get('starting_equity') if config.get('starting_equity') is not None else None,
             'Risk Mode': config.get('risk_mode', ''),
-            'Risk %': config.get('risk_percent', ''),
-            'Risk $': config.get('risk_amount', ''),
+            'Risk %': config.get('risk_percent') if config.get('risk_percent') is not None else None,
+            'Risk $': config.get('risk_amount') if config.get('risk_amount') is not None else None,
             'Risk Compound': 'Yes' if config.get('risk_compounding', True) else 'No',
 
             # Summary - Core
@@ -197,7 +216,7 @@ def history_to_dataframe(history: list) -> pd.DataFrame:
             'TP Exits': summary.get('tp_exits', 0),
             'SL Exits': summary.get('sl_exits', 0),
             'Time Exits': summary.get('time_exits', 0),
-            'Final Equity': summary.get('final_equity', 0),
+            'Final Equity': summary.get('final_equity') if summary.get('final_equity') is not None else None,
         }
         rows.append(row)
 
@@ -208,7 +227,7 @@ def history_to_dataframe(history: list) -> pd.DataFrame:
 # Column definitions for UI
 HISTORY_COLUMNS = {
     # Always shown (core)
-    'core': ['Date'],
+    'core': ['User', 'Date'],
 
     # Config columns (optional)
     'config': [
@@ -279,7 +298,7 @@ def create_excel_export(
             config_summary_data.append(['Entry Percent', f"{config.get('entry_percent', 0)}%"])
         config_summary_data.append(['RR Ratio', config.get('rr_ratio', '')])
         config_summary_data.append(['Max Candles', config.get('max_candles', 0) or 'Disabled'])
-        config_summary_data.append(['Buffer K', f"{config.get('buffer_k', 0)} pips"])
+        config_summary_data.append(['Buffer K', f"{config.get('buffer_k', 0)} points"])
         config_summary_data.append(['Lot Mode', 'Fixed' if config.get('lot_mode') == 'fixed' else 'Flex (Risk-based)'])
         config_summary_data.append(['TP Type', 'Price-based' if config.get('tp_type') == 'price_based' else 'Close-based'])
         config_summary_data.append(['SL Type', 'Close-based' if config.get('sl_type') == 'close_based' else 'Price-based'])

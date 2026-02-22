@@ -76,7 +76,7 @@ def main():
             new_password_confirm = st.text_input("Confirm Password*", type="password")
             new_role = st.selectbox("Role", ["user", "admin"])
 
-        submitted = st.form_submit_button("Register User", use_container_width=True, type="primary")
+        submitted = st.form_submit_button("Register User", width='stretch', type="primary")
 
         if submitted:
             # Validation

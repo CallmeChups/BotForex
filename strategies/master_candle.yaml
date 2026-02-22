@@ -43,9 +43,20 @@ parameters:
 
 # Supported symbols
 symbols:
+  # Metals & Crypto
   - XAUUSD
   - BTCUSD
   - ETHUSD
   - XAUUSDm
   - BTCUSDm
   - ETHUSDm
+  # Major Forex pairs (USD quote)
+  - EURUSD
+  - GBPUSD
+  - AUDUSD
+  # USD base pairs
+  - USDJPY
+  - USDCHF
+  - USDCAD
+  # Cross pairs
+  - AUDJPY

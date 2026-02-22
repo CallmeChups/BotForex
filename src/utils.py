@@ -27,11 +27,17 @@ def get_pip_value(symbol: str) -> float:
     """
     Get pip size (price movement per 1 pip) - Industry Standard.
 
-    XAUUSD: 1 pip = 0.01 ($1 move = 100 pips)
-    BTCUSD: 1 pip = 1.0 ($100 move = 100 pips)
-    ETHUSD: 1 pip = 0.01 ($1 move = 100 pips)
-    JPY pairs: 1 pip = 0.01
-    Other forex: 1 pip = 0.0001
+    Metals & Crypto:
+        XAUUSD: 1 pip = 0.01 ($1 move = 100 pips)
+        BTCUSD: 1 pip = 1.0 ($100 move = 100 pips)
+        ETHUSD: 1 pip = 0.01 ($1 move = 100 pips)
+
+    JPY pairs (2 decimal places):
+        USDJPY, AUDJPY, etc: 1 pip = 0.01
+
+    Standard Forex (4 decimal places):
+        EURUSD, GBPUSD, AUDUSD: 1 pip = 0.0001
+        USDCHF, USDCAD: 1 pip = 0.0001
     """
     symbol_upper = symbol.upper()
     if "XAU" in symbol_upper:
@@ -41,8 +47,37 @@ def get_pip_value(symbol: str) -> float:
     elif "ETH" in symbol_upper:
         return 0.01  # Ethereum: 1 pip = $0.01
     elif "JPY" in symbol_upper:
-        return 0.01  # JPY pairs: 1 pip = 0.01
-    return 0.0001    # Standard forex: 1 pip = 0.0001
+        return 0.01  # JPY pairs: 1 pip = 0.01 (USDJPY, AUDJPY, etc.)
+    return 0.0001    # Standard forex: 1 pip = 0.0001 (EURUSD, GBPUSD, etc.)
+
+
+def get_point_value(symbol: str) -> float:
+    """
+    Get point size (smallest price increment) for buffer/offset calculations.
+
+    On 5-digit brokers (like Exness), the MT5 "point" is the smallest
+    price increment (last displayed decimal). For forex, 1 pip = 10 points.
+
+    Forex (5-digit):
+        EURUSD, GBPUSD, AUDUSD, etc: 1 point = 0.00001
+    JPY pairs (3-digit):
+        USDJPY, AUDJPY: 1 point = 0.001
+    Gold (2-digit standard):
+        XAUUSD: 1 point = 0.01 (pip = point)
+    Crypto:
+        BTCUSD: 1 point = 1.0 (practical: MT5 point 0.01 too small for buffer)
+        ETHUSD: 1 point = 0.01 (pip = point)
+    """
+    symbol_upper = symbol.upper()
+    if "XAU" in symbol_upper:
+        return 0.01   # Gold: point = pip = 0.01
+    elif "BTC" in symbol_upper:
+        return 1.0    # Bitcoin: use pip (MT5 point 0.01 too small for buffer)
+    elif "ETH" in symbol_upper:
+        return 0.01   # Ethereum: point = pip = 0.01
+    elif "JPY" in symbol_upper:
+        return 0.001  # JPY 3-digit: point = pip/10
+    return 0.00001    # Forex 5-digit: point = pip/10
 
 
 def get_pip_value_per_lot(symbol: str) -> float:
@@ -51,22 +86,35 @@ def get_pip_value_per_lot(symbol: str) -> float:
 
     Formula: pip_value_per_lot = contract_size * pip_size
 
-    XAUUSD: 100 oz * $0.01 = $1.00 per pip per lot
-    BTCUSD: 1 BTC * $1.00 = $1.00 per pip per lot
-    ETHUSD: 1 ETH * $0.01 = $0.01 per pip per lot
-    Forex: 100,000 units * 0.0001 = $10.00 per pip per lot
+    Metals & Crypto:
+        XAUUSD: 100 oz * $0.01 = $1.00 per pip per lot
+        BTCUSD: 1 BTC * $1.00 = $1.00 per pip per lot
+        ETHUSD: 1 ETH * $0.01 = $0.01 per pip per lot
+
+    Forex (USD is quote currency - fixed pip value):
+        EURUSD, GBPUSD, AUDUSD: 100,000 * 0.0001 = $10.00 per pip per lot
+
+    Forex (USD is base currency - pip value varies with exchange rate):
+        USDJPY: ~$6.67 per pip at rate 150 (simplified to $10)
+        USDCHF: ~$11.36 per pip at rate 0.88 (simplified to $10)
+        USDCAD: ~$7.41 per pip at rate 1.35 (simplified to $10)
+
+    Cross pairs:
+        AUDJPY: ~$6.67 per pip at USDJPY rate 150 (simplified to $10)
+
+    Note: For backtesting, we use $10 as standard approximation for all forex pairs.
     """
     symbol_upper = symbol.upper()
     if "XAU" in symbol_upper:
-        return 1.0   # 100 oz × $0.01 pip = $1 per pip per lot
+        return 1.0   # 100 oz * $0.01 pip = $1 per pip per lot
     elif "BTC" in symbol_upper:
-        return 1.0   # 1 BTC × $1 pip = $1 per pip per lot
+        return 1.0   # 1 BTC * $1 pip = $1 per pip per lot
     elif "ETH" in symbol_upper:
-        return 0.01  # 1 ETH × $0.01 pip = $0.01 per pip per lot
+        return 0.01  # 1 ETH * $0.01 pip = $0.01 per pip per lot
     elif "JPY" in symbol_upper:
-        # For USD/JPY: 100,000 * 0.01 / ~150 (rate) ≈ $6.67, but simplified to $10
+        # JPY pairs: 100,000 * 0.01 / ~150 (rate) ≈ $6.67, but simplified to $10
         return 10.0
-    return 10.0      # Standard forex: 100,000 × 0.0001 = $10 per pip per lot
+    return 10.0      # Standard forex: 100,000 * 0.0001 = $10 per pip per lot
 
 
 def get_contract_size(symbol: str) -> float:

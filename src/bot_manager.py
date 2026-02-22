@@ -39,25 +39,61 @@ def load_bots() -> list:
 
 
 def save_bots(bots: list):
-    """Save bots to file"""
+    """Save bots to file with atomic write"""
+    import time
+    import tempfile
+    import shutil
+
     bots_file = get_bots_file()
-    with open(bots_file, 'w') as f:
-        json.dump(bots, f, indent=2)
+
+    # Atomic write: write to temp file then move
+    # This prevents corrupted file if interrupted
+    temp_fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(bots_file), suffix='.tmp')
+    try:
+        with os.fdopen(temp_fd, 'w') as f:
+            json.dump(bots, f, indent=2)
+
+        # Atomic move (rename is atomic on both Windows and Unix)
+        shutil.move(temp_path, bots_file)
+    except Exception as e:
+        # Clean up temp file on error
+        try:
+            os.unlink(temp_path)
+        except:
+            pass
+        raise e
 
 
 def is_process_running(pid: int) -> bool:
-    """Check if process is running"""
+    """Check if process is running (more reliable implementation)"""
     if platform.system() == "Windows":
         try:
-            # Use tasklist on Windows
-            output = subprocess.check_output(
-                f'tasklist /FI "PID eq {pid}"',
-                shell=True,
-                stderr=subprocess.DEVNULL
-            ).decode()
-            return str(pid) in output
+            # Use psutil if available (more reliable)
+            try:
+                import psutil
+                return psutil.pid_exists(pid)
+            except ImportError:
+                # Fallback to tasklist
+                output = subprocess.check_output(
+                    f'tasklist /FI "PID eq {pid}"',
+                    shell=True,
+                    stderr=subprocess.DEVNULL,
+                    timeout=5  # Timeout to prevent hanging
+                ).decode()
+                # Check for actual PID in output, not just string match
+                # Output format: "python.exe    12345 Console    1   123,456 K"
+                lines = output.strip().split('\n')
+                for line in lines:
+                    if str(pid) in line and line.strip():
+                        # Verify it's the actual PID column, not just substring
+                        parts = line.split()
+                        if len(parts) >= 2 and parts[1] == str(pid):
+                            return True
+                return False
         except Exception:
-            return False
+            # If check fails, assume process is still running to be safe
+            # Better to keep a dead bot in list than accidentally remove a live one
+            return True
     else:
         # Unix: check /proc
         try:
@@ -76,7 +112,7 @@ def start_bot(
     sl_pips: float = None,
     rr_ratio: float = None,
     max_candles: int = None,
-    interval: int = 60,
+    interval: int = 1,
     # New parameters matching backtest config
     timeframe: str = None,
     entry_time: str = None,
@@ -90,7 +126,12 @@ def start_bot(
     risk_amount: float = None,
     risk_compounding: bool = None,
     tp_type: str = None,
-    sl_type: str = None
+    sl_type: str = None,
+    # Move SL to Breakeven parameters
+    move_sl_to_breakeven: bool = None,
+    breakeven_trigger_percent: float = None,
+    # Pending order parameters
+    pending_order_max_candles: int = None
 ) -> tuple:
     """
     Start a new bot process
@@ -152,26 +193,55 @@ def start_bot(
     if sl_type:
         cmd.extend(["--sl_type", sl_type])
 
+    # Move SL to Breakeven parameters
+    if move_sl_to_breakeven is not None:
+        cmd.extend(["--move_sl_to_breakeven", "1" if move_sl_to_breakeven else "0"])
+    if breakeven_trigger_percent is not None:
+        cmd.extend(["--breakeven_trigger_percent", str(breakeven_trigger_percent)])
+
+    # Pending order parameters
+    if pending_order_max_candles is not None:
+        cmd.extend(["--pending_order_max_candles", str(pending_order_max_candles)])
+
     try:
+        # Create logs directory
+        os.makedirs("logs", exist_ok=True)
+
+        # Create log file for this bot (temporary name, will rename after getting PID)
+        temp_log = f"logs/bot_temp_{datetime.now(TIMEZONE).strftime('%Y%m%d_%H%M%S')}.log"
+        log_file = open(temp_log, 'w', buffering=1)  # Line buffered
+
         # Start process
         if platform.system() == "Windows":
             # Windows: use CREATE_NEW_PROCESS_GROUP
             process = subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,  # Merge stderr into stdout
                 creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
             )
         else:
             # Unix: use nohup-like behavior
             process = subprocess.Popen(
                 cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
                 start_new_session=True
             )
 
         pid = process.pid
+
+        # Rename log file with actual PID
+        final_log = f"logs/bot_{pid}.log"
+        log_file.close()
+
+        # Rename temp log to final log
+        import shutil
+        try:
+            shutil.move(temp_log, final_log)
+        except Exception as e:
+            # If rename fails, keep temp log
+            final_log = temp_log
 
         # Save bot info
         bot_info = {
@@ -199,12 +269,25 @@ def start_bot(
             'risk_compounding': risk_compounding,
             'tp_type': tp_type,
             'sl_type': sl_type,
+            'move_sl_to_breakeven': move_sl_to_breakeven,
+            'breakeven_trigger_percent': breakeven_trigger_percent,
+            'pending_order_max_candles': pending_order_max_candles,
             'started_at': datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M:%S'),
+            'log_file': final_log,
             'command': ' '.join(cmd)
         }
 
+        # Reload bots before saving to prevent race condition in batch creation
+        bots = load_bots()
         bots.append(bot_info)
         save_bots(bots)
+
+        # Save config to history for preset reuse
+        try:
+            from src.bot_config_history import save_bot_config as _save_config
+            _save_config(bot_info)
+        except Exception:
+            pass  # Non-critical — don't block bot start
 
         return True, f"Bot started with PID {pid}", bot_info
 
@@ -276,13 +359,14 @@ def stop_all_bots(user: str = None) -> tuple:
     return stopped, f"Stopped {stopped} bot(s)"
 
 
-def list_bots(user: str = None, refresh: bool = True) -> list:
+def list_bots(user: str = None, refresh: bool = True, cleanup: bool = False) -> list:
     """
     List running bots
 
     Args:
         user: Filter by user (None = all)
-        refresh: Check if processes are still running
+        refresh: Check if processes are still running (update status in-memory)
+        cleanup: Remove dead bots from file (only when user explicitly requests)
 
     Returns:
         List of bot info dicts
@@ -301,8 +385,11 @@ def list_bots(user: str = None, refresh: bool = True) -> list:
                 # Optionally keep stopped bots for history
                 # alive_bots.append(bot)
 
-        # Update file with only alive bots
-        save_bots(alive_bots)
+        # Only update file if cleanup is explicitly requested
+        # This prevents accidental removal of bots on page refresh
+        if cleanup:
+            save_bots(alive_bots)
+
         bots = alive_bots
 
     # Filter by user
@@ -346,7 +433,7 @@ def restart_bot(pid: int) -> tuple:
         sl_pips=bot.get('sl_pips'),
         rr_ratio=bot.get('rr_ratio'),
         max_candles=bot.get('max_candles'),
-        interval=bot.get('interval', 60),
+        interval=bot.get('interval', 1),
         timeframe=bot.get('timeframe'),
         entry_time=bot.get('entry_time'),
         entry_mode=bot.get('entry_mode'),
@@ -359,13 +446,17 @@ def restart_bot(pid: int) -> tuple:
         risk_amount=bot.get('risk_amount'),
         risk_compounding=bot.get('risk_compounding'),
         tp_type=bot.get('tp_type'),
-        sl_type=bot.get('sl_type')
+        sl_type=bot.get('sl_type'),
+        move_sl_to_breakeven=bot.get('move_sl_to_breakeven'),
+        breakeven_trigger_percent=bot.get('breakeven_trigger_percent'),
+        pending_order_max_candles=bot.get('pending_order_max_candles')
     )
 
 
 def get_bot_stats() -> dict:
     """Get bot statistics"""
-    bots = list_bots(refresh=True)
+    # Don't cleanup on stats check - just refresh status in-memory
+    bots = list_bots(refresh=True, cleanup=False)
 
     total = len(bots)
     test_mode = len([b for b in bots if b.get('test', True)])

@@ -72,351 +72,289 @@ def main():
         show_demo_results()
         return
 
-    # Parameters
-    st.subheader("Backtest Parameters")
-
     # Strategy selection
     strategy_options = {s['name']: s['id'] for s in enabled_strategies}
     selected_strategy_name = st.selectbox(
-        "Select Strategy",
+        "Strategy",
         options=list(strategy_options.keys())
     )
     selected_strategy = strategy_options[selected_strategy_name]
-
-    # Load strategy parameters
     params = get_strategy_parameters(selected_strategy)
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        # Symbol - allow selection from strategy list OR custom input
-        strategy_symbols = params.get('symbols', [])
-
-        use_custom_symbol = st.checkbox("Custom symbol", value=False)
-
-        if use_custom_symbol:
-            symbol = st.text_input(
-                "Symbol",
-                value=os.getenv("SYMBOL", "XAUUSD"),
-                help="Enter any symbol"
-            )
-        elif strategy_symbols:
-            symbol = st.selectbox(
-                "Symbol",
-                options=strategy_symbols,
-                help="From strategy's supported symbols"
-            )
-        else:
-            symbol = st.text_input(
-                "Symbol",
-                value=os.getenv("SYMBOL", "XAUUSD"),
-                help="Trading symbol"
-            )
-
-        # Date range
-        default_end = now.date()
-        default_start = default_end - timedelta(days=30)
-
-        start_date = st.date_input(
-            "Start Date",
-            value=default_start,
-            max_value=default_end
-        )
-
-    with col2:
-        end_date = st.date_input(
-            "End Date",
-            value=default_end,
-            max_value=default_end
-        )
-
-        # Entry time - allow custom or use strategy default
-        entry_time_str = params.get('entry_time', '21:05')
-
-        use_custom_time = st.checkbox("Custom entry time", value=False)
-
-        if use_custom_time:
-            # Option for batch entry times
-            batch_times = st.checkbox("Batch (multiple times)", value=False)
-
-            if batch_times:
-                custom_times_str = st.text_input(
-                    "Entry Times",
-                    value="21:05, 22:00, 23:00",
-                    help="Comma-separated times (e.g., 21:05, 22:00, 23:00)",
-                    placeholder="HH:MM, HH:MM, ..."
-                )
-                # Parse multiple times
-                entry_times = []
-                for t in custom_times_str.split(','):
-                    t = t.strip()
-                    try:
-                        entry_times.append(datetime.strptime(t, "%H:%M").time())
-                    except ValueError:
-                        pass
-                if not entry_times:
-                    st.error("No valid times. Use HH:MM format separated by commas.")
-                    entry_times = [datetime.strptime("21:05", "%H:%M").time()]
-            else:
-                custom_time_str = st.text_input(
-                    "Entry Time",
-                    value="21:05",
-                    max_chars=5,
-                    help="Format: HH:MM (e.g., 21:05)",
-                    placeholder="HH:MM"
-                )
-                try:
-                    entry_times = [datetime.strptime(custom_time_str, "%H:%M").time()]
-                except ValueError:
-                    st.error("Invalid time format. Use HH:MM (e.g., 21:05)")
-                    entry_times = [datetime.strptime("21:05", "%H:%M").time()]
-        else:
-            entry_times = [datetime.strptime(entry_time_str, "%H:%M").time()]
-            st.time_input(
-                "Entry Time",
-                value=entry_times[0],
-                step=300,
-                help=f"From strategy: {entry_time_str}",
-                disabled=True
-            )
-            st.caption(f"Strategy default: {entry_time_str}")
-
-    with col3:
-        # Timeframe - allow custom or use strategy default
-        strategy_timeframe = params.get('timeframe', 'M5')
-        timeframe_options = ["M1", "M5", "M15", "M30", "H1", "H4", "D1"]
-
-        use_custom_timeframe = st.checkbox("Custom timeframe", value=False)
-
-        if use_custom_timeframe:
-            timeframe = st.selectbox(
-                "Timeframe",
-                options=timeframe_options,
-                index=timeframe_options.index("M5"),
-                help="Select timeframe for candles"
-            )
-        else:
-            timeframe = strategy_timeframe
-            st.selectbox(
-                "Timeframe",
-                options=[strategy_timeframe],
-                help=f"From strategy: {strategy_timeframe}",
-                disabled=True
-            )
-            st.caption(f"Strategy default: {strategy_timeframe}")
-
-        rr_ratio = st.number_input(
-            "RR Ratio",
-            value=float(params.get('rr_ratio', 2.0)),
-            min_value=0.5,
-            max_value=10.0,
-            step=0.5,
-            help=f"Default: {params.get('rr_ratio', 2.0)}"
-        )
-
-        use_max_candles = st.checkbox(
-            "Enable Max Candles",
-            value=True,
-            help="Uncheck to disable time-based exit (only TP/SL)"
-        )
-
-        if use_max_candles:
-            max_candles = st.number_input(
-                "Max Candles",
-                value=int(params.get('max_candles', 7)),
-                min_value=1,
-                max_value=50,
-                help=f"Default: {params.get('max_candles', 7)} candles"
-            )
-        else:
-            max_candles = 0  # 0 means no limit
-            st.caption("Time exit disabled - trades exit only on TP or SL")
-
-    # Show strategy info
-    times_display = ', '.join([t.strftime('%H:%M') for t in entry_times])
-    st.caption(f"Strategy: **{selected_strategy_name}** | Timeframe: {timeframe} | Entry: {times_display}")
 
     st.divider()
 
-    # Entry Configuration
-    st.subheader("Entry")
+    # ── SECTION 1: Market ──
+    st.subheader("Market")
+    col1, col2, col3 = st.columns([2, 1, 1])
 
+    with col1:
+        # Symbol
+        strategy_symbols = params.get('symbols', [])
+        use_custom_symbol = st.checkbox("Custom symbol", value=False, key="bt_custom_symbol")
+
+        if use_custom_symbol:
+            symbol = st.text_input("Symbol", value=os.getenv("SYMBOL", "XAUUSD"), help="Enter any symbol")
+        elif strategy_symbols:
+            symbol = st.selectbox("Symbol", options=strategy_symbols)
+        else:
+            symbol = st.text_input("Symbol", value=os.getenv("SYMBOL", "XAUUSD"))
+
+        # Show symbol info inline
+        from src.utils import get_pip_value, get_pip_value_per_lot, get_contract_size
+        pv = get_pip_value(symbol)
+        pvl = get_pip_value_per_lot(symbol)
+        cs = get_contract_size(symbol)
+        st.caption(f"pip={pv} | $/pip/lot=${pvl:.2f} | contract={cs:,.0f}")
+
+    with col2:
+        # Timeframe
+        strategy_timeframe = params.get('timeframe', 'M5')
+        timeframe_options = ["M1", "M5", "M15", "M30", "H1", "H4", "D1"]
+        tf_index = timeframe_options.index(strategy_timeframe) if strategy_timeframe in timeframe_options else 1
+        timeframe = st.selectbox("Timeframe", options=timeframe_options, index=tf_index)
+
+    with col3:
+        # Entry time
+        entry_time_str = params.get('entry_time', '21:05')
+        use_custom_time = st.checkbox("Custom time", value=False, key="bt_custom_time")
+
+        if use_custom_time:
+            custom_time_str = st.text_input("Entry Time", value="21:05", max_chars=5, placeholder="HH:MM")
+            try:
+                entry_times = [datetime.strptime(custom_time_str, "%H:%M").time()]
+            except ValueError:
+                st.error("Invalid format. Use HH:MM")
+                entry_times = [datetime.strptime("21:05", "%H:%M").time()]
+        else:
+            entry_times = [datetime.strptime(entry_time_str, "%H:%M").time()]
+            st.text_input("Entry Time", value=entry_time_str, disabled=True)
+
+    # Date range
     col1, col2 = st.columns(2)
+    default_end = now.date()
+    default_start = default_end - timedelta(days=30)
+
+    with col1:
+        start_date = st.date_input("Start Date", value=default_start, max_value=default_end)
+    with col2:
+        end_date = st.date_input("End Date", value=default_end, max_value=default_end)
+
+    # Batch entry times (expandable)
+    with st.expander("Batch Entry Times"):
+        custom_times_str = st.text_input(
+            "Entry Times", value="21:05, 22:00, 23:00",
+            help="Comma-separated HH:MM", placeholder="HH:MM, HH:MM, ..."
+        )
+        use_batch = st.checkbox("Enable batch mode", value=False, key="bt_batch")
+        if use_batch:
+            entry_times = []
+            for t in custom_times_str.split(','):
+                t = t.strip()
+                try:
+                    entry_times.append(datetime.strptime(t, "%H:%M").time())
+                except ValueError:
+                    pass
+            if not entry_times:
+                st.error("No valid times.")
+                entry_times = [datetime.strptime("21:05", "%H:%M").time()]
+            st.caption(f"Will backtest {len(entry_times)} entry time(s)")
+
+    st.divider()
+
+    # ── SECTION 2: Trade Setup ──
+    st.subheader("Trade Setup")
+    col1, col2, col3 = st.columns(3)
 
     with col1:
         entry_mode = st.radio(
             "Entry Mode",
             options=["close", "range_percent"],
-            format_func=lambda x: "Close Price" if x == "close" else "Body Percent (%)",
+            format_func=lambda x: "Close Price" if x == "close" else "Range Percent",
             horizontal=True,
-            help="Close: Enter at candle close | Body %: Enter at % of candle body (Close-Open)"
+            help="Close: enter at candle close | Range %: enter at % retracement"
         )
 
     with col2:
-        if entry_mode == "range_percent":
-            entry_percent = st.number_input(
-                "Entry Percent (%)",
-                value=30.0,
-                min_value=0.0,
-                max_value=100.0,
-                step=5.0,
-                help="BUY: Close - X%(C-O) | SELL: Close + X%(O-C)"
-            )
-            st.caption(f"BUY: Close - {entry_percent}%(body) | SELL: Close + {entry_percent}%(body)")
-        else:
-            entry_percent = 0.0
-            st.caption("Entry at candle Close price")
-
-    st.divider()
-
-    # Exit Type Configuration
-    st.subheader("Exit Types")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        tp_type = st.radio(
-            "Take Profit (TP) Exit",
-            options=["price_based", "close_based"],
-            format_func=lambda x: "Price-based (Immediate)" if x == "price_based" else "Close-based (Delayed)",
-            horizontal=True,
-            help="Price-based: Exit when wick touches TP | Close-based: Exit when candle closes beyond TP"
+        rr_ratio = st.number_input(
+            "RR Ratio", value=float(params.get('rr_ratio', 2.0)),
+            min_value=0.5, max_value=10.0, step=0.5
         )
-        if tp_type == "price_based":
-            st.caption("TP triggers when High/Low touches TP level (exits at TP price)")
-        else:
-            st.caption("TP triggers when candle CLOSES beyond TP (exits at close price)")
 
-    with col2:
-        sl_type = st.radio(
-            "Stop Loss (SL) Exit",
-            options=["price_based", "close_based"],
-            format_func=lambda x: "Close-based (Delayed)" if x == "close_based" else "Price-based (Immediate)",
-            horizontal=True,
-            help="Close-based: Exit when candle closes beyond SL | Price-based: Exit when wick touches SL"
-        )
-        if sl_type == "close_based":
-            st.caption("SL triggers when candle CLOSES beyond SL (exits at close price)")
-        else:
-            st.caption("SL triggers when High/Low touches SL level (exits at SL price)")
-
-    st.divider()
-
-    # Lot Size Configuration
-    st.subheader("Lot Size")
-
-    lot_mode = st.radio(
-        "Lot Size Mode",
-        options=["fixed", "flex"],
-        format_func=lambda x: "Fixed" if x == "fixed" else "Flex (Risk-based)",
-        horizontal=True,
-        help="Fixed: manual lot size | Flex: calculated from risk % and SL distance"
-    )
-
-    # Buffer K - used for both modes (SL = candle body + k)
-    col1, col2 = st.columns(2)
-
-    with col1:
+    with col3:
         buffer_k = st.number_input(
-            "Buffer K (pips)",
-            value=5.0,
-            min_value=0.0,
-            max_value=200.0,
-            step=1.0,
-            help="SL = candle body + k pips"
+            "Buffer K (points)", value=5.0,
+            min_value=0.0, max_value=1000.0, step=1.0,
+            help="Extra points added to SL beyond candle wick"
         )
+        from src.utils import get_point_value
+        pt = get_point_value(symbol)
+        buffer_usd = buffer_k * pt
+        st.caption(f"{symbol}: {buffer_k:.0f} pts = ${buffer_usd:.2f} SL buffer")
 
-    st.caption("SL pips = (Close - Low) + k for BUY, (High - Close) + k for SELL")
-
-    if lot_mode == "fixed":
-        with col2:
-            fixed_lot = st.number_input(
-                "Lot Size",
-                value=float(params.get('lot_size', 0.01)),
-                min_value=0.01,
-                max_value=10.0,
-                step=0.01,
-                format="%.2f"
+    if entry_mode == "range_percent":
+        col1, col2 = st.columns(2)
+        with col1:
+            entry_percent = st.number_input(
+                "Entry Percent (%)", value=30.0,
+                min_value=0.0, max_value=100.0, step=5.0,
+                help="BUY: Close - X%(body) | SELL: Close + X%(body)"
             )
-        # Placeholders for flex params
-        risk_percent = 0.5
-        risk_amount = 0.0
-        risk_mode = "percent"
-        risk_compounding = True
-        starting_equity = 1000.0
+        with col2:
+            pending_order_max_candles = st.number_input(
+                "Max Wait (candles)", value=3,
+                min_value=1, max_value=10, step=1,
+                help="MISSED if not filled after N candles"
+            )
     else:
-        col1, col2, col3 = st.columns(3)
+        entry_percent = 0.0
+        pending_order_max_candles = 0
+
+    # ── SECTION 3: Exit Rules (collapsible) ──
+    with st.expander("Exit Rules", expanded=False):
+        col1, col2, col3, col4 = st.columns(4)
 
         with col1:
-            starting_equity = st.number_input(
-                "Starting Equity (USD)",
-                value=1000.0,
-                min_value=100.0,
-                max_value=1000000.0,
-                step=100.0,
-                help="Initial account equity"
+            tp_type = st.radio(
+                "TP Type",
+                options=["price_based", "close_based"],
+                format_func=lambda x: "Price (wick)" if x == "price_based" else "Close (candle)",
+                help="Price: exit when wick touches TP | Close: exit when candle closes beyond TP"
             )
 
         with col2:
-            risk_mode = st.radio(
-                "Risk Mode",
-                options=["percent", "fixed_amount"],
-                format_func=lambda x: "Percentage (%)" if x == "percent" else "Fixed Amount ($)",
-                horizontal=True,
-                help="Percent: risk changes with equity | Fixed: constant risk per trade"
+            sl_type = st.radio(
+                "SL Type",
+                options=["close_based", "price_based"],
+                format_func=lambda x: "Close (candle)" if x == "close_based" else "Price (wick)",
+                help="Close: exit when candle closes beyond SL | Price: exit when wick touches SL"
             )
 
         with col3:
-            if risk_mode == "percent":
-                risk_percent = st.number_input(
-                    "Risk per Trade (%)",
-                    value=0.5,
-                    min_value=0.1,
-                    max_value=5.0,
-                    step=0.1,
-                    format="%.1f",
-                    help="Percentage of equity to risk per trade"
+            use_max_candles = st.checkbox("Max Candles", value=True, key="bt_max_c")
+            if use_max_candles:
+                max_candles = st.number_input(
+                    "Limit", value=int(params.get('max_candles', 7)),
+                    min_value=1, max_value=50,
+                    help="Force close after N candles"
                 )
-                risk_amount = 0.0
             else:
-                risk_amount = st.number_input(
-                    "Risk per Trade ($)",
-                    value=5.0,
-                    min_value=1.0,
-                    max_value=1000.0,
-                    step=1.0,
-                    format="%.2f",
-                    help="Fixed dollar amount to risk per trade"
-                )
-                risk_percent = 0.0
-                st.caption(f"Constant ${risk_amount:.2f} risk per trade")
+                max_candles = 0
 
-        # Risk compounding option (only for percent mode)
-        if risk_mode == "percent":
-            risk_compounding = st.checkbox(
-                "Compounding Risk",
-                value=True,
-                help="ON: Risk % based on current equity (grows/shrinks) | OFF: Risk % based on starting equity (fixed)"
+        with col4:
+            move_sl_to_breakeven = st.checkbox("Breakeven", value=False, key="bt_be",
+                                               help="Move SL to entry when TP partially reached")
+            if move_sl_to_breakeven:
+                breakeven_trigger_percent = st.number_input(
+                    "Trigger (%)", value=50.0,
+                    min_value=10.0, max_value=90.0, step=5.0,
+                    help="Move SL to entry at this % of TP"
+                )
+            else:
+                breakeven_trigger_percent = 50.0
+
+    # ── SECTION 4: Position Sizing (collapsible) ──
+    with st.expander("Position Sizing", expanded=False):
+        lot_mode = st.radio(
+            "Mode",
+            options=["fixed", "flex"],
+            format_func=lambda x: "Fixed Lot" if x == "fixed" else "Flex (Risk-based)",
+            horizontal=True
+        )
+
+        if lot_mode == "fixed":
+            fixed_lot = st.number_input(
+                "Lot Size", value=float(params.get('lot_size', 0.01)),
+                min_value=0.01, max_value=10.0, step=0.01, format="%.2f"
             )
-            if risk_compounding:
-                st.caption(f"Risk will compound with equity changes")
-            else:
-                example_r = starting_equity * (risk_percent / 100)
-                st.caption(f"Risk fixed at {risk_percent}% of ${starting_equity:.0f} = ${example_r:.2f}/trade")
+            risk_percent = 0.5
+            risk_amount = 0.0
+            risk_mode = "percent"
+            risk_compounding = True
+            starting_equity = 1000.0
         else:
-            risk_compounding = True  # Not applicable for fixed_amount mode
+            col1, col2, col3 = st.columns(3)
 
-        fixed_lot = 0.01  # Not used in flex mode
+            with col1:
+                starting_equity = st.number_input(
+                    "Starting Equity ($)", value=1000.0,
+                    min_value=100.0, max_value=1000000.0, step=100.0
+                )
 
-    sl_pips = 0  # Not used - always calculated from candle + buffer k
+            with col2:
+                risk_mode = st.radio(
+                    "Risk Mode",
+                    options=["percent", "fixed_amount"],
+                    format_func=lambda x: "Percentage (%)" if x == "percent" else "Fixed Amount ($)",
+                    horizontal=True
+                )
 
-    st.divider()
+            with col3:
+                if risk_mode == "percent":
+                    risk_percent = st.number_input(
+                        "Risk/Trade (%)", value=0.5,
+                        min_value=0.1, max_value=5.0, step=0.1, format="%.1f"
+                    )
+                    risk_amount = 0.0
+                else:
+                    risk_amount = st.number_input(
+                        "Risk/Trade ($)", value=5.0,
+                        min_value=1.0, max_value=1000.0, step=1.0, format="%.2f"
+                    )
+                    risk_percent = 0.0
+
+            if risk_mode == "percent":
+                risk_compounding = st.checkbox("Compounding", value=True,
+                                               help="ON: risk % based on current equity | OFF: based on starting equity")
+            else:
+                risk_compounding = True
+
+            fixed_lot = 0.01
+
+    sl_pips = 0
+
+    # ── SUMMARY ──
+    is_batch = len(entry_times) > 1
+    entry_label = f"Range {entry_percent}%" if entry_mode == "range_percent" else "Close"
+    lot_label = f"{fixed_lot} lot" if lot_mode == "fixed" else f"Flex {risk_percent}%" if risk_mode == "percent" else f"Flex ${risk_amount}"
+    tp_label = "Price" if tp_type == "price_based" else "Close"
+    sl_label = "Close" if sl_type == "close_based" else "Price"
+
+    with st.container(border=True):
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Symbol", symbol)
+        with col2:
+            st.metric("Timeframe", timeframe)
+        with col3:
+            if is_batch:
+                st.metric("Entry Times", f"{len(entry_times)} times")
+            else:
+                st.metric("Entry Time", entry_times[0].strftime('%H:%M'))
+        with col4:
+            st.metric("RR Ratio", f"1:{rr_ratio}")
+
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Entry Mode", entry_label)
+        with col2:
+            st.metric("TP / SL", f"{tp_label} / {sl_label}")
+        with col3:
+            st.metric("Date Range", f"{start_date} ~ {end_date}")
+        with col4:
+            if lot_mode == "fixed":
+                pip_cost = fixed_lot * pvl
+                st.metric("Lot / Risk per Pip", f"{fixed_lot} / ${pip_cost:.2f}")
+            else:
+                if risk_mode == "percent":
+                    max_loss = starting_equity * risk_percent / 100
+                    st.metric("Max Loss / Trade", f"${max_loss:.2f}")
+                else:
+                    st.metric("Max Loss / Trade", f"${risk_amount:.2f}")
 
     # Run backtest button
-    is_batch = len(entry_times) > 1
     button_label = f"Run Batch Backtest ({len(entry_times)} entry times)" if is_batch else "Run Backtest"
 
-    if st.button(button_label, type="primary", use_container_width=True):
+    if st.button(button_label, type="primary", width='stretch'):
         # Convert dates to datetime
         start_dt = datetime.combine(start_date, datetime.min.time()).replace(tzinfo=TIMEZONE)
         end_dt = datetime.combine(end_date, datetime.max.time()).replace(tzinfo=TIMEZONE)
@@ -463,7 +401,10 @@ def main():
                 tp_type=tp_type,
                 sl_type=sl_type,
                 entry_mode=entry_mode,
-                entry_percent=entry_percent
+                entry_percent=entry_percent,
+                move_sl_to_breakeven=move_sl_to_breakeven,
+                breakeven_trigger_percent=breakeven_trigger_percent,
+                pending_order_max_candles=pending_order_max_candles if entry_mode == "range_percent" else 0
             )
 
             # Build config dict for export/history
@@ -480,6 +421,9 @@ def main():
                 'lot_mode': lot_mode,
                 'tp_type': tp_type,
                 'sl_type': sl_type,
+                'move_sl_to_breakeven': move_sl_to_breakeven,
+                'breakeven_trigger_percent': breakeven_trigger_percent,
+                'pending_order_max_candles': pending_order_max_candles if entry_mode == "range_percent" else 0,
             }
 
             if lot_mode == 'fixed':
@@ -497,7 +441,8 @@ def main():
                     config=backtest_config,
                     results=results,
                     strategy_name=selected_strategy_name,
-                    symbol=symbol
+                    symbol=symbol,
+                    username=username
                 )
 
             batch_results.append({
@@ -549,7 +494,7 @@ def main():
         )
 
     # Show history section
-    show_history_section()
+    show_history_section(username)
 
 
 def show_batch_summary(batch_results: list, strategy_name: str, symbol: str, lot_mode: str):
@@ -606,7 +551,7 @@ def show_batch_summary(batch_results: list, strategy_name: str, symbol: str, lot
     if 'Total USD' in batch_df.columns:
         styled_batch = styled_batch.map(color_positive, subset=['Total USD'])
 
-    st.dataframe(styled_batch, use_container_width=True, hide_index=True)
+    st.dataframe(styled_batch, width='stretch', hide_index=True)
 
     # Find best performer
     if not batch_df.empty:
@@ -661,6 +606,19 @@ def display_results(results: dict, symbol: str, strategy_name: str = "", lot_mod
     with col2:
         st.metric("Win Rate", f"{results['win_rate']}%")
         st.metric("Profit Factor", results['profit_factor'])
+        # Show SL Moved count if feature was enabled
+        if config.get('move_sl_to_breakeven', False):
+            sl_moved_count = sum(1 for t in results.get('trades', []) if t.get('sl_moved_to_breakeven', False))
+            st.metric("SL Moved to BE", f"{sl_moved_count}/{results['total_trades']}")
+
+        # Show MISSED trades count if pending order mode
+        if config.get('entry_mode') == 'range_percent' and config.get('pending_order_max_candles', 0) > 0:
+            missed_count = sum(1 for t in results.get('trades', []) if t.get('status') == 'MISSED')
+            total_signals = len(results.get('trades', []))
+            filled_count = total_signals - missed_count
+            st.metric("Trades Filled", f"{filled_count}/{total_signals}")
+            if missed_count > 0:
+                st.caption(f"⚠️ {missed_count} trades MISSED (pending order not filled)")
 
     with col3:
         pnl_delta = "profit" if results['total_pnl'] > 0 else "loss" if results['total_pnl'] < 0 else None
@@ -769,6 +727,17 @@ def show_trade_table(trades: list, lot_mode: str, strategy_name: str, symbol: st
     results = results or {}
     trades_df = pd.DataFrame(trades)
 
+    # Add SL Moved indicator column
+    if 'sl_moved_to_breakeven' in trades_df.columns:
+        trades_df['SL Moved'] = trades_df['sl_moved_to_breakeven'].apply(lambda x: '✓ BE' if x else '')
+
+    # Add Status indicator column for missed trades
+    if 'status' in trades_df.columns:
+        trades_df['Status'] = trades_df.apply(
+            lambda row: f"⚠️ MISSED ({row.get('miss_reason', 'N/A')})" if row.get('status') == 'MISSED' else '',
+            axis=1
+        )
+
     # Rename columns for display
     rename_cols = {
         'date': 'Date',
@@ -787,9 +756,11 @@ def show_trade_table(trades: list, lot_mode: str, strategy_name: str, symbol: st
     }
     trades_df = trades_df.rename(columns=rename_cols)
 
-    # Drop exit_time column if exists
-    if 'exit_time' in trades_df.columns:
-        trades_df = trades_df.drop(columns=['exit_time'])
+    # Drop internal columns
+    internal_cols = ['exit_time', 'sl_moved_to_breakeven', 'final_sl', 'status', 'miss_reason']
+    for col in internal_cols:
+        if col in trades_df.columns:
+            trades_df = trades_df.drop(columns=[col])
 
     # Select columns based on lot mode
     if lot_mode == "fixed":
@@ -813,8 +784,8 @@ def show_trade_table(trades: list, lot_mode: str, strategy_name: str, symbol: st
     styled_df = trades_df.style.map(color_pnl, subset=pnl_cols)
     st.dataframe(styled_df, width='stretch', hide_index=True)
 
-    # Download buttons
-    filename_parts = [strategy_name.replace(' ', '_')] if strategy_name else []
+    # Download buttons (include username to avoid conflicts)
+    filename_parts = [username, strategy_name.replace(' ', '_')] if strategy_name else [username]
     filename_parts.extend([symbol, datetime.now().strftime('%Y%m%d')])
     base_filename = f"backtest_{'_'.join(filename_parts)}"
 
@@ -882,7 +853,8 @@ def show_interactive_chart(trades: list, ohlc_data: pd.DataFrame, symbol: str):
 
     # Get data range (30 candles before, candles + 10 after)
     start_idx = max(0, entry_idx - 30)
-    end_idx = min(len(ohlc_data), entry_idx + trade['candles'] + 15)
+    candles_count = trade.get('candles', 10)  # Default 10 candles for missed trades
+    end_idx = min(len(ohlc_data), entry_idx + candles_count + 15)
     chart_data = ohlc_data.iloc[start_idx:end_idx].copy()
 
     # Create candlestick chart
@@ -964,31 +936,32 @@ def show_interactive_chart(trades: list, ohlc_data: pd.DataFrame, symbol: str):
         )
     )
 
-    # Exit marker
-    exit_candle_idx = entry_idx + trade['candles']
-    if exit_candle_idx < len(ohlc_data):
-        exit_time = ohlc_data.iloc[exit_candle_idx]['time']
-    else:
-        exit_time = chart_data['time'].iloc[-1]
+    # Exit marker (skip for MISSED trades with no exit_price)
+    exit_price = trade.get('exit_price')
+    if exit_price is not None:
+        exit_candle_idx = entry_idx + candles_count
+        if exit_candle_idx < len(ohlc_data):
+            exit_time = ohlc_data.iloc[exit_candle_idx]['time']
+        else:
+            exit_time = chart_data['time'].iloc[-1]
 
-    exit_price = trade['exit_price']
-    exit_color = 'green' if trade['exit_type'] == 'TP' else 'red' if trade['exit_type'] == 'SL' else 'orange'
+        exit_color = 'green' if trade['exit_type'] == 'TP' else 'red' if trade['exit_type'] == 'SL' else 'orange'
 
-    fig.add_trace(
-        go.Scatter(
-            x=[exit_time],
-            y=[exit_price],
-            mode='markers',
-            marker=dict(
-                symbol='x',
-                size=15,
-                color=exit_color,
-                line=dict(width=2, color='black')
-            ),
-            name=f"Exit ({trade['exit_type']})",
-            legendgroup="exit"
+        fig.add_trace(
+            go.Scatter(
+                x=[exit_time],
+                y=[exit_price],
+                mode='markers',
+                marker=dict(
+                    symbol='x',
+                    size=15,
+                    color=exit_color,
+                    line=dict(width=2, color='black')
+                ),
+                name=f"Exit ({trade['exit_type']})",
+                legendgroup="exit"
+            )
         )
-    )
 
     # Layout
     fig.update_layout(
@@ -1008,6 +981,17 @@ def show_interactive_chart(trades: list, ohlc_data: pd.DataFrame, symbol: str):
 
     st.plotly_chart(fig, use_container_width=True)
 
+    # Download button for interactive chart
+    chart_html = fig.to_html(include_plotlyjs='cdn', full_html=True)
+    chart_filename = f"trade_{selected_idx + 1}_{trade['date']}_{symbol}_{trade['direction']}.html"
+    st.download_button(
+        label="Download Interactive Chart (HTML)",
+        data=chart_html,
+        file_name=chart_filename,
+        mime="text/html",
+        help="Download as HTML file - opens in browser with full interactivity"
+    )
+
     # Trade details
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -1018,11 +1002,12 @@ def show_interactive_chart(trades: list, ohlc_data: pd.DataFrame, symbol: str):
         st.metric("TP", f"{trade['tp']:.2f}")
     with col3:
         st.metric("Exit Type", trade['exit_type'])
-        st.metric("Exit Price", f"{trade['exit_price']:.2f}")
+        exit_price_display = f"{trade['exit_price']:.2f}" if trade.get('exit_price') else "N/A"
+        st.metric("Exit Price", exit_price_display)
     with col4:
         pnl_color = "green" if trade['pnl_pips'] > 0 else "red"
         st.metric("P&L", f"{trade['pnl_pips']:+.1f} pips")
-        st.metric("Candles Held", trade['candles'])
+        st.metric("Candles Held", trade.get('candles', 'N/A'))
 
 
 def show_demo_results():
@@ -1072,13 +1057,23 @@ def show_demo_results():
     )
 
 
-def show_history_section():
+def show_history_section(username: str):
     """Show backtest history for comparison"""
 
     st.divider()
     st.subheader("Backtest History")
 
-    history = get_history()
+    # User filter toggle
+    col1, col2 = st.columns([3, 1])
+
+    with col1:
+        st.caption(f"Viewing backtest history for: **{username}**")
+
+    with col2:
+        show_all_users = st.checkbox("Show all users", value=False, key="show_all_users_history")
+
+    # Get history (filtered by user or all)
+    history = get_history(username=None if show_all_users else username)
 
     if not history:
         st.info("No backtest history yet. Run a backtest to start building your comparison history.")
@@ -1184,7 +1179,7 @@ def show_history_section():
     for col, func in style_subsets:
         styled_history = styled_history.map(func, subset=[col])
 
-    st.dataframe(styled_history, use_container_width=True, hide_index=True)
+    st.dataframe(styled_history, width='stretch', hide_index=True)
 
     st.caption(f"Showing {len(filtered_df)} of {len(history_df)} records | {len(display_cols)} columns")
 

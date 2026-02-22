@@ -2,7 +2,8 @@
 Daily M5 Master Candle Strategy
 
 Strategy Rules:
-- Check M5 candle closing at 21:05 (Asia/Ho_Chi_Minh) = Master Candle
+- Master Candle = M5 candle opening at 21:05 (Asia/Ho_Chi_Minh), closes at 21:10
+- Bot triggers at 21:10 (candle close) to analyze the completed 21:05 candle
 - Bullish (Close > Open): BUY, SL = Low - 30 pips
 - Bearish (Close < Open): SELL, SL = High + 30 pips
 - TP = Entry ± (Risk × 2) for RR 1:2
@@ -48,7 +49,7 @@ def send_telegram(text: str, is_error: bool = False) -> bool:
 
 
 def is_master_candle_time(candle_time: datetime) -> bool:
-    """Check if candle closes at 21:05 HCM time"""
+    """Check if candle opens at 21:05 HCM time (master candle)"""
     # Convert to HCM timezone if needed
     if candle_time.tzinfo is None:
         candle_time = candle_time.replace(tzinfo=TIMEZONE)

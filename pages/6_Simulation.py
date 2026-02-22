@@ -233,7 +233,7 @@ def main():
     st.divider()
 
     # Run simulation
-    if st.button("Run Simulation", use_container_width=True, type="primary"):
+    if st.button("Run Simulation", width='stretch', type="primary"):
         with st.spinner("Connecting to MT5 and running simulation..."):
             result, error = run_simulation(
                 symbol=symbol,
