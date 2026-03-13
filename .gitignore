@@ -2,15 +2,25 @@
 .env
 .env.*
 
-*.txt
-!requirements.txt
-
-# Ensure Python compiled caches are included in the repo
-!*.pyc
-!**/*.pyc
-!__pycache__/
-!**/__pycache__/
-*py.tmp*
+# Python cache
+__pycache__/
+**/__pycache__/
 *.pyc
+*.pyo
+*.pyd
+*py.tmp*
+
+# Logs
 logs/
+*.log
+
+# OS junk
 nul
+.DS_Store
+Thumbs.db
+
+# Virtual environment
+.venv/
+
+# Data files (runtime state — not for version control)
+data/running_bots.json

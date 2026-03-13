@@ -1,660 +1,469 @@
-# MT5 Forex Trading Bot - Kiến Trúc Hệ Thống
+# BotForex - System Architecture
 
-**Cập Nhật Lần Cuối**: 2026-01-17
-**Phiên Bản**: 0.1.0
-**Project**: MT5 Forex Trading Bot - Giao dịch Forex Tự Động
+**Last Updated**: 2026-02-26
+**Version**: 2.0.0
+**Status**: Production Ready
 
-## Tổng Quan Kiến Trúc
+---
 
-MT5 Forex Trading Bot sử dụng mô hình **Layered Pipeline Architecture** - một cấu trúc đơn, modular để xử lý dữ liệu từ MT5, tính toán chỉ báo, phát hiện tín hiệu giao dịch, gửi lệnh, và thông báo.
+## Overview
 
-### Thiết Kế Pattern: Pipeline Xử Lý
+BotForex is an automated Forex trading bot that executes the Master Candle strategy using MetaTrader5 (MT5) API. It runs multiple independent bot processes, each monitoring a specific trading symbol and executing trades based on configurable parameters.
+
+### Architecture Pattern: Process-Based Multi-Bot System
 
 ```
-┌─────────────────────────────────────┐
-│   Data Input Layer                  │
-│   (MT5 Connection & Data Fetch)     │
-└──────────────┬──────────────────────┘
-               │
-┌──────────────▼──────────────────────┐
-│   Calculation Layer                 │
-│   (Technical Indicators)            │
-├─ MACD (H4)                         │
-├─ Stochastic (M30)                  │
-├─ Moving Average (M5)               │
-└──────────────┬──────────────────────┘
-               │
-┌──────────────▼──────────────────────┐
-│   Signal Detection Layer            │
-│   (Strategy Logic)                  │
-├─ Cross Detection                   │
-├─ Condition Checking                │
-└──────────────┬──────────────────────┘
-               │
-┌──────────────▼──────────────────────┐
-│   Order Execution Layer             │
-│   (MT5 Order Management)            │
-├─ Price Preparation                 │
-├─ SL/TP Calculation                 │
-├─ Order Sending                     │
-└──────────────┬──────────────────────┘
-               │
-┌──────────────▼──────────────────────┐
-│   Notification Layer                │
-│   (User Alerts)                     │
-├─ Telegram Messages                 │
-├─ Retry Logic                       │
-└──────────────┬──────────────────────┘
-               │
-┌──────────────▼──────────────────────┐
-│   Logging Layer                     │
-│   (Record Keeping)                  │
-├─ Trade Details                     │
-├─ Error Logs                        │
-└─────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                    Streamlit UI (app.py)                        │
+│  Dashboard for starting/stopping bots, config, monitoring       │
+└────────────────────┬────────────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              Bot Manager (src/bot_manager.py)                    │
+│  Start/Stop/List bot processes, track running instances         │
+└────────────────────┬────────────────────────────────────────────┘
+                     │ (spawns subprocess)
+                     ▼
+┌─────────────────────────────────────────────────────────────────┐
+│           Bot Runner (src/bot_runner.py) - Per Bot Process      │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ 1. INIT: Load strategy, credentials, validate config    │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                     │                                            │
+│  ┌──────────────────▼──────────────────────────────────────┐   │
+│  │ 2. MAIN LOOP: Wait for entry time (checks every 1s)    │   │
+│  └──────────────────┬──────────────────────────────────────┘   │
+│                     │                                            │
+│  ┌──────────────────▼──────────────────────────────────────┐   │
+│  │ 3. ENTRY: Connect to MT5 at entry time, fetch candle   │   │
+│  │    Analyze candle (bullish=BUY, bearish=SELL)          │   │
+│  │    Calculate SL, TP, Lot size                          │   │
+│  └──────────────────┬──────────────────────────────────────┘   │
+│                     │                                            │
+│  ┌──────────────────▼──────────────────────────────────────┐   │
+│  │ 4. ORDER: Place order (MARKET or LIMIT pending)        │   │
+│  │    Retry LIMIT order for N candles if rejected        │   │
+│  │    Cancel LIMIT if not filled after N candles         │   │
+│  └──────────────────┬──────────────────────────────────────┘   │
+│                     │                                            │
+│  ┌──────────────────▼──────────────────────────────────────┐   │
+│  │ 5. MANAGEMENT: Move SL to breakeven at N% profit       │   │
+│  │    Check exit conditions (TP/SL/Time limit)            │   │
+│  │    Close position on exit                              │   │
+│  └──────────────────┬──────────────────────────────────────┘   │
+│                     │                                            │
+│  ┌──────────────────▼──────────────────────────────────────┐   │
+│  │ 6. NOTIFICATIONS: Send Telegram alerts                 │   │
+│  │    Logging to file (logs/bot_*.log)                    │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+                     │ (calls)
+                     ▼
+        ┌────────────────────────────────┐
+        │   MetaTrader5 Terminal (MT5)   │
+        │   - Order execution            │
+        │   - Real-time price feeds      │
+        │   - Position/tick info         │
+        └────────────────────────────────┘
 ```
 
-## Thành Phần Hệ Thống
+---
 
-### 1. Data Input Layer
+## Core Components
 
-**Mục đích**: Kết nối MT5, lấy dữ liệu real-time, xử lý frames
+### 1. Application Layer (app.py)
 
-**Thành Phần**:
-- **MT5 Connection** (test/ref.py:23-31)
-  - `mt5.initialize()`: Khởi tạo
-  - `mt5.login(account, password, server)`: Đăng nhập
-  - Error handling cho connection failure
+**Purpose**: Streamlit web dashboard for user interaction
 
-- **Data Fetching** (test/ref.py:48-57)
-  - `mt5.copy_rates_range(symbol, timeframe, date_from, date_to)`
-  - Lấy OHLC cho 3 timeframes: H4, M30, M5
-  - Dữ liệu 1 tuần mỗi vòng lặp
+**Responsibilities**:
+- Display bot status and controls
+- Allow users to start/stop bots with parameters
+- Configure MT5 credentials and strategy settings
+- View order history and backtest results
+- Pages: 1_Bots.py through 8_Settings.py
 
-**Output Format**:
-```python
+**Key Features**:
+- Real-time bot status monitoring
+- Configuration UI with validation
+- Historical data export
+- Backtest engine integration
+
+---
+
+### 2. Bot Manager (src/bot_manager.py)
+
+**Purpose**: Process lifecycle management
+
+**Key Functions**:
+
+| Function | Purpose |
+|----------|---------|
+| `start_bot()` | Launch bot_runner.py as subprocess with parameters |
+| `stop_bot()` | Terminate bot process gracefully |
+| `list_bots()` | Retrieve all running bot processes |
+| `is_process_running()` | Check if bot process is alive |
+| `load_bots()` / `save_bots()` | Persist bot state to `data/running_bots.json` |
+
+**Bot State Storage**:
+```json
 {
-    'time': Unix timestamp,
-    'open': Float (giá mở),
-    'high': Float (giá cao),
-    'low': Float (giá thấp),
-    'close': Float (giá đóng),
-    'tick_volume': Int (volume)
+  "bot_id": "master_candle_ETHUSDm_admin_12345",
+  "strategy": "master_candle",
+  "symbol": "ETHUSDm",
+  "user": "admin",
+  "pid": 12345,
+  "status": "running",
+  "started_at": "2026-02-26T10:30:00",
+  "params": { ... }
 }
-# Được convert thành pd.DataFrame
 ```
 
-**Error Handling**:
-- Retry nếu dữ liệu trống
-- Log failure và continue
-- Timeout management
+---
 
-### 2. Calculation Layer
+### 3. Bot Runner (src/bot_runner.py) - Main Trading Loop
 
-**Mục đích**: Tính các chỉ báo kỹ thuật
+**Purpose**: Core bot logic - monitors entry conditions, executes trades, manages positions
 
-**Module**: `src/calculation.py` (70 dòng)
-
-**Hàm Tính Toán**:
-
-#### MACD Calculation
-```python
-def calculate_macd(df, period_fast=12, period_slow=26, signal=9, column='close')
-# Returns: (macd_line list, signal_line list)
-# Logic:
-#   EMA_fast = df['close'].ewm(span=12).mean()
-#   EMA_slow = df['close'].ewm(span=26).mean()
-#   MACD = EMA_fast - EMA_slow
-#   Signal = MACD.ewm(span=9).mean()
+**Entry Point**:
+```bash
+python src/bot_runner.py \
+  --strategy master_candle \
+  --symbol ETHUSDm \
+  --user admin \
+  --timeframe M5 \
+  --entry_time 21:05 \
+  --entry_mode close \
+  --rr_ratio 2.0 \
+  --max_candles 7 \
+  [... more parameters]
 ```
 
-**Complexity**: O(n) - một lần pass
-**Performance**: < 0.5 sec cho 1 năm data
+**Main Loop Stages**:
 
-#### Stochastic Calculation
-```python
-def calculate_stoch(df, k_length=14, k_smooth=1, d_smooth=3)
-# Returns: {'k': pd.Series, 'd': pd.Series}
-# Logic:
-#   max_high = high.rolling(k_length).max()
-#   min_low = low.rolling(k_length).min()
-#   %K = (close - min_low) / (max_high - min_low) * 100
-#   %K_smooth = %K.rolling(k_smooth).mean()
-#   %D = %K_smooth.rolling(d_smooth).mean()
+#### Stage 1: Initialization
+- Load strategy config from `strategies/master_candle.yaml`
+- Fetch MT5 credentials for user from `config/auth.yaml`
+- Validate all parameters
+- Setup logging to `logs/bot_{id}_{timestamp}.log`
+- Send startup notification to Telegram
+
+#### Stage 2: Entry Detection Loop
+- Sleep for `--interval` seconds (default: 1s)
+- Check if current time matches candle close time
+  - Entry time: "21:05" (candle OPEN)
+  - Trigger: 21:05 + timeframe (e.g., M5 → 21:10, H1 → 22:05)
+- Verify not already traded today (`last_entry_date != today`)
+
+#### Stage 3: Candle Analysis
+- Connect to MT5 with credentials
+- Fetch last CLOSED candle (not current open)
+- Analyze direction:
+  - **Bullish** (close > open): BUY signal
+  - **Bearish** (close < open): SELL signal
+  - **Doji** (close == open): No trade
+- Calculate trade parameters:
+  - Entry price (from candle close)
+  - Stop Loss: Low - (SL_PIPS × pip_value) for BUY
+  - Take Profit: Entry ± (Risk × RR_Ratio)
+  - Lot size: Fixed or risk-based calculation
+
+#### Stage 4: Order Placement
+- **Entry Mode: "close"** (Market Order)
+  - Place market order at candle close price
+- **Entry Mode: "range_percent"** (Pending LIMIT Order)
+  - Calculate LIMIT entry price at X% of candle range
+  - Place pending LIMIT order
+  - If rejected: Retry for `--pending_order_max_candles` (default: 3)
+  - If not filled after `--pending_order_expire_candles`: Cancel
+
+**Pending Order Retry Logic**:
+- Saves signal data when LIMIT fails
+- Retries same LIMIT price on next candles
+- Converts to MARKET if price moves to/past entry
+- Cancels if max candles exceeded
+- Skips if price moved past SL (trade invalidated)
+
+#### Stage 5: Position Management
+- **Move SL to Breakeven** (if enabled):
+  - When trade reaches `--breakeven_trigger_percent` of TP
+  - Move SL to: Entry price OR latest candle close price
+  - Prevents further losses on winning trades
+- **Exit Conditions**:
+  - TP hit: Price-based (immediate exit)
+  - SL hit: Close-based (candle closes beyond SL)
+  - Time limit: Close after `--max_candles` candles
+
+#### Stage 6: Notifications & Logging
+- Send Telegram alerts:
+  - Startup confirmation
+  - Order placed
+  - SL/TP moved
+  - Exit executed
+  - Errors
+- Log all events to file for debugging
+
+---
+
+### 4. Strategy Module (src/strategy.py)
+
+**Purpose**: Master Candle strategy logic
+
+**Key Function**: `analyze_master_candle()`
+- Input: OHLC candle data
+- Output: Trade signal (direction, entry, SL, TP) or None
+
+**Strategy Rules**:
+```
+Time: 21:05 HCM (Asia/Ho_Chi_Minh timezone)
+- Bullish (Close > Open): BUY, SL = Low - 30 pips
+- Bearish (Close < Open): SELL, SL = High + 30 pips
+- Doji (Close == Open): Skip (no trade)
+
+Risk/Reward: RR 1:2
+- Risk = Entry - SL
+- Reward = Risk × 2
+- TP = Entry + Reward
+
+Time Limit: 7 candles (~35 min for M5)
 ```
 
-**Complexity**: O(n) với rolling windows
-**Performance**: < 0.3 sec
+---
 
-#### Moving Average
-```python
-def calculate_ma(df, period)
-# Returns: List of MA values
-# Simple rolling mean
+### 5. Order Management (src/orders.py)
+
+**Purpose**: Execute MT5 orders and fetch position data
+
+**Key Functions**:
+
+| Function | Purpose |
+|----------|---------|
+| `get_mt5_connection()` | Initialize MT5 and login |
+| `fetch_open_positions()` | Get all open positions |
+| `close_position()` | Close position by ticket |
+| `place_order()` | Market order |
+| `place_pending_order()` | Pending LIMIT order |
+
+---
+
+### 6. Backtest Engine (src/backtest.py)
+
+**Purpose**: Simulate strategy on historical data
+
+**Key Components**:
+- Historical data fetching from MT5
+- Trade simulation with OHLC data
+- Lot size calculation (fixed or risk-based)
+- P&L tracking
+- Statistics generation
+
+**Backtesting Features**:
+- Entry mode: Market or LIMIT with retry logic
+- Exit types: Price-based (TP), Close-based (SL), Time limit
+- Move SL to breakeven feature
+- Risk compounding option
+
+---
+
+### 7. Data Storage
+
+| File | Purpose |
+|------|---------|
+| `data/running_bots.json` | Active bot processes |
+| `data/orders.csv` | Trade history (symbol, direction, lot, entry, exit, P&L) |
+| `data/bot_config_history.json` | Config snapshots for each bot run |
+| `data/backtest_history.json` | Backtest result history |
+| `config/auth.yaml` | MT5 credentials per user |
+| `logs/bot_*.log` | Per-bot execution logs |
+
+---
+
+### 8. Supporting Modules
+
+#### src/utils.py
+- `get_pip_value()`: Symbol-specific pip size (0.0001 for forex, 0.01 for metals, 1.0 for crypto)
+- `get_point_value()`: Point size for broker (usually 1/10 of pip for 5-digit brokers)
+- `get_pip_value_per_lot()`: Value per pip per lot (for risk calculation)
+- `check_exit()`: Verify if position should exit (TP/SL/Time limit)
+- `non_zero_range()`: Handle zero-value ranges in crypto data
+
+#### src/calculation.py
+- Technical indicator calculations (MACD, Stochastic, MA, EMA)
+- Crossover detection
+
+#### src/telegram.py
+- Send Telegram notifications asynchronously
+- Separate channels for dev (errors) and user (trades)
+
+#### src/auth.py
+- Load/save MT5 credentials per user
+- Credential validation
+
+#### src/strategy_manager.py
+- Load strategy config from YAML files
+- Get strategy parameters
+
+#### src/symbol_validator.py
+- Validate trading symbols against broker's available symbols
+- Check symbol properties (min lot, step, etc.)
+
+#### src/backtest_history.py & bot_config_history.py
+- Persist historical backtest results
+- Track configuration changes for debugging
+
+---
+
+## Data Flow
+
+### Order Entry Flow
+```
+User clicks "Start Bot" in UI
+    ↓
+Bot Manager spawns bot_runner.py subprocess
+    ↓
+Bot Runner waits for entry_time
+    ↓
+Entry time arrives → Connect to MT5
+    ↓
+Fetch candle data
+    ↓
+Analyze direction (bullish/bearish)
+    ↓
+Calculate SL, TP, Lot size
+    ↓
+Place order (Market or LIMIT)
+    ↓
+Send Telegram alert
+    ↓
+Log to file
 ```
 
-#### EMA Calculation
-```python
-def calculate_ema(df, period=100)
-# Returns: List of EMA values
-# Manual calculation với multiplier = 2/(period+1)
+### Position Management Flow
+```
+Position opened
+    ↓
+Loop: Check every N seconds
+    ├─ TP hit? → Market close order
+    ├─ SL hit? → Market close order
+    ├─ Time limit? → Market close order
+    ├─ Move SL to BE? (if enabled at N% profit)
+    │   └─ Modify SL to entry or candle close price
+    └─ Repeat
+    ↓
+Position closed
+    ↓
+Log exit details + P&L
+    ↓
+Send Telegram alert
+    ↓
+Save to orders.csv
 ```
 
-**Dependency**: `src.utils.non_zero_range()`
-- Xử lý trường hợp high == low (crypto data)
-- Tránh division by zero
+---
 
-### 3. Signal Detection Layer
+## Key Parameters & Features
 
-**Mục đích**: Phát hiện tín hiệu giao dịch từ các chỉ báo
+### Entry Configuration
+- **entry_time**: Candle open time (e.g., "21:05") - bot triggers at close
+- **timeframe**: M5, M15, H1, H4, D1
+- **entry_mode**: "close" (market), "range_percent" (LIMIT)
+- **entry_percent**: Entry price % of candle range (for range_percent mode)
 
-**Hàm Chính**: `check_cross_2_list_updated(list_1, list_2, period=3, confirm=2)`
+### Order Management
+- **pending_order_max_candles**: Retry LIMIT order for N candles (default: 3)
+- **pending_order_expire_candles**: Cancel LIMIT if not filled after N candles (default: 0 = wait)
 
-**Logic**:
-```
-Input: Hai line (ví dụ MACD line vs Signal line)
-Output: {'up': bool, 'down': bool}
+### Risk Management
+- **rr_ratio**: Risk:Reward ratio (default: 2.0)
+- **sl_pips**: Stop loss distance in pips
+- **lot_size**: Fixed lot (fixed mode)
+- **risk_percent**: Risk % per trade (flex mode)
+- **risk_amount**: Fixed USD risk per trade
+- **risk_compounding**: Use current equity (1) or starting equity (0)
 
-Algorithm:
-1. Lấy 'period' bars cuối cùng (default 3)
-2. Kiểm tra nếu có 1 crossover trong period này
-3. Nếu có, kiểm tra 'confirm' bars (default 2) từ cuối
-4. Return True nếu crossover đã confirm
-```
+### Exit Configuration
+- **tp_type**: "price_based" (immediate exit) or "close_based" (wait for candle close)
+- **sl_type**: "price_based" or "close_based"
+- **max_candles**: Close position after N candles if not exited
+- **move_sl_to_breakeven**: Enable SL movement to entry price
+- **breakeven_trigger_percent**: TP % to trigger breakeven move
+- **breakeven_target**: Move SL to "entry" price or latest "close" price
 
-**Ứng Dụng**:
-```python
-# MACD Signal
-cross_macd = check_cross_2_list_updated(
-    macd_line, signal_line, period=10, confirm=1
-)
+### Control Parameters
+- **test**: 1 (test mode, no real trades), 0 (live trading)
+- **interval**: Check frequency in seconds (default: 1)
 
-# MA Crossover
-cross_ma = check_cross_2_list_updated(
-    close_prices, ma_20, period=10, confirm=1
-)
+---
 
-# Stochastic Threshold (không phải crossover)
-# Kiểm tra trực tiếp giá trị
-if first_stoch['k'][-1] < 20:
-    stoch_signal = True
-```
+## Error Handling & Resilience
 
-**Sensitivity Tuning**:
-- `period`: Số bars để kiểm tra (larger = less responsive)
-- `confirm`: Số bars confirm (larger = more confirmation)
+### Connection Errors
+- MT5 login fails → Retry on next loop iteration
+- Symbol not found → Log error, skip trade
+- Broker rejected order → Retry LIMIT for pending_order_max_candles
 
-### 4. Strategy Logic Layer
+### Data Errors
+- Invalid candle data → Skip and wait for next candle
+- Missing credentials → Stop bot immediately with error alert
 
-**Mục đích**: Kết hợp các tín hiệu thành quyết định giao dịch
+### Telegram Failures
+- Non-blocking async sends (doesn't block trading loop)
+- Timeout after 3 seconds
 
-**Location**: `test/ref.py` (lines 84-165)
+### Logging
+- UTF-8 encoded file logs with line buffering
+- Timestamped console output
+- Separate error, warning, and info levels
 
-**Entry Rules**:
+---
 
-**BUY Entry** (lines 84-91):
-```
-Condition: ALL của sau
-├─ MACD line > Signal line (cross up) → H4 uptrend
-├─ AND Stochastic(7,5,3)['k'][-1] < 20 → M30 oversold
-├─ AND Stochastic(13,13,5)['k'][-1] < 50 → M30 confirmation
-├─ AND Close > MA10 → M5 price above short MA
-└─ AND Close > MA20 → M5 price above long MA
-```
+## Security Considerations
 
-**SELL Entry** (lines 126-132):
-```
-Condition: ALL của sau
-├─ MACD line < Signal line (cross down) → H4 downtrend
-├─ AND Stochastic(7,5,3)['k'][-1] > 80 → M30 overbought
-├─ AND Stochastic(13,13,5)['k'][-1] > 50 → M30 confirmation
-├─ AND Close < MA10 → M5 price below short MA
-└─ AND Close < MA20 → M5 price below long MA
-```
+- MT5 credentials stored in `config/auth.yaml` (not in code)
+- Passwords logged as asterisks
+- Telegram errors sent to dev channel only
+- Trade alerts sent to user channel only
+- Bot runs in test mode by default
 
-**Multi-Timeframe Hierarchy**:
-```
-H4 (Trend Direction)
-  ↓
-M30 (Momentum/Confirmation)
-  ↓
-M5 (Entry Point Precision)
-```
+---
 
-### 5. Order Execution Layer
+## Performance
 
-**Mục đích**: Gửi lệnh đến MT5 với quản lý rủi ro
+- Bot loop interval: 1 second (configurable)
+- MT5 connection: ~100-200ms per call
+- Entry detection latency: <1 second (precise minute matching)
+- Candle fetch latency: 100-200ms
+- Max concurrent bots: Limited only by system resources
+- Each bot process: ~50-100 MB RAM
 
-**Flow** (lines 93-123, 136-163):
+---
 
-```
-1. Check Price
-   ├─ sell_price = mt5.symbol_info_tick(symbol).bid
-   └─ buy_price = mt5.symbol_info_tick(symbol).ask
+## Deployment
 
-2. Calculate SL/TP
-   ├─ SL = entry_price * (1 ± STOP_LOSS)
-   └─ TP = entry_price * (1 ± TAKE_PROFIT)
-   └─ STOP_LOSS = TAKE_PROFIT = 1.5 (tương tự ATR)
-
-3. Build Request
-   └─ request = {
-        'action': mt5.TRADE_ACTION_DEAL,
-        'symbol': 'BTCUSDm',
-        'price': entry_price,
-        'sl': stop_loss,
-        'tp': take_profit,
-        'deviation': 20,
-        'type': mt5.ORDER_TYPE_BUY/SELL,
-        'volume': 0.1,
-        'type_time': mt5.ORDER_TIME_GTC,
-        'type_filling': mt5.ORDER_FILLING_IOC,
-        'comment': 'Py Buy/Sell Position'
-      }
-
-4. Send Order
-   ├─ result = mt5.order_send(request)
-   └─ Check result._asdict()['order'] != 0
-
-5. Handle Result
-   ├─ Success: Log trade, break loop
-   └─ Failure: Log error, continue
+**Single Bot Example**:
+```bash
+python src/bot_runner.py \
+  --strategy master_candle \
+  --symbol ETHUSDm \
+  --user admin \
+  --test 0 \
+  --entry_mode close
 ```
 
-**Order Parameters**:
-| Parameter | Value | Ý Nghĩa |
-|-----------|-------|--------|
-| action | TRADE_ACTION_DEAL | Lệnh thị trường (market order) |
-| type | ORDER_TYPE_BUY/SELL | Hướng giao dịch |
-| volume | 0.1 | Kích thước (0.1 lot) |
-| sl | entry*(1-1.5) | Stop loss (1.5x từ entry) |
-| tp | entry*(1+1.5) | Take profit (1.5x từ entry) |
-| deviation | 20 | Slippage tolerance (pips) |
-| type_time | ORDER_TIME_GTC | Good-till-cancelled |
-| type_filling | ORDER_FILLING_IOC | Immediate-or-cancel |
+**Multi-Bot Deployment**:
+- Use Streamlit UI to start multiple bots
+- Each bot runs in separate subprocess
+- Independent MT5 connections per bot
+- Shared data directory for history tracking
 
-**Error Handling**:
-- Check `result._asdict()['order'] == 0` → failure
-- Get error message: `result._asdict()['comment']`
-- Retry login nếu session mati
-- Log timestamp khi trade executed
+---
 
-### 6. Notification Layer
+## Future Enhancements
 
-**Mục đích**: Thông báo user qua Telegram
-
-**Module**: `src/telegram.py` (58 dòng)
-
-**Hàm Chính**:
-```python
-def send_message(msg, chat_id, max_retries=5, token=TOKEN,
-                 disable_notification=True, debug=False)
-```
-
-**Features**:
-- **Retry Logic**: Tối đa 5 lần, sleep 5 giây giữa lần
-- **Multiple Recipients**: Support list chat_ids
-- **Disable Sound**: `disable_notification=True`
-- **Debug Mode**: In console thay vì gửi thực
-
-**Flow**:
-```
-1. Validate chat_id
-   ├─ Nếu string → convert thành list
-   └─ Nếu list → dedup với set()
-
-2. For each chat_id:
-   ├─ POST /sendMessage
-   ├─ Retry nếu fail (max 5 lần)
-   ├─ Sleep 5s giữa retry
-   └─ Log result
-
-3. Error Handling
-   └─ Catch generic Exception, retry
-```
-
-**Message Template** (sẽ implement):
-```
-Entry Signal:
-📈 BUY SIGNAL on BTCUSDm
-Entry: $28,500
-SL: $27,975
-TP: $29,025
-Risk/Reward: 1:1.5
-
-Trade Executed:
-✅ BUY order #12345
-Volume: 0.1
-Entry: $28,500
-Time: 2026-01-17 10:30 UTC
-```
-
-**Hardcoded Token**:
-```python
-TOKEN = "7363572293:AAHd595bWg7liBafg8qEmasPh8Zx1I2crWo"  # ⚠️ SECURITY
-```
-*Fix: Move to environment variables*
-
-### 7. Logging Layer
-
-**Mục đích**: Ghi lại chi tiết giao dịch và lỗi
-
-**Hiện Tại**: Chỉ có `print()` statements
-**Kế Hoạch**: Implement `logging` module
-
-**Expected Log Levels**:
-```python
-logger.debug("Processing signal...")     # Chi tiết
-logger.info("Trade executed: BUY 0.1")   # Thông tin quan trọng
-logger.warning("High slippage: 50 pips") # Cảnh báo
-logger.error("MT5 connection lost")      # Lỗi
-logger.critical("Balance depleted")      # Nghiêm trọng
-```
-
-**Trade Log Format**:
-```
-Timestamp: 2026-01-17 10:30:45.123
-Action: BUY
-Symbol: BTCUSDm
-Volume: 0.1
-Entry: 28500.25
-SL: 27975.25
-TP: 29025.25
-Status: SUCCESS
-Comment: Py Buy Position
-```
-
-## Dòng Dữ Liệu (Data Flow)
-
-### Main Loop
-
-```
-while True:
-    ├─ 1. Get Data
-    │  ├─ long_data = mt5.copy_rates_range(SYMBOL, H4, date_from, date_to)
-    │  ├─ mid_data = mt5.copy_rates_range(SYMBOL, M30, date_from, date_to)
-    │  └─ short_data = mt5.copy_rates_range(SYMBOL, M5, date_from, date_to)
-    │
-    ├─ 2. Calculate Indicators
-    │  ├─ macd_line, signal_line = calculate_macd(long_data)
-    │  ├─ first_stoch = calculate_stoch(mid_data, k_length=7, k_smooth=5, d_smooth=3)
-    │  ├─ second_stoch = calculate_stoch(mid_data, k_length=13, k_smooth=13, d_smooth=5)
-    │  ├─ ma_short = calculate_ma(short_data, 10)
-    │  └─ ma_long = calculate_ma(short_data, 20)
-    │
-    ├─ 3. Detect Signals
-    │  ├─ cross_macd = check_cross_2_list_updated(macd_line, signal_line)
-    │  ├─ cross_price_ma_short = check_cross_2_list_updated(close_prices, ma_short)
-    │  └─ cross_price_ma_long = check_cross_2_list_updated(close_prices, ma_long)
-    │
-    ├─ 4. Check Entry Conditions
-    │  ├─ If ALL BUY conditions met:
-    │  │  └─ Execute BUY order
-    │  ├─ Else If ALL SELL conditions met:
-    │  │  └─ Execute SELL order
-    │  └─ Else:
-    │     └─ Continue loop
-    │
-    ├─ 5. Execute Order (if triggered)
-    │  ├─ Get current price (bid/ask)
-    │  ├─ Calculate SL/TP
-    │  ├─ Send order to MT5
-    │  ├─ Check result
-    │  └─ Log trade OR error
-    │
-    ├─ 6. Notify User
-    │  ├─ Send Telegram alert
-    │  └─ Include order details
-    │
-    └─ 7. Loop Next Cycle
-```
-
-## Kiến Trúc Quản Lý Trạng Thái
-
-**Current State (Early PoC)**:
-- Stateless execution (mỗi iteration độc lập)
-- Không có persistent state
-- Loop vô hạn, break sau 1 trade
-
-**Future State (Phase 2)**:
-```
-State Variables:
-├─ is_in_position: bool (có lệnh đang mở)
-├─ position_type: 'BUY' | 'SELL' | None
-├─ entry_price: float
-├─ entry_time: datetime
-├─ order_id: int
-└─ pnl: float (realized P&L)
-
-Entry Rules (với state):
-├─ Allow BUY nếu NOT in_position
-└─ Allow SELL nếu in_position AND position_type == 'BUY'
-
-Exit Rules:
-├─ SL hit → Automatic exit
-├─ TP hit → Automatic exit
-└─ Manual exit (Telegram command)
-```
-
-## Quy Trình Khởi Động
-
-```
-main.py (sắp implement)
-  ├─ 1. Load config.yaml
-  │  ├─ MT5 credentials
-  │  ├─ Telegram tokens
-  │  └─ Strategy parameters
-  │
-  ├─ 2. Initialize MT5
-  │  ├─ mt5.initialize()
-  │  └─ mt5.login(...)
-  │
-  ├─ 3. Initialize Telegram
-  │  └─ Verify token valid
-  │
-  ├─ 4. Setup Logging
-  │  ├─ Create logs/ directory
-  │  └─ Setup file + console handlers
-  │
-  ├─ 5. Run Strategy Loop
-  │  └─ Call ref.py main logic
-  │
-  └─ 6. Cleanup (on exit)
-     ├─ mt5.shutdown()
-     └─ Close log files
-```
-
-## Quản Lý Lỗi & Recovery
-
-### Error Handling Strategy
-
-```
-┌─ MT5 Connection Error
-│  ├─ Retry login (3 times)
-│  ├─ Wait 5 seconds
-│  └─ Exit if persist
-│
-├─ Order Send Failure
-│  ├─ Log error
-│  ├─ Parse error code
-│  ├─ Retry if retriable (3 times)
-│  └─ Continue to next cycle
-│
-├─ Data Fetch Empty
-│  ├─ Retry 3 times
-│  ├─ Wait 1 second between
-│  └─ Continue if persistent
-│
-└─ Telegram Send Failure
-   ├─ Retry 5 times
-   ├─ Wait 5 seconds between
-   └─ Log failure (non-blocking)
-```
-
-### Custom Exceptions (Planned)
-
-```python
-class MT5ConnectionError(Exception):
-    """MT5 initialization or login failed"""
-    pass
-
-class OrderExecutionError(Exception):
-    """Order send failed"""
-    pass
-
-class StrategyError(Exception):
-    """Strategy logic error"""
-    pass
-
-class TelegramError(Exception):
-    """Telegram notification failed"""
-    pass
-```
-
-## Sơ Đồ Hoạt Động Tổng Quát
-
-```
-┌─────────────────────────────────────┐
-│  MetaTrader5 Terminal (Running)     │
-│  ├─ Symbol: BTCUSDm                 │
-│  ├─ Account: Connected              │
-│  └─ Real-time Prices                │
-└────────────────┬────────────────────┘
-                 │ OHLC Data (H4/M30/M5)
-                 ▼
-    ┌────────────────────────┐
-    │  Bot Process (Python)  │
-    │                        │
-    │  ┌──────────────────┐  │
-    │  │ Data Fetcher     │  │ (MT5 API)
-    │  ├─ copy_rates_range│  │
-    │  └──────────────────┘  │
-    │         │              │
-    │         ▼              │
-    │  ┌──────────────────┐  │
-    │  │ Calc Indicators  │  │ (calculation.py)
-    │  ├─ MACD (H4)      │  │
-    │  ├─ Stoch (M30)    │  │
-    │  ├─ MA (M5)        │  │
-    │  └──────────────────┘  │
-    │         │              │
-    │         ▼              │
-    │  ┌──────────────────┐  │
-    │  │ Detect Signals   │  │ (check_cross...)
-    │  ├─ Crossovers     │  │
-    │  ├─ Thresholds     │  │
-    │  └──────────────────┘  │
-    │         │              │
-    │         ▼              │
-    │  ┌──────────────────┐  │
-    │  │ Strategy Logic   │  │ (Entry rules)
-    │  ├─ BUY conditions │  │
-    │  ├─ SELL conditions│  │
-    │  └──────────────────┘  │
-    │         │              │
-    │    [If conditions met]  │
-    │         │              │
-    │         ▼              │
-    │  ┌──────────────────┐  │
-    │  │ Execute Order    │  │ (MT5 API)
-    │  ├─ Calc SL/TP     │  │
-    │  ├─ order_send()   │  │
-    │  └──────────────────┘  │
-    │         │              │
-    │         ▼              │
-    │  ┌──────────────────┐  │
-    │  │ Notify User      │  │ (Telegram)
-    │  ├─ Send alert     │  │
-    │  ├─ Retry logic    │  │
-    │  └──────────────────┘  │
-    │         │              │
-    │         ▼              │
-    │  ┌──────────────────┐  │
-    │  │ Log Trade        │  │
-    │  ├─ File log        │  │
-    │  ├─ Console output  │  │
-    │  └──────────────────┘  │
-    │         │              │
-    └─────────┼──────────────┘
-              │
-              ▼ (Next iteration)
-         [Loop back to 1]
-```
-
-## Module Dependency Graph
-
-```
-main.py (Entry point - chưa implement)
-  └─ ref.py (Strategy runner)
-     ├─ src.calculation
-     │  ├─ calculate_macd()
-     │  ├─ calculate_stoch()
-     │  ├─ calculate_ma()
-     │  ├─ calculate_ema()
-     │  ├─ check_cross_2_list_updated()
-     │  └─ src.utils
-     │     └─ non_zero_range()
-     │
-     ├─ MetaTrader5 (External API)
-     │  └─ mt5.initialize(), mt5.login(), mt5.copy_rates_range(), etc
-     │
-     ├─ pandas (Data handling)
-     │  └─ pd.DataFrame()
-     │
-     ├─ numpy (Numerical)
-     │  └─ np.array operations
-     │
-     └─ src.telegram (Notifications - sắp integrate)
-        └─ send_message()
-           ├─ requests (HTTP)
-           └─ time (Retry delay)
-```
-
-## Tương Lai: Kiến Trúc Nâng Cao
-
-### Phase 2: Modular Architecture
-
-```
-BotForex/
-├── bot/
-│   ├── strategy.py       # Strategy interface
-│   ├── mt5_connector.py   # MT5 abstraction
-│   └── position_manager.py # State management
-├── indicators/
-│   ├── base.py           # Indicator interface
-│   ├── macd.py
-│   ├── stochastic.py
-│   └── ma.py
-├── notifications/
-│   ├── base.py
-│   └─ telegram.py
-├── logging/
-│   └─ trade_logger.py
-└── main.py
-```
-
-### Phase 3: Multi-Instance Support
-
-```
-BotForex/
-├── instances/
-│   ├── instance_1.yaml   # BTC long
-│   ├── instance_2.yaml   # EUR short
-│   └── instance_3.yaml   # GLD neutral
-└── bot_manager.py        # Manage multiple instances
-```
-
-## Tài Liệu Liên Quan
-
-- [Project Overview & PDR](./project-overview-pdr.md)
-- [Code Standards](./code-standards.md)
-- [Codebase Summary](./codebase-summary.md)
-- [Project Roadmap](./project-roadmap.md)
-
-## Unresolved Design Questions
-
-1. **State Management**: Lưu trữ position state ở đâu (memory/database)?
-2. **Multi-Symbol**: Một bot chỉ handle 1 symbol hay multiple?
-3. **Backtesting**: Integration point nào?
-4. **Risk Management**: Thêm max loss per day?
-5. **Alert Frequency**: Gửi alert mỗi signal hay chỉ executed order?
+- Multiple strategy support (templates)
+- Advanced order types (Trailing SL, OCO)
+- Position scaling (pyramid entries)
+- Correlation-based multi-symbol management
+- ML-based entry signal validation
+- Mobile app integration

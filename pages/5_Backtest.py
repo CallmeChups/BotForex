@@ -24,8 +24,10 @@ from src.auth import require_auth, get_user_mt5_credentials, has_mt5_credentials
 username, name = require_auth()
 
 from src.backtest import fetch_historical_data, run_backtest
+from src.backtest_multi import run_backtest_multi
 from src.utils import is_mt5_available
 from src.strategy_manager import list_strategies, get_strategy_parameters
+from src.i18n import t, lang_toggle_button
 from src.backtest_history import (
     save_backtest_result,
     get_history,
@@ -38,438 +40,65 @@ from src.backtest_history import (
 TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
 
 
+# ── Cached data loaders ──
+@st.cache_data(ttl=30)
+def _cached_strategies():
+    return list_strategies()
+
+@st.cache_data(ttl=30)
+def _cached_strategy_params(strategy_id):
+    return get_strategy_parameters(strategy_id)
+
+
 def main():
-    st.title("Backtest Strategy")
+    lang_toggle_button(st.sidebar)
+    st.title(t("page_title"))
 
     now = datetime.now(TIMEZONE)
-    st.markdown(f"**Current Time:** {now.strftime('%H:%M:%S %d/%m/%Y')} (HCM)")
+    st.markdown(f"**{t('current_time')}:** {now.strftime('%H:%M:%S %d/%m/%Y')} (HCM)")
 
     st.divider()
 
     # Check MT5 availability
     if not is_mt5_available():
-        st.error("MT5 not available (Windows only). Backtest requires MT5 for historical data.")
+        st.error(t("no_mt5"))
         show_demo_results()
         return
 
     # Check if user has MT5 credentials
     if not has_mt5_credentials(username):
-        st.warning("MT5 account not configured. Please go to Settings to add your MT5 credentials.")
-        st.page_link("pages/8_Settings.py", label="Go to Settings", icon="⚙️")
+        st.warning(t("no_credentials"))
+        st.page_link("pages/8_Settings.py", label=t("go_settings"), icon="⚙️")
         show_demo_results()
         return
 
     # Get user credentials
     user_creds = get_user_mt5_credentials(username)
 
-    # Get available strategies
-    strategies = list_strategies()
+    # Get available strategies (cached)
+    strategies = _cached_strategies()
     enabled_strategies = [s for s in strategies if s.get('enabled', True)]
 
     if not enabled_strategies:
-        st.warning("No strategies available. Create one in the Strategies page.")
-        st.page_link("pages/4_Strategies.py", label="Go to Strategies", icon="📖")
+        st.warning(t("no_strategies"))
+        st.page_link("pages/4_Strategies.py", label=t("go_strategies"), icon="📖")
         show_demo_results()
         return
 
     # Strategy selection
     strategy_options = {s['name']: s['id'] for s in enabled_strategies}
     selected_strategy_name = st.selectbox(
-        "Strategy",
+        t("strategy"),
         options=list(strategy_options.keys())
     )
     selected_strategy = strategy_options[selected_strategy_name]
-    params = get_strategy_parameters(selected_strategy)
+    params = _cached_strategy_params(selected_strategy)
+    is_multi_strategy = params.get('window_start') is not None
 
     st.divider()
 
-    # ── SECTION 1: Market ──
-    st.subheader("Market")
-    col1, col2, col3 = st.columns([2, 1, 1])
-
-    with col1:
-        # Symbol
-        strategy_symbols = params.get('symbols', [])
-        use_custom_symbol = st.checkbox("Custom symbol", value=False, key="bt_custom_symbol")
-
-        if use_custom_symbol:
-            symbol = st.text_input("Symbol", value=os.getenv("SYMBOL", "XAUUSD"), help="Enter any symbol")
-        elif strategy_symbols:
-            symbol = st.selectbox("Symbol", options=strategy_symbols)
-        else:
-            symbol = st.text_input("Symbol", value=os.getenv("SYMBOL", "XAUUSD"))
-
-        # Show symbol info inline
-        from src.utils import get_pip_value, get_pip_value_per_lot, get_contract_size
-        pv = get_pip_value(symbol)
-        pvl = get_pip_value_per_lot(symbol)
-        cs = get_contract_size(symbol)
-        st.caption(f"pip={pv} | $/pip/lot=${pvl:.2f} | contract={cs:,.0f}")
-
-    with col2:
-        # Timeframe
-        strategy_timeframe = params.get('timeframe', 'M5')
-        timeframe_options = ["M1", "M5", "M15", "M30", "H1", "H4", "D1"]
-        tf_index = timeframe_options.index(strategy_timeframe) if strategy_timeframe in timeframe_options else 1
-        timeframe = st.selectbox("Timeframe", options=timeframe_options, index=tf_index)
-
-    with col3:
-        # Entry time
-        entry_time_str = params.get('entry_time', '21:05')
-        use_custom_time = st.checkbox("Custom time", value=False, key="bt_custom_time")
-
-        if use_custom_time:
-            custom_time_str = st.text_input("Entry Time", value="21:05", max_chars=5, placeholder="HH:MM")
-            try:
-                entry_times = [datetime.strptime(custom_time_str, "%H:%M").time()]
-            except ValueError:
-                st.error("Invalid format. Use HH:MM")
-                entry_times = [datetime.strptime("21:05", "%H:%M").time()]
-        else:
-            entry_times = [datetime.strptime(entry_time_str, "%H:%M").time()]
-            st.text_input("Entry Time", value=entry_time_str, disabled=True)
-
-    # Date range
-    col1, col2 = st.columns(2)
-    default_end = now.date()
-    default_start = default_end - timedelta(days=30)
-
-    with col1:
-        start_date = st.date_input("Start Date", value=default_start, max_value=default_end)
-    with col2:
-        end_date = st.date_input("End Date", value=default_end, max_value=default_end)
-
-    # Batch entry times (expandable)
-    with st.expander("Batch Entry Times"):
-        custom_times_str = st.text_input(
-            "Entry Times", value="21:05, 22:00, 23:00",
-            help="Comma-separated HH:MM", placeholder="HH:MM, HH:MM, ..."
-        )
-        use_batch = st.checkbox("Enable batch mode", value=False, key="bt_batch")
-        if use_batch:
-            entry_times = []
-            for t in custom_times_str.split(','):
-                t = t.strip()
-                try:
-                    entry_times.append(datetime.strptime(t, "%H:%M").time())
-                except ValueError:
-                    pass
-            if not entry_times:
-                st.error("No valid times.")
-                entry_times = [datetime.strptime("21:05", "%H:%M").time()]
-            st.caption(f"Will backtest {len(entry_times)} entry time(s)")
-
-    st.divider()
-
-    # ── SECTION 2: Trade Setup ──
-    st.subheader("Trade Setup")
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        entry_mode = st.radio(
-            "Entry Mode",
-            options=["close", "range_percent"],
-            format_func=lambda x: "Close Price" if x == "close" else "Range Percent",
-            horizontal=True,
-            help="Close: enter at candle close | Range %: enter at % retracement"
-        )
-
-    with col2:
-        rr_ratio = st.number_input(
-            "RR Ratio", value=float(params.get('rr_ratio', 2.0)),
-            min_value=0.5, max_value=10.0, step=0.5
-        )
-
-    with col3:
-        buffer_k = st.number_input(
-            "Buffer K (points)", value=5.0,
-            min_value=0.0, max_value=1000.0, step=1.0,
-            help="Extra points added to SL beyond candle wick"
-        )
-        from src.utils import get_point_value
-        pt = get_point_value(symbol)
-        buffer_usd = buffer_k * pt
-        st.caption(f"{symbol}: {buffer_k:.0f} pts = ${buffer_usd:.2f} SL buffer")
-
-    if entry_mode == "range_percent":
-        col1, col2 = st.columns(2)
-        with col1:
-            entry_percent = st.number_input(
-                "Entry Percent (%)", value=30.0,
-                min_value=0.0, max_value=100.0, step=5.0,
-                help="BUY: Close - X%(body) | SELL: Close + X%(body)"
-            )
-        with col2:
-            pending_order_max_candles = st.number_input(
-                "Max Wait (candles)", value=3,
-                min_value=1, max_value=10, step=1,
-                help="MISSED if not filled after N candles"
-            )
-    else:
-        entry_percent = 0.0
-        pending_order_max_candles = 0
-
-    # ── SECTION 3: Exit Rules (collapsible) ──
-    with st.expander("Exit Rules", expanded=False):
-        col1, col2, col3, col4 = st.columns(4)
-
-        with col1:
-            tp_type = st.radio(
-                "TP Type",
-                options=["price_based", "close_based"],
-                format_func=lambda x: "Price (wick)" if x == "price_based" else "Close (candle)",
-                help="Price: exit when wick touches TP | Close: exit when candle closes beyond TP"
-            )
-
-        with col2:
-            sl_type = st.radio(
-                "SL Type",
-                options=["close_based", "price_based"],
-                format_func=lambda x: "Close (candle)" if x == "close_based" else "Price (wick)",
-                help="Close: exit when candle closes beyond SL | Price: exit when wick touches SL"
-            )
-
-        with col3:
-            use_max_candles = st.checkbox("Max Candles", value=True, key="bt_max_c")
-            if use_max_candles:
-                max_candles = st.number_input(
-                    "Limit", value=int(params.get('max_candles', 7)),
-                    min_value=1, max_value=50,
-                    help="Force close after N candles"
-                )
-            else:
-                max_candles = 0
-
-        with col4:
-            move_sl_to_breakeven = st.checkbox("Breakeven", value=False, key="bt_be",
-                                               help="Move SL to entry when TP partially reached")
-            if move_sl_to_breakeven:
-                breakeven_trigger_percent = st.number_input(
-                    "Trigger (%)", value=50.0,
-                    min_value=10.0, max_value=90.0, step=5.0,
-                    help="Move SL to entry at this % of TP"
-                )
-            else:
-                breakeven_trigger_percent = 50.0
-
-    # ── SECTION 4: Position Sizing (collapsible) ──
-    with st.expander("Position Sizing", expanded=False):
-        lot_mode = st.radio(
-            "Mode",
-            options=["fixed", "flex"],
-            format_func=lambda x: "Fixed Lot" if x == "fixed" else "Flex (Risk-based)",
-            horizontal=True
-        )
-
-        if lot_mode == "fixed":
-            fixed_lot = st.number_input(
-                "Lot Size", value=float(params.get('lot_size', 0.01)),
-                min_value=0.01, max_value=10.0, step=0.01, format="%.2f"
-            )
-            risk_percent = 0.5
-            risk_amount = 0.0
-            risk_mode = "percent"
-            risk_compounding = True
-            starting_equity = 1000.0
-        else:
-            col1, col2, col3 = st.columns(3)
-
-            with col1:
-                starting_equity = st.number_input(
-                    "Starting Equity ($)", value=1000.0,
-                    min_value=100.0, max_value=1000000.0, step=100.0
-                )
-
-            with col2:
-                risk_mode = st.radio(
-                    "Risk Mode",
-                    options=["percent", "fixed_amount"],
-                    format_func=lambda x: "Percentage (%)" if x == "percent" else "Fixed Amount ($)",
-                    horizontal=True
-                )
-
-            with col3:
-                if risk_mode == "percent":
-                    risk_percent = st.number_input(
-                        "Risk/Trade (%)", value=0.5,
-                        min_value=0.1, max_value=5.0, step=0.1, format="%.1f"
-                    )
-                    risk_amount = 0.0
-                else:
-                    risk_amount = st.number_input(
-                        "Risk/Trade ($)", value=5.0,
-                        min_value=1.0, max_value=1000.0, step=1.0, format="%.2f"
-                    )
-                    risk_percent = 0.0
-
-            if risk_mode == "percent":
-                risk_compounding = st.checkbox("Compounding", value=True,
-                                               help="ON: risk % based on current equity | OFF: based on starting equity")
-            else:
-                risk_compounding = True
-
-            fixed_lot = 0.01
-
-    sl_pips = 0
-
-    # ── SUMMARY ──
-    is_batch = len(entry_times) > 1
-    entry_label = f"Range {entry_percent}%" if entry_mode == "range_percent" else "Close"
-    lot_label = f"{fixed_lot} lot" if lot_mode == "fixed" else f"Flex {risk_percent}%" if risk_mode == "percent" else f"Flex ${risk_amount}"
-    tp_label = "Price" if tp_type == "price_based" else "Close"
-    sl_label = "Close" if sl_type == "close_based" else "Price"
-
-    with st.container(border=True):
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Symbol", symbol)
-        with col2:
-            st.metric("Timeframe", timeframe)
-        with col3:
-            if is_batch:
-                st.metric("Entry Times", f"{len(entry_times)} times")
-            else:
-                st.metric("Entry Time", entry_times[0].strftime('%H:%M'))
-        with col4:
-            st.metric("RR Ratio", f"1:{rr_ratio}")
-
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Entry Mode", entry_label)
-        with col2:
-            st.metric("TP / SL", f"{tp_label} / {sl_label}")
-        with col3:
-            st.metric("Date Range", f"{start_date} ~ {end_date}")
-        with col4:
-            if lot_mode == "fixed":
-                pip_cost = fixed_lot * pvl
-                st.metric("Lot / Risk per Pip", f"{fixed_lot} / ${pip_cost:.2f}")
-            else:
-                if risk_mode == "percent":
-                    max_loss = starting_equity * risk_percent / 100
-                    st.metric("Max Loss / Trade", f"${max_loss:.2f}")
-                else:
-                    st.metric("Max Loss / Trade", f"${risk_amount:.2f}")
-
-    # Run backtest button
-    button_label = f"Run Batch Backtest ({len(entry_times)} entry times)" if is_batch else "Run Backtest"
-
-    if st.button(button_label, type="primary", width='stretch'):
-        # Convert dates to datetime
-        start_dt = datetime.combine(start_date, datetime.min.time()).replace(tzinfo=TIMEZONE)
-        end_dt = datetime.combine(end_date, datetime.max.time()).replace(tzinfo=TIMEZONE)
-
-        # Fetch data once (same timeframe for all entry times)
-        with st.spinner("Fetching historical data..."):
-            df, error = fetch_historical_data(symbol, start_dt, end_dt, user_creds, timeframe)
-
-            if error:
-                st.error(f"Failed to fetch data: {error}")
-                st.stop()
-
-            if df is None or df.empty:
-                st.warning("No data found for the selected period")
-                st.stop()
-
-            st.success(f"Fetched {len(df)} candles")
-
-        batch_results = []
-        progress_bar = st.progress(0, text="Starting backtest...")
-
-        for idx, entry_time in enumerate(entry_times):
-            time_str = entry_time.strftime('%H:%M')
-            progress_text = f"Running {time_str}... ({idx + 1}/{len(entry_times)})"
-            progress_bar.progress((idx) / len(entry_times), text=progress_text)
-
-            # Run backtest for this entry time
-            results = run_backtest(
-                df=df,
-                symbol=symbol,
-                entry_hour=entry_time.hour,
-                entry_minute=entry_time.minute,
-                sl_pips=sl_pips,
-                rr_ratio=rr_ratio,
-                max_candles=max_candles,
-                lot_mode=lot_mode,
-                fixed_lot=fixed_lot,
-                risk_percent=risk_percent,
-                risk_amount=risk_amount,
-                risk_mode=risk_mode,
-                risk_compounding=risk_compounding,
-                buffer_k=buffer_k,
-                starting_equity=starting_equity,
-                tp_type=tp_type,
-                sl_type=sl_type,
-                entry_mode=entry_mode,
-                entry_percent=entry_percent,
-                move_sl_to_breakeven=move_sl_to_breakeven,
-                breakeven_trigger_percent=breakeven_trigger_percent,
-                pending_order_max_candles=pending_order_max_candles if entry_mode == "range_percent" else 0
-            )
-
-            # Build config dict for export/history
-            backtest_config = {
-                'timeframe': timeframe,
-                'start_date': str(start_date),
-                'end_date': str(end_date),
-                'entry_time': time_str,
-                'entry_mode': entry_mode,
-                'entry_percent': entry_percent,
-                'rr_ratio': rr_ratio,
-                'max_candles': max_candles,
-                'buffer_k': buffer_k,
-                'lot_mode': lot_mode,
-                'tp_type': tp_type,
-                'sl_type': sl_type,
-                'move_sl_to_breakeven': move_sl_to_breakeven,
-                'breakeven_trigger_percent': breakeven_trigger_percent,
-                'pending_order_max_candles': pending_order_max_candles if entry_mode == "range_percent" else 0,
-            }
-
-            if lot_mode == 'fixed':
-                backtest_config['fixed_lot'] = fixed_lot
-            else:
-                backtest_config['starting_equity'] = starting_equity
-                backtest_config['risk_mode'] = risk_mode
-                backtest_config['risk_percent'] = risk_percent
-                backtest_config['risk_amount'] = risk_amount
-                backtest_config['risk_compounding'] = risk_compounding
-
-            # Auto-save to history
-            if results.get('total_trades', 0) > 0:
-                save_backtest_result(
-                    config=backtest_config,
-                    results=results,
-                    strategy_name=selected_strategy_name,
-                    symbol=symbol,
-                    username=username
-                )
-
-            batch_results.append({
-                'entry_time': time_str,
-                'results': results,
-                'config': backtest_config
-            })
-
-        progress_bar.progress(1.0, text="Complete!")
-
-        # Store results in session state
-        if batch_results:
-            # Use the last result for detailed display
-            last_result = batch_results[-1]
-            st.session_state['backtest_results'] = last_result['results']
-            st.session_state['backtest_symbol'] = symbol
-            st.session_state['backtest_strategy'] = selected_strategy_name
-            st.session_state['backtest_lot_mode'] = lot_mode
-            st.session_state['backtest_timeframe'] = timeframe
-            st.session_state['backtest_entry_time'] = last_result['entry_time']
-            st.session_state['backtest_tp_type'] = tp_type
-            st.session_state['backtest_sl_type'] = sl_type
-            st.session_state['backtest_config'] = last_result['config']
-            st.session_state['backtest_batch_results'] = batch_results
-
-            if is_batch:
-                st.success(f"Completed {len(batch_results)} backtests. Results saved to history.")
+    # Config fragment (isolated reruns)
+    show_backtest_config(params, selected_strategy_name, user_creds, now, is_multi_strategy)
 
     # Display batch summary if multiple entry times were run
     if 'backtest_batch_results' in st.session_state and len(st.session_state['backtest_batch_results']) > 1:
@@ -495,6 +124,519 @@ def main():
 
     # Show history section
     show_history_section(username)
+
+
+def _apply_bt_preset(config: dict):
+    """Queue a preset to be applied on next rerun (before widgets render).
+
+    Cannot write to widget keys after widgets are instantiated in the same
+    script run. Instead, store the config as 'pending' and st.rerun().
+    The show_backtest_config fragment picks it up before creating widgets.
+    """
+    st.session_state['bt_preset_pending'] = config
+
+
+def _flush_pending_preset():
+    """Apply pending preset into widget keys. Call BEFORE any widget is created.
+
+    Streamlit allows writing to session_state keys before the widget with that
+    key is instantiated — so this must run at the top of the fragment.
+    """
+    config = st.session_state.pop('bt_preset_pending', None)
+    if config is None:
+        return
+
+    # Also store raw config for any non-widget reads (first-render defaults)
+    st.session_state['bt_preset'] = config
+
+    widget_map = {
+        'timeframe':                    'bt_w_timeframe',
+        'entry_time':                   'bt_w_entry_time',
+        'window_start':                 'bt_w_window_start',
+        'window_end':                   'bt_w_window_end',
+        'priority_direction':           'bt_w_priority_dir',
+        'entry_mode':                   'bt_w_entry_mode',
+        'rr_ratio':                     'bt_w_rr_ratio',
+        'buffer_k':                     'bt_w_buffer_k',
+        'entry_percent':                'bt_w_entry_pct',
+        'pending_order_expire_candles': 'bt_w_expire_candles',
+        'tp_type':                      'bt_w_tp_type',
+        'sl_type':                      'bt_w_sl_type',
+        'max_candles':                  'bt_w_max_candles_val',
+        'move_sl_to_breakeven':         'bt_be',
+        'breakeven_trigger_percent':    'bt_w_be_trigger',
+        'breakeven_target':             'bt_be_target',
+        'lot_mode':                     'bt_w_lot_mode',
+        'fixed_lot':                    'bt_w_fixed_lot',
+        'starting_equity':              'bt_w_equity',
+        'risk_mode':                    'bt_w_risk_mode',
+        'risk_percent':                 'bt_w_risk_pct',
+        'risk_amount':                  'bt_w_risk_amt',
+        'risk_compounding':             'bt_w_compounding',
+    }
+
+    for cfg_key, widget_key in widget_map.items():
+        if cfg_key in config and config[cfg_key] is not None:
+            st.session_state[widget_key] = config[cfg_key]
+
+    # Special handling: max_candles checkbox
+    mc = config.get('max_candles')
+    if mc is not None:
+        st.session_state['bt_max_c'] = (mc > 0)
+        if mc > 0:
+            st.session_state['bt_w_max_candles_val'] = int(mc)
+
+
+@st.fragment
+def show_backtest_config(params, selected_strategy_name, user_creds, now, is_multi_strategy=False):
+    """Backtest config widgets — no dynamic computation, stable widget tree"""
+
+    # Flush any pending preset into widget keys BEFORE widgets are created
+    _flush_pending_preset()
+
+    symbol_help = (
+        "Pip info per symbol:\n"
+        "XAUUSD: pip=0.01, $10/pip/lot | BTCUSDm: pip=1, $1/pip/lot\n"
+        "ETHUSD: pip=0.01, $0.01/pip/lot | EURUSD: pip=0.0001, $10/pip/lot\n"
+        "USDJPY: pip=0.01, ~$6.67/pip/lot | AUDUSD: pip=0.0001, $10/pip/lot"
+    )
+    buffer_help = (
+        "Extra points beyond candle wick for SL.\n"
+        "XAUUSD: 1pt=0.01 (5pts=$0.05) | BTCUSD: 1pt=1 (50pts=$50)\n"
+        "EURUSD: 1pt=0.00001 (50pts=$0.0005)"
+    )
+
+    # Read preset (if any was loaded from history)
+    preset = st.session_state.get('bt_preset', {})
+
+    # ── SECTION 1: Market ──
+    st.markdown(f"**{t('section_market')}**")
+    col1, col2, col3 = st.columns([2, 1, 1])
+
+    with col1:
+        strategy_symbols = params.get('symbols', [])
+        if strategy_symbols:
+            symbol = st.selectbox(t("symbol") + "*", options=strategy_symbols, help=symbol_help)
+        else:
+            symbol = st.text_input(t("symbol") + "*", value="XAUUSD", help=symbol_help)
+
+    with col2:
+        strategy_timeframe = params.get('timeframe', 'M5')
+        tf_options = ["M1", "M5", "M15", "M30", "H1", "H4", "D1"]
+        preset_tf = preset.get('timeframe', strategy_timeframe)
+        tf_idx = tf_options.index(preset_tf) if preset_tf in tf_options else (tf_options.index(strategy_timeframe) if strategy_timeframe in tf_options else 1)
+        timeframe = st.selectbox(t("timeframe"), options=tf_options, index=tf_idx, key="bt_w_timeframe")
+
+    with col3:
+        if is_multi_strategy:
+            ws_str = preset.get('window_start', params.get('window_start', '09:00'))
+            window_start_input = st.text_input("Window Start", value=ws_str, max_chars=5, help="HH:MM - scan window start", key="bt_w_window_start")
+            try:
+                ws_time = datetime.strptime(window_start_input, "%H:%M").time()
+            except ValueError:
+                ws_time = datetime.strptime("09:00", "%H:%M").time()
+            entry_times = []  # not used for multi strategy
+        else:
+            entry_time_str = preset.get('entry_time', params.get('entry_time', '21:05'))
+            entry_time_input = st.text_input(t("entry_time"), value=entry_time_str, max_chars=5, help="HH:MM format", key="bt_w_entry_time")
+            try:
+                entry_times = [datetime.strptime(entry_time_input, "%H:%M").time()]
+            except ValueError:
+                entry_times = [datetime.strptime("21:05", "%H:%M").time()]
+
+    # Date range
+    col1, col2 = st.columns(2)
+    default_end = now.date()
+    default_start = default_end - timedelta(days=30)
+
+    with col1:
+        start_date = st.date_input(t("start_date"), value=default_start, max_value=default_end)
+    with col2:
+        end_date = st.date_input(t("end_date"), value=default_end, max_value=default_end)
+
+    if is_multi_strategy:
+        # Window end + priority direction fields
+        col1, col2 = st.columns(2)
+        with col1:
+            we_str = preset.get('window_end', params.get('window_end', '11:00'))
+            window_end_input = st.text_input("Window End", value=we_str, max_chars=5, help="HH:MM - scan window end", key="bt_w_window_end")
+            try:
+                we_time = datetime.strptime(window_end_input, "%H:%M").time()
+            except ValueError:
+                we_time = datetime.strptime("11:00", "%H:%M").time()
+        with col2:
+            pd_options = ["auto", "BUY", "SELL"]
+            pd_default = preset.get('priority_direction', params.get('priority_direction', 'auto'))
+            pd_idx = pd_options.index(pd_default) if pd_default in pd_options else 0
+            priority_direction = st.selectbox("Priority Direction", options=pd_options, index=pd_idx,
+                                              help="Force BUY/SELL or auto-detect from master candle", key="bt_w_priority_dir")
+    else:
+        # Batch entry times
+        with st.expander(t("batch_entry_times")):
+            batch_str = st.text_input(t("batch_comma_times"), value="21:05, 22:00, 23:00",
+                                      help="Creates one backtest per time")
+            use_batch = st.checkbox(t("batch_enable"), value=False, key="bt_batch")
+            if use_batch:
+                entry_times = []
+                for _t in batch_str.split(','):
+                    _t = _t.strip()
+                    try:
+                        entry_times.append(datetime.strptime(_t, "%H:%M").time())
+                    except ValueError:
+                        pass
+                if not entry_times:
+                    entry_times = [datetime.strptime("21:05", "%H:%M").time()]
+
+    st.divider()
+
+    # ── SECTION 2: Trade Setup ──
+    st.markdown(f"**{t('section_trade_setup')}**")
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        entry_mode_options = ["close", "range_percent"]
+        preset_entry_mode = preset.get('entry_mode', 'close')
+        entry_mode_idx = entry_mode_options.index(preset_entry_mode) if preset_entry_mode in entry_mode_options else 0
+        entry_mode = st.radio(
+            t("entry_mode"), options=entry_mode_options,
+            format_func=lambda x: t("entry_mode_close") if x == "close" else t("entry_mode_range"),
+            horizontal=True,
+            index=entry_mode_idx,
+            help="Close: enter at candle close | Range %: LIMIT at % retracement",
+            key="bt_w_entry_mode"
+        )
+    with col2:
+        rr_ratio = st.number_input(
+            t("rr_ratio"), value=float(preset.get('rr_ratio', params.get('rr_ratio', 2.0))),
+            min_value=0.5, max_value=10.0, step=0.5, key="bt_w_rr_ratio"
+        )
+    with col3:
+        buffer_k = st.number_input(
+            t("buffer_k"), value=float(preset.get('buffer_k', 5.0)),
+            min_value=0.0, max_value=1000.0, step=1.0, help=buffer_help, key="bt_w_buffer_k"
+        )
+
+    # Range percent fields (always shown — ignored when entry_mode is "close")
+    col1, col2 = st.columns(2)
+    with col1:
+        entry_percent = st.number_input(
+            t("entry_percent"), value=float(preset.get('entry_percent', 30.0)),
+            min_value=0.0, max_value=100.0, step=5.0,
+            help="Range Percent only. BUY: Close - X%(body) | SELL: Close + X%(body)",
+            key="bt_w_entry_pct"
+        )
+    with col2:
+        pending_order_expire_candles = st.number_input(
+            t("expire_candles"), value=int(preset.get('pending_order_expire_candles', 0)),
+            min_value=0, max_value=50, step=1,
+            help="Range Percent only. Cancel LIMIT if not filled after N candles (0=wait forever)",
+            key="bt_w_expire_candles"
+        )
+
+    # ── SECTION 3: Exit Rules ──
+    with st.expander(t("section_exit_rules"), expanded=True):
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            tp_type_options = ["price_based", "close_based"]
+            preset_tp = preset.get('tp_type', 'price_based')
+            tp_type_idx = tp_type_options.index(preset_tp) if preset_tp in tp_type_options else 0
+            tp_type = st.radio(
+                t("tp_type"), options=tp_type_options,
+                format_func=lambda x: t("tp_price") if x == "price_based" else t("tp_close"),
+                index=tp_type_idx,
+                help="Price: exit when wick touches TP | Close: exit when candle closes beyond TP",
+                key="bt_w_tp_type"
+            )
+
+        with col2:
+            sl_type_options = ["close_based", "price_based"]
+            preset_sl = preset.get('sl_type', 'close_based')
+            sl_type_idx = sl_type_options.index(preset_sl) if preset_sl in sl_type_options else 0
+            sl_type = st.radio(
+                t("sl_type"), options=sl_type_options,
+                format_func=lambda x: t("sl_close") if x == "close_based" else t("sl_price"),
+                index=sl_type_idx,
+                help="Close: exit when candle closes beyond SL | Price: exit when wick touches SL",
+                key="bt_w_sl_type"
+            )
+
+        with col3:
+            preset_max_c = preset.get('max_candles', None)
+            use_max_candles = st.checkbox(t("max_candles"), value=True if preset_max_c is None or preset_max_c > 0 else False, key="bt_max_c")
+            max_candles = st.number_input(
+                t("max_candles_limit"), value=int(preset_max_c) if preset_max_c and preset_max_c > 0 else int(params.get('max_candles', 7)),
+                min_value=1, max_value=50,
+                help="Force close after N candles. Ignored if unchecked.",
+                key="bt_w_max_candles_val"
+            )
+            if not use_max_candles:
+                max_candles = 0
+
+        with col4:
+            preset_be = preset.get('move_sl_to_breakeven', False)
+            move_sl_to_breakeven = st.checkbox(t("breakeven"), value=bool(preset_be), key="bt_be",
+                                               help="Move SL when TP partially reached")
+            breakeven_trigger_percent = st.number_input(
+                t("breakeven_trigger"), value=float(preset.get('breakeven_trigger_percent') or 50.0),
+                min_value=10.0, max_value=90.0, step=5.0,
+                help="Move SL at this % of TP. Only if Breakeven ON.",
+                key="bt_w_be_trigger"
+            )
+            be_target_options = ["entry", "close"]
+            preset_be_target = preset.get('breakeven_target', 'entry') or 'entry'
+            be_target_idx = be_target_options.index(preset_be_target) if preset_be_target in be_target_options else 0
+            breakeven_target = st.radio(
+                t("breakeven_sl_target"), options=be_target_options,
+                format_func=lambda x: t("breakeven_entry") if x == "entry" else t("breakeven_close"),
+                horizontal=True, key="bt_be_target", index=be_target_idx,
+                help="'Candle Close' useful for Range % mode. Only if Breakeven ON."
+            )
+
+    # ── SECTION 4: Position Sizing ──
+    with st.expander(t("section_position"), expanded=True):
+        lot_mode_options = ["fixed", "flex"]
+        preset_lot_mode = preset.get('lot_mode', 'fixed')
+        lot_mode_idx = lot_mode_options.index(preset_lot_mode) if preset_lot_mode in lot_mode_options else 0
+        lot_mode = st.radio(
+            t("lot_mode"), options=lot_mode_options,
+            format_func=lambda x: t("lot_fixed") if x == "fixed" else t("lot_flex"),
+            horizontal=True, index=lot_mode_idx, key="bt_w_lot_mode"
+        )
+
+        # Fixed mode
+        fixed_lot = st.number_input(
+            t("lot_size"), value=float(preset.get('fixed_lot') or params.get('lot_size', 0.01)),
+            min_value=0.01, max_value=10.0, step=0.01, format="%.2f",
+            help="Fixed mode only.", key="bt_w_fixed_lot"
+        )
+
+        # Flex mode fields (always shown)
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            starting_equity = st.number_input(
+                t("starting_equity"), value=float(preset.get('starting_equity') or 1000.0),
+                min_value=100.0, max_value=1000000.0, step=100.0,
+                help="Flex mode only.", key="bt_w_equity"
+            )
+        with col2:
+            risk_mode_options = ["percent", "fixed_amount"]
+            preset_risk_mode = preset.get('risk_mode', 'percent') or 'percent'
+            risk_mode_idx = risk_mode_options.index(preset_risk_mode) if preset_risk_mode in risk_mode_options else 0
+            risk_mode = st.radio(
+                t("risk_mode"), options=risk_mode_options,
+                format_func=lambda x: t("risk_percent_label") if x == "percent" else t("risk_fixed_label"),
+                horizontal=True, help="Flex mode only.", index=risk_mode_idx, key="bt_w_risk_mode"
+            )
+        with col3:
+            risk_percent = st.number_input(
+                t("risk_per_trade_pct"), value=float(preset.get('risk_percent') or 0.5),
+                min_value=0.1, max_value=5.0, step=0.1, format="%.1f",
+                help="Flex + % mode.", key="bt_w_risk_pct"
+            )
+            risk_amount = st.number_input(
+                t("risk_per_trade_usd"), value=float(preset.get('risk_amount') or 5.0),
+                min_value=1.0, max_value=1000.0, step=1.0, format="%.2f",
+                help="Flex + Fixed $ mode.", key="bt_w_risk_amt"
+            )
+
+        risk_compounding = st.checkbox(t("compounding"), value=bool(preset.get('risk_compounding', True)),
+                                       help="Flex only. ON: risk % of current equity | OFF: of starting equity",
+                                       key="bt_w_compounding")
+
+    sl_pips = 0
+
+    # ── RUN BACKTEST ──
+    st.divider()
+    is_batch = len(entry_times) > 1
+    button_label = t("run_batch", n=len(entry_times)) if is_batch else t("run_backtest")
+
+    if st.button(button_label, type="primary", use_container_width=True):
+        # Convert dates to datetime
+        start_dt = datetime.combine(start_date, datetime.min.time()).replace(tzinfo=TIMEZONE)
+        end_dt = datetime.combine(end_date, datetime.max.time()).replace(tzinfo=TIMEZONE)
+
+        # Fetch data once (same timeframe for all entry times)
+        with st.spinner(t("fetching_data")):
+            df, error = fetch_historical_data(symbol, start_dt, end_dt, user_creds, timeframe)
+
+            if error:
+                st.error(t("failed_fetch", err=error))
+                st.stop()
+
+            if df is None or df.empty:
+                st.warning(t("no_data"))
+                st.stop()
+
+            st.success(t("fetched_candles", n=len(df)))
+
+        batch_results = []
+        progress_bar = st.progress(0, text=t("starting_backtest"))
+
+        if is_multi_strategy:
+            progress_bar.progress(0.5, text="Running Multi Master Candle backtest...")
+            results = run_backtest_multi(
+                df=df,
+                symbol=symbol,
+                window_start_hour=ws_time.hour,
+                window_start_minute=ws_time.minute,
+                window_end_hour=we_time.hour,
+                window_end_minute=we_time.minute,
+                priority_direction=priority_direction,
+                rr_ratio=rr_ratio,
+                max_candles=max_candles,
+                lot_mode=lot_mode,
+                fixed_lot=fixed_lot if lot_mode == "fixed" else 0.01,
+                risk_percent=risk_percent if lot_mode == "flex" else 0.5,
+                risk_amount=risk_amount if lot_mode == "flex" else 0.0,
+                risk_mode=risk_mode if lot_mode == "flex" else "percent",
+                risk_compounding=risk_compounding if lot_mode == "flex" else True,
+                buffer_k=buffer_k,
+                starting_equity=starting_equity if lot_mode == "flex" else 1000.0,
+                tp_type=tp_type,
+                sl_type=sl_type,
+                entry_mode=entry_mode,
+                entry_percent=entry_percent if entry_mode == "range_percent" else 0.0,
+                move_sl_to_breakeven=move_sl_to_breakeven,
+                breakeven_trigger_percent=breakeven_trigger_percent if move_sl_to_breakeven else 50.0,
+                breakeven_target=breakeven_target if move_sl_to_breakeven else "entry",
+                pending_order_expire_candles=pending_order_expire_candles if entry_mode == "range_percent" else 0,
+            )
+            time_label = f"{window_start_input}-{window_end_input}"
+            backtest_config = {
+                'timeframe': timeframe,
+                'start_date': str(start_date),
+                'end_date': str(end_date),
+                'window_start': window_start_input,
+                'window_end': window_end_input,
+                'priority_direction': priority_direction,
+                'entry_mode': entry_mode,
+                'entry_percent': entry_percent if entry_mode == "range_percent" else 0.0,
+                'rr_ratio': rr_ratio,
+                'max_candles': max_candles,
+                'buffer_k': buffer_k,
+                'lot_mode': lot_mode,
+                'tp_type': tp_type,
+                'sl_type': sl_type,
+                'move_sl_to_breakeven': move_sl_to_breakeven,
+                'breakeven_trigger_percent': breakeven_trigger_percent if move_sl_to_breakeven else None,
+                'breakeven_target': breakeven_target if move_sl_to_breakeven else None,
+                'pending_order_expire_candles': pending_order_expire_candles if entry_mode == "range_percent" else 0,
+                'fixed_lot': fixed_lot if lot_mode == 'fixed' else None,
+                'starting_equity': starting_equity if lot_mode == 'flex' else None,
+                'risk_mode': risk_mode if lot_mode == 'flex' else None,
+                'risk_percent': risk_percent if lot_mode == 'flex' else None,
+                'risk_amount': risk_amount if lot_mode == 'flex' else None,
+                'risk_compounding': risk_compounding if lot_mode == 'flex' else None,
+            }
+            if results.get('total_trades', 0) > 0:
+                save_backtest_result(
+                    config=backtest_config,
+                    results=results,
+                    strategy_name=selected_strategy_name,
+                    symbol=symbol,
+                    username=username,
+                )
+            batch_results.append({
+                'entry_time': time_label,
+                'results': results,
+                'config': backtest_config,
+            })
+
+        for idx, entry_time in enumerate(entry_times):
+            time_str = entry_time.strftime('%H:%M')
+            progress_text = t("running_time", t=time_str, i=idx + 1, n=len(entry_times))
+            progress_bar.progress((idx) / len(entry_times), text=progress_text)
+
+            # Run backtest for this entry time
+            results = run_backtest(
+                df=df,
+                symbol=symbol,
+                entry_hour=entry_time.hour,
+                entry_minute=entry_time.minute,
+                sl_pips=sl_pips,
+                rr_ratio=rr_ratio,
+                max_candles=max_candles,
+                lot_mode=lot_mode,
+                fixed_lot=fixed_lot if lot_mode == "fixed" else 0.01,
+                risk_percent=risk_percent if lot_mode == "flex" else 0.5,
+                risk_amount=risk_amount if lot_mode == "flex" else 0.0,
+                risk_mode=risk_mode if lot_mode == "flex" else "percent",
+                risk_compounding=risk_compounding if lot_mode == "flex" else True,
+                buffer_k=buffer_k,
+                starting_equity=starting_equity if lot_mode == "flex" else 1000.0,
+                tp_type=tp_type,
+                sl_type=sl_type,
+                entry_mode=entry_mode,
+                entry_percent=entry_percent if entry_mode == "range_percent" else 0.0,
+                move_sl_to_breakeven=move_sl_to_breakeven,
+                breakeven_trigger_percent=breakeven_trigger_percent if move_sl_to_breakeven else 50.0,
+                breakeven_target=breakeven_target if move_sl_to_breakeven else "entry",
+                pending_order_expire_candles=pending_order_expire_candles if entry_mode == "range_percent" else 0
+            )
+
+            # Build config dict for export/history
+            backtest_config = {
+                'timeframe': timeframe,
+                'start_date': str(start_date),
+                'end_date': str(end_date),
+                'entry_time': time_str,
+                'entry_mode': entry_mode,
+                'entry_percent': entry_percent if entry_mode == "range_percent" else 0.0,
+                'rr_ratio': rr_ratio,
+                'max_candles': max_candles,
+                'buffer_k': buffer_k,
+                'lot_mode': lot_mode,
+                'tp_type': tp_type,
+                'sl_type': sl_type,
+                'move_sl_to_breakeven': move_sl_to_breakeven,
+                'breakeven_trigger_percent': breakeven_trigger_percent if move_sl_to_breakeven else None,
+                'breakeven_target': breakeven_target if move_sl_to_breakeven else None,
+                'pending_order_expire_candles': pending_order_expire_candles if entry_mode == "range_percent" else 0,
+                'fixed_lot': fixed_lot if lot_mode == 'fixed' else None,
+                'starting_equity': starting_equity if lot_mode == 'flex' else None,
+                'risk_mode': risk_mode if lot_mode == 'flex' else None,
+                'risk_percent': risk_percent if lot_mode == 'flex' else None,
+                'risk_amount': risk_amount if lot_mode == 'flex' else None,
+                'risk_compounding': risk_compounding if lot_mode == 'flex' else None,
+            }
+
+            # Auto-save to history
+            if results.get('total_trades', 0) > 0:
+                save_backtest_result(
+                    config=backtest_config,
+                    results=results,
+                    strategy_name=selected_strategy_name,
+                    symbol=symbol,
+                    username=username
+                )
+
+            batch_results.append({
+                'entry_time': time_str,
+                'results': results,
+                'config': backtest_config
+            })
+
+        progress_bar.progress(1.0, text=t("complete"))
+
+        # Store results in session state
+        if batch_results:
+            # Use the last result for detailed display
+            last_result = batch_results[-1]
+            st.session_state['backtest_results'] = last_result['results']
+            st.session_state['backtest_symbol'] = symbol
+            st.session_state['backtest_strategy'] = selected_strategy_name
+            st.session_state['backtest_lot_mode'] = lot_mode
+            st.session_state['backtest_timeframe'] = timeframe
+            st.session_state['backtest_entry_time'] = last_result['entry_time']
+            st.session_state['backtest_tp_type'] = tp_type
+            st.session_state['backtest_sl_type'] = sl_type
+            st.session_state['backtest_config'] = last_result['config']
+            st.session_state['backtest_batch_results'] = batch_results
+
+            if is_batch:
+                st.success(t("batch_done", n=len(batch_results)))
+            st.rerun(scope="app")
 
 
 def show_batch_summary(batch_results: list, strategy_name: str, symbol: str, lot_mode: str):
@@ -612,7 +754,7 @@ def display_results(results: dict, symbol: str, strategy_name: str = "", lot_mod
             st.metric("SL Moved to BE", f"{sl_moved_count}/{results['total_trades']}")
 
         # Show MISSED trades count if pending order mode
-        if config.get('entry_mode') == 'range_percent' and config.get('pending_order_max_candles', 0) > 0:
+        if config.get('entry_mode') == 'range_percent' and config.get('pending_order_expire_candles', 0) > 0:
             missed_count = sum(1 for t in results.get('trades', []) if t.get('status') == 'MISSED')
             total_signals = len(results.get('trades', []))
             filled_count = total_signals - missed_count
@@ -752,7 +894,8 @@ def show_trade_table(trades: list, lot_mode: str, strategy_name: str, symbol: st
         'exit_price': 'Exit Price',
         'candles': 'Candles',
         'pnl_pips': 'P&L (pips)',
-        'pnl_usd': 'P&L (USD)'
+        'pnl_usd': 'P&L (USD)',
+        'priority': 'Priority',
     }
     trades_df = trades_df.rename(columns=rename_cols)
 
@@ -1182,6 +1325,40 @@ def show_history_section(username: str):
     st.dataframe(styled_history, width='stretch', hide_index=True)
 
     st.caption(f"Showing {len(filtered_df)} of {len(history_df)} records | {len(display_cols)} columns")
+
+    # ── Load Config from History ──
+    st.markdown("---")
+
+    with st.expander(t("load_from_history"), expanded=False):
+        st.caption(t("load_from_history_caption"))
+
+        # Build ID → config lookup from raw history
+        id_to_config = {r['id']: r['config'] for r in history}
+
+        # Build display options from filtered records
+        load_options = {
+            f"{r['Date']} - {r['Strategy']} - {r['Symbol']} ({r['Win Rate %']}% WR | {r.get('Entry Mode', '')} {r.get('Entry %', '')}%)": r['ID']
+            for _, r in filtered_df.iterrows()
+        }
+
+        if load_options:
+            selected_load = st.selectbox(
+                t("select_history_record"),
+                options=list(load_options.keys()),
+                key="load_config_select"
+            )
+
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                if st.button(t("load_config_btn"), type="primary"):
+                    record_id = load_options[selected_load]
+                    config_to_load = id_to_config.get(record_id)
+                    if config_to_load:
+                        _apply_bt_preset(config_to_load)
+                        st.success(t("config_loaded"))
+                        st.rerun()
+                    else:
+                        st.error(t("config_load_failed"))
 
     # Delete functionality
     st.markdown("---")

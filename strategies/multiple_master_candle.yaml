@@ -1,0 +1,59 @@
+id: multiple_master_candle
+name: Multiple Master Candle Strategy
+version: "1.0"
+description: |
+  Scans a time window for multiple qualifying candles.
+  Only candles matching the priority direction become Master Candles.
+  Each Master Candle spawns an independent trade with identical logic
+  to the original Master Candle Strategy (SL/TP/entry mode/breakeven).
+  Supports manual priority (BUY/SELL) or auto (first candle decides).
+author: admin
+created: "2026-03-07"
+enabled: true
+
+# Entry configuration
+entry:
+  timeframe: M5
+  window_start: "09:00"
+  window_end: "11:00"
+  priority_direction: auto   # BUY / SELL / auto
+  timezone: Asia/Ho_Chi_Minh
+  rules:
+    match: "candle direction == priority -> ENTER"
+    skip: "candle direction != priority -> SKIP"
+
+# Exit configuration (identical to master_candle)
+exit:
+  tp:
+    type: price_based
+    description: "Immediate exit when price touches TP level"
+    formula: "entry + (risk * rr_ratio) for BUY, entry - (risk * rr_ratio) for SELL"
+  sl:
+    type: close_based
+    description: "Exit only when candle CLOSES beyond SL level"
+    formula: "low - buffer_k for BUY, high + buffer_k for SELL"
+  time_limit:
+    enabled: true
+    max_candles: 7
+    description: "Close position after 7 candles if no TP/SL"
+
+# Default parameters (identical to master_candle)
+parameters:
+  rr_ratio: 2.0
+  lot_size: 0.01
+
+# Supported symbols
+symbols:
+  - XAUUSD
+  - BTCUSD
+  - ETHUSD
+  - XAUUSDm
+  - BTCUSDm
+  - ETHUSDm
+  - EURUSD
+  - GBPUSD
+  - AUDUSD
+  - USDJPY
+  - USDCHF
+  - USDCAD
+  - AUDJPY

@@ -108,10 +108,14 @@ def get_args():
                         help="Move SL to breakeven: 1=enabled, 0=disabled")
     parser.add_argument("--breakeven_trigger_percent", type=float, default=None,
                         help="% of TP to trigger breakeven move (default: 50)")
+    parser.add_argument("--breakeven_target", type=str, default="entry",
+                        help="Breakeven SL target: 'entry' (entry price) or 'close' (candle close price)")
 
     # Pending order feature
     parser.add_argument("--pending_order_max_candles", type=int, default=3,
-                        help="Max candles to wait for pending order fill (default: 3, 0=disabled)")
+                        help="Max candles to retry placing LIMIT order when broker rejects (default: 3, 0=no retry)")
+    parser.add_argument("--pending_order_expire_candles", type=int, default=0,
+                        help="Cancel LIMIT order if not filled after N candles (default: 0=wait indefinitely)")
 
     # Bot control
     parser.add_argument("--test", type=int, default=1,
@@ -205,6 +209,15 @@ def get_pip_value(symbol: str) -> float:
     return _get_pip_value(symbol)
 
 
+def get_timeframe_seconds(timeframe_str: str) -> int:
+    """Return candle duration in seconds for a given timeframe string."""
+    mapping = {
+        'M1': 60, 'M5': 300, 'M15': 900, 'M30': 1800,
+        'H1': 3600, 'H4': 14400, 'D1': 86400
+    }
+    return mapping.get(timeframe_str, 300)
+
+
 def get_point_value(symbol: str) -> float:
     """Get point size (smallest price increment) for buffer calculations."""
     from src.utils import get_point_value as _get_point_value
@@ -250,6 +263,14 @@ def get_current_candle(mt5, symbol: str, timeframe_str: str) -> dict:
     }
 
     timeframe = timeframe_map.get(timeframe_str, mt5.TIMEFRAME_M5)
+
+    # Ensure symbol is subscribed in Market Watch (required for copy_rates_from_pos)
+    symbol_info = mt5.symbol_info(symbol)
+    if symbol_info is None:
+        return None
+    if not symbol_info.visible:
+        mt5.symbol_select(symbol, True)
+
     rates = mt5.copy_rates_from_pos(symbol, timeframe, 1, 1)  # Start from position 1 (last closed)
 
     if rates is None or len(rates) < 1:
@@ -323,9 +344,15 @@ def run_bot(args):
     tp_type = args.tp_type or 'price_based'
     sl_type = args.sl_type or 'close_based'
 
+    # MT5 can only enforce price_based SL/TP (wick-touch).
+    # For close_based, we omit SL/TP from broker order and handle exits in software.
+    send_sl_to_mt5 = (sl_type == "price_based")
+    send_tp_to_mt5 = (tp_type == "price_based")
+
     # Move SL to Breakeven parameters
     move_sl_to_breakeven = bool(args.move_sl_to_breakeven) if args.move_sl_to_breakeven is not None else False
     breakeven_trigger_percent = args.breakeven_trigger_percent if args.breakeven_trigger_percent is not None else 50.0
+    breakeven_target = args.breakeven_target or "entry"  # "entry" or "close"
 
     log(f"[STEP 2/5] Configuration:")
     log(f"  RR Ratio: {rr_ratio}")
@@ -336,6 +363,8 @@ def run_bot(args):
     log(f"  Entry Mode: {entry_mode}")
     if entry_mode == 'range_percent':
         log(f"  Entry Percent: {entry_percent}%")
+        log(f"  Pending Retry Candles: {args.pending_order_max_candles}")
+        log(f"  Pending Expire Candles: {args.pending_order_expire_candles} {'(wait forever)' if args.pending_order_expire_candles == 0 else ''}")
     log(f"  Lot Mode: {lot_mode}")
     if lot_mode == 'fixed':
         log(f"  Lot Size: {lot_size}")
@@ -346,7 +375,7 @@ def run_bot(args):
     log(f"  TP Type: {tp_type}")
     log(f"  SL Type: {sl_type}")
     if move_sl_to_breakeven:
-        log(f"  Move SL to Breakeven: ENABLED at {breakeven_trigger_percent}% TP")
+        log(f"  Move SL to Breakeven: ENABLED at {breakeven_trigger_percent}% TP (target: {breakeven_target})")
     else:
         log(f"  Move SL to Breakeven: DISABLED")
 
@@ -400,6 +429,9 @@ def run_bot(args):
     active_trade = None
     last_entry_date = None
     waiting_for_limit = None  # State for range_percent when LIMIT can't be placed yet
+    pending_signal = None         # Saved signal data for retrying failed LIMIT orders
+    retry_start_candle_time = None  # Candle time when first failure occurred
+    retry_candles_elapsed = 0      # Number of candles elapsed since first failure
 
     try:
         log(f"")
@@ -425,6 +457,190 @@ def run_bot(args):
             # Debug log every 30 loops (every ~30 seconds if interval=1)
             if loop_count % 30 == 0:
                 log(f"[Loop {loop_count}] [TIME] {now.strftime('%H:%M:%S')} | Entry: {entry_time} | Active: {active_trade is not None} | WaitLimit: {waiting_for_limit is not None}")
+
+            # Retry failed LIMIT order with saved signal
+            if pending_signal is not None and active_trade is None:
+                retry_limit = args.pending_order_max_candles if args.pending_order_max_candles > 0 else 3
+
+                # Connect to MT5
+                mt5, error = get_mt5_connection(credentials)
+                if error:
+                    log(f"[ERROR] MT5 connection failed: {error}", "ERROR")
+                    time.sleep(args.interval)
+                    continue
+
+                # Check if new candle has appeared → increment candle counter
+                try:
+                    current_candle = get_current_candle(mt5, args.symbol, timeframe)
+                except Exception as e:
+                    current_candle = None
+
+                if current_candle and retry_start_candle_time and current_candle['time'] > retry_start_candle_time:
+                    new_candles = 0
+                    # Count candles elapsed (approximate by comparing times)
+                    if current_candle['time'] != retry_start_candle_time:
+                        # Update candle time tracking
+                        if not hasattr(pending_signal, '_last_candle_time'):
+                            pending_signal['_last_candle_time'] = retry_start_candle_time
+                        if current_candle['time'] > pending_signal.get('_last_candle_time', retry_start_candle_time):
+                            retry_candles_elapsed += 1
+                            pending_signal['_last_candle_time'] = current_candle['time']
+                            log(f"[RETRY] Candle elapsed: {retry_candles_elapsed}/{retry_limit}")
+
+                # Check if exceeded max candles → stop bot
+                if retry_candles_elapsed >= retry_limit:
+                    log(f"")
+                    log(f"{'='*60}")
+                    log(f"[FAIL] LIMIT order retry expired after {retry_candles_elapsed} candles — stopping bot", "ERROR")
+                    log(f"{'='*60}")
+                    send_telegram_async(
+                        f"[FAIL] <b>Order Retry Expired</b>\n"
+                        f"Symbol: {args.symbol}\n"
+                        f"Could not place LIMIT after {retry_candles_elapsed} candles\n"
+                        f"Bot stopping...", is_error=True)
+                    pending_signal = None
+                    retry_start_candle_time = None
+                    retry_candles_elapsed = 0
+                    mt5.shutdown()
+                    log("Bot stopping — LIMIT retry candles exhausted")
+                    return
+
+                # Re-use saved signal data
+                direction = pending_signal['direction']
+                entry_price = pending_signal['entry']
+                stop_loss = pending_signal['sl']
+                take_profit = pending_signal['tp']
+                final_lot = pending_signal['lot']
+                c = pending_signal['close_price']
+
+                log(f"[RETRY] Retrying LIMIT order ({retry_candles_elapsed}/{retry_limit} candles elapsed)")
+
+                # Check if price moved past SL (trade invalidated)
+                # Respect sl_type: price_based = tick check, close_based = candle close check
+                tick = mt5.symbol_info_tick(args.symbol)
+                if tick:
+                    sl_invalidated = False
+                    if sl_type == "price_based":
+                        if direction == "BUY" and tick.ask <= stop_loss:
+                            sl_invalidated = True
+                            log(f"  [SKIP] Price moved past SL! ask={tick.ask:.5f} <= SL={stop_loss:.5f}", "ERROR")
+                        elif direction == "SELL" and tick.bid >= stop_loss:
+                            sl_invalidated = True
+                            log(f"  [SKIP] Price moved past SL! bid={tick.bid:.5f} >= SL={stop_loss:.5f}", "ERROR")
+                    else:
+                        # close_based: check previous candle close
+                        try:
+                            rates = mt5.copy_rates_from_pos(args.symbol, timeframe, 1, 1)
+                            if rates is not None and len(rates) > 0:
+                                prev_close = rates[0]['close']
+                                if direction == "BUY" and prev_close <= stop_loss:
+                                    sl_invalidated = True
+                                    log(f"  [SKIP] Previous candle closed past SL! close={prev_close:.5f} <= SL={stop_loss:.5f}", "ERROR")
+                                elif direction == "SELL" and prev_close >= stop_loss:
+                                    sl_invalidated = True
+                                    log(f"  [SKIP] Previous candle closed past SL! close={prev_close:.5f} >= SL={stop_loss:.5f}", "ERROR")
+                        except Exception:
+                            pass
+
+                    if sl_invalidated:
+                        pending_signal = None
+                        retry_start_candle_time = None
+                        retry_candles_elapsed = 0
+                        last_entry_date = now.date()
+                        mt5.shutdown()
+                        time.sleep(args.interval)
+                        continue
+
+                # Check if we should use market or limit
+                use_market = False
+                if tick:
+                    if direction == "BUY" and tick.ask <= entry_price:
+                        use_market = True
+                    elif direction == "SELL" and tick.bid >= entry_price:
+                        use_market = True
+
+                from src.orders import place_pending_order, place_order
+
+                if use_market:
+                    log(f"  Retrying as MARKET ORDER (price at/past entry)")
+                    success, msg, order_ticket = place_order(
+                        symbol=args.symbol, direction=direction, volume=final_lot,
+                        sl=stop_loss if send_sl_to_mt5 else None,
+                        tp=take_profit if send_tp_to_mt5 else None,
+                        credentials=credentials,
+                        theoretical_entry=entry_price
+                    )
+                    is_pending_order = False
+                else:
+                    log(f"  Retrying as LIMIT ORDER at {entry_price:.5f}")
+                    success, msg, order_ticket = place_pending_order(
+                        symbol=args.symbol, direction=direction, volume=final_lot,
+                        entry_price=entry_price,
+                        sl=stop_loss if send_sl_to_mt5 else None,
+                        tp=take_profit if send_tp_to_mt5 else None,
+                        credentials=credentials
+                    )
+                    is_pending_order = True if success else False
+
+                if success:
+                    log(f"  [SUCCESS] Retry succeeded! Ticket: {order_ticket}")
+                    log(f"  Message: {msg}")
+                    pending_signal = None
+                    retry_start_candle_time = None
+                    retry_candles_elapsed = 0
+
+                    order_type_label = "Pending Order (LIMIT)" if is_pending_order else "Market Order"
+                    send_telegram_async(f"[OK] <b>{order_type_label} Placed (retry)</b>\n"
+                                  f"Ticket: {order_ticket}\n"
+                                  f"Direction: {direction}\n"
+                                  f"Lot: {final_lot}\n"
+                                  f"{msg}")
+
+                    if not is_pending_order:
+                        mt5_temp, _ = get_mt5_connection(credentials)
+                        if mt5_temp:
+                            positions = mt5_temp.positions_get(ticket=order_ticket)
+                            if positions and len(positions) > 0:
+                                pos = positions[0]
+                                entry_price = pos.price_open
+                                # Only override SL/TP from MT5 if we actually sent them
+                                if send_sl_to_mt5 and pos.sl > 0:
+                                    stop_loss = pos.sl
+                                if send_tp_to_mt5 and pos.tp > 0:
+                                    take_profit = pos.tp
+                                log(f"LIVE: Actual position - Entry={entry_price:.5f}, SL={stop_loss:.5f}, TP={take_profit:.5f}")
+                            mt5_temp.shutdown()
+
+                    mt5.shutdown()
+
+                    active_trade = {
+                        'direction': direction,
+                        'entry': entry_price,
+                        'sl': stop_loss,
+                        'tp': take_profit,
+                        'original_sl': stop_loss,
+                        'close_price': c,
+                        'candles': 0,
+                        'ticket': order_ticket,
+                        'lot': final_lot,
+                        'entry_time': now,
+                        'entry_candle_time': retry_start_candle_time or datetime.min.replace(tzinfo=TIMEZONE),
+                        'last_checked_candle_time': retry_start_candle_time or datetime.min.replace(tzinfo=TIMEZONE),
+                        'sl_moved_to_breakeven': False,
+                        'is_pending': is_pending_order,
+                        'candles_waited': 0,
+                        'pending_placed_at': now,
+                    }
+                    last_entry_date = now.date()
+                    time.sleep(args.interval)
+                    continue
+                else:
+                    # Still failing — keep retrying until candle limit reached
+                    log(f"  [ERROR] Retry failed: {msg}", "ERROR")
+                    log(f"  [RETRY] Will retry again in 1s... ({retry_candles_elapsed}/{retry_limit} candles elapsed)", "WARN")
+                    mt5.shutdown()
+                    time.sleep(1)
+                    continue
 
             # Check if it's entry time and we haven't traded today (and not already waiting for limit)
             if check_entry_time(entry_time, timeframe) and last_entry_date != now.date() and waiting_for_limit is None:
@@ -680,20 +896,31 @@ def run_bot(args):
                                 log(f"  [INFO] Cannot place SELL LIMIT: bid={tick.bid:.5f} >= entry={entry_price:.5f}")
 
                         if not can_place_limit:
-                            # Safety check: if price moved past SL, trade is invalidated immediately
+                            # Safety check: if price moved past SL, trade is invalidated
+                            # For close_based SL: only invalidate on tick if price_based; otherwise wait for candle close
                             price_past_sl = False
-                            if direction == "BUY" and tick.ask <= stop_loss:
-                                price_past_sl = True
-                                log(f"  [SKIP] Price moved past SL! ask={tick.ask:.5f} <= SL={stop_loss:.5f}")
-                            elif direction == "SELL" and tick.bid >= stop_loss:
-                                price_past_sl = True
-                                log(f"  [SKIP] Price moved past SL! bid={tick.bid:.5f} >= SL={stop_loss:.5f}")
+                            if sl_type == "price_based":
+                                # price_based: check tick price immediately (wick-touch)
+                                if direction == "BUY" and tick.ask <= stop_loss:
+                                    price_past_sl = True
+                                    log(f"  [SKIP] Price moved past SL! ask={tick.ask:.5f} <= SL={stop_loss:.5f}")
+                                elif direction == "SELL" and tick.bid >= stop_loss:
+                                    price_past_sl = True
+                                    log(f"  [SKIP] Price moved past SL! bid={tick.bid:.5f} >= SL={stop_loss:.5f}")
+                            else:
+                                # close_based: check master candle close vs SL (candle just closed)
+                                if direction == "BUY" and c <= stop_loss:
+                                    price_past_sl = True
+                                    log(f"  [SKIP] Candle closed past SL! close={c:.5f} <= SL={stop_loss:.5f}")
+                                elif direction == "SELL" and c >= stop_loss:
+                                    price_past_sl = True
+                                    log(f"  [SKIP] Candle closed past SL! close={c:.5f} >= SL={stop_loss:.5f}")
 
                             if price_past_sl:
                                 log(f"  Trade invalidated - skipping this entry")
                                 send_telegram_async(f"[SKIP] <b>Trade Skipped</b>\n"
                                     f"Symbol: {args.symbol}\n"
-                                    f"Reason: Price moved past SL\n"
+                                    f"Reason: Price {'wick' if sl_type == 'price_based' else 'close'} past SL\n"
                                     f"Signal entry: {entry_price:.5f}\n"
                                     f"Current price: {tick.ask if direction == 'BUY' else tick.bid:.5f}\n"
                                     f"SL: {stop_loss:.5f}")
@@ -706,7 +933,7 @@ def run_bot(args):
                             log(f"")
                             log(f"  [WAIT] Entering WAIT FOR LIMIT state")
                             log(f"  Reason: Price already past entry — cannot place LIMIT now")
-                            log(f"  Will wait up to {args.pending_order_max_candles} candles for price to return")
+                            log(f"  Will wait indefinitely for price to return")
                             log(f"")
 
                             waiting_for_limit = {
@@ -715,6 +942,7 @@ def run_bot(args):
                                 'stop_loss': stop_loss,
                                 'take_profit': take_profit,
                                 'lot': final_lot,
+                                'close_price': c,  # Master candle close price
                                 'candles_waited': 0,
                                 'last_checked_candle_time': candle['time'],
                                 'entry_candle_time': candle['time'],
@@ -726,7 +954,7 @@ def run_bot(args):
                                 f"Direction: {direction}\n"
                                 f"Entry target: {entry_price:.5f}\n"
                                 f"Current price: {tick.ask if direction == 'BUY' else tick.bid:.5f}\n"
-                                f"Will wait up to {args.pending_order_max_candles} candles")
+                                f"Will wait indefinitely for price to return")
 
                             last_entry_date = now.date()
                             mt5.shutdown()
@@ -739,14 +967,18 @@ def run_bot(args):
                             log(f"  Price will wait at: {entry_price:.5f}")
                             log(f"")
                             log(f"  Calling place_pending_order()...")
+                            if not send_sl_to_mt5:
+                                log(f"  [INFO] SL type is close_based — SL omitted from broker order (bot will monitor)")
+                            if not send_tp_to_mt5:
+                                log(f"  [INFO] TP type is close_based — TP omitted from broker order (bot will monitor)")
 
                             success, msg, order_ticket = place_pending_order(
                                 symbol=args.symbol,
                                 direction=direction,
                                 volume=final_lot,
                                 entry_price=entry_price,
-                                sl=stop_loss,
-                                tp=take_profit,
+                                sl=stop_loss if send_sl_to_mt5 else None,
+                                tp=take_profit if send_tp_to_mt5 else None,
                                 credentials=credentials
                             )
                             is_pending_order = True if success else False
@@ -768,19 +1000,29 @@ def run_bot(args):
 
                         if use_market_fallback:
                             # Safety check: if price moved past SL, trade is invalidated
+                            # Respect sl_type: price_based checks tick, close_based checks candle close
                             price_past_sl = False
-                            if direction == "BUY" and tick.ask <= stop_loss:
-                                price_past_sl = True
-                                log(f"  [SKIP] Price moved past SL! ask={tick.ask:.5f} <= SL={stop_loss:.5f}")
-                            elif direction == "SELL" and tick.bid >= stop_loss:
-                                price_past_sl = True
-                                log(f"  [SKIP] Price moved past SL! bid={tick.bid:.5f} >= SL={stop_loss:.5f}")
+                            if sl_type == "price_based":
+                                if direction == "BUY" and tick.ask <= stop_loss:
+                                    price_past_sl = True
+                                    log(f"  [SKIP] Price moved past SL! ask={tick.ask:.5f} <= SL={stop_loss:.5f}")
+                                elif direction == "SELL" and tick.bid >= stop_loss:
+                                    price_past_sl = True
+                                    log(f"  [SKIP] Price moved past SL! bid={tick.bid:.5f} >= SL={stop_loss:.5f}")
+                            else:
+                                # close_based: check master candle close vs SL
+                                if direction == "BUY" and c <= stop_loss:
+                                    price_past_sl = True
+                                    log(f"  [SKIP] Candle closed past SL! close={c:.5f} <= SL={stop_loss:.5f}")
+                                elif direction == "SELL" and c >= stop_loss:
+                                    price_past_sl = True
+                                    log(f"  [SKIP] Candle closed past SL! close={c:.5f} >= SL={stop_loss:.5f}")
 
                             if price_past_sl:
                                 log(f"  Trade invalidated - skipping this entry")
                                 send_telegram_async(f"[SKIP] <b>Trade Skipped</b>\n"
                                     f"Symbol: {args.symbol}\n"
-                                    f"Reason: Price moved past SL\n"
+                                    f"Reason: Price {'wick' if sl_type == 'price_based' else 'close'} past SL\n"
                                     f"Signal entry: {entry_price:.5f}\n"
                                     f"Current price: {tick.ask if direction == 'BUY' else tick.bid:.5f}\n"
                                     f"SL: {stop_loss:.5f}")
@@ -799,8 +1041,8 @@ def run_bot(args):
                                 symbol=args.symbol,
                                 direction=direction,
                                 volume=final_lot,
-                                sl=stop_loss,
-                                tp=take_profit,
+                                sl=stop_loss if send_sl_to_mt5 else None,
+                                tp=take_profit if send_tp_to_mt5 else None,
                                 credentials=credentials,
                                 theoretical_entry=entry_price
                             )
@@ -818,8 +1060,8 @@ def run_bot(args):
                                 direction=direction,
                                 volume=final_lot,
                                 entry_price=entry_price,
-                                sl=stop_loss,
-                                tp=take_profit,
+                                sl=stop_loss if send_sl_to_mt5 else None,
+                                tp=take_profit if send_tp_to_mt5 else None,
                                 credentials=credentials
                             )
                             is_pending_order = True if success else False
@@ -860,20 +1102,24 @@ def run_bot(args):
                         log(f"")
                         log(f"  [ERROR] FAILURE! Order placement failed", "ERROR")
                         log(f"  Error message: {msg}", "ERROR")
-                        log(f"  ", "ERROR")
-                        log(f"  Possible causes:", "ERROR")
-                        log(f"  1. AutoTrading not enabled in MT5", "ERROR")
-                        log(f"  2. Insufficient margin", "ERROR")
-                        log(f"  3. Invalid lot size", "ERROR")
-                        log(f"  4. Market closed", "ERROR")
-                        log(f"  5. Invalid SL/TP levels", "ERROR")
-                        log(f"  ", "ERROR")
-                        log(f"  Bot will skip this entry and wait for next day", "ERROR")
 
-                        send_telegram_async(f"[FAIL] <b>Order Failed</b>\n{msg}\n\n💡 Check if AutoTrading is enabled in MT5", is_error=True)
+                        # Save signal for retry (handled in retry block above)
+                        # Track candle time at failure to count elapsed candles
+                        pending_signal = {
+                            'direction': direction,
+                            'entry': entry_price,
+                            'sl': stop_loss,
+                            'tp': take_profit,
+                            'lot': final_lot,
+                            'close_price': c,
+                        }
+                        retry_start_candle_time = candle['time']  # Current candle when failure occurred
+                        retry_candles_elapsed = 0
+                        retry_limit = args.pending_order_max_candles if args.pending_order_max_candles > 0 else 3
+                        log(f"  [RETRY] Will retry in 1s (0/{retry_limit} candles elapsed)...", "WARN")
+                        send_telegram_async(f"[RETRY] <b>Order Failed - Will Retry</b>\n{msg}\n0/{retry_limit} candles to retry")
                         mt5.shutdown()
-                        last_entry_date = now.date()
-                        time.sleep(args.interval)
+                        time.sleep(1)
                         continue
                 else:
                     log(f"  [TEST] TEST MODE: Order NOT placed (simulation only)")
@@ -885,6 +1131,7 @@ def run_bot(args):
                     'sl': stop_loss,       # Now uses actual SL in LIVE mode
                     'tp': take_profit,     # Now uses actual TP in LIVE mode
                     'original_sl': stop_loss,  # Keep for reference
+                    'close_price': c,      # Master candle close price (for breakeven_target=close)
                     'candles': 0,
                     'ticket': order_ticket,
                     'lot': final_lot,
@@ -893,7 +1140,8 @@ def run_bot(args):
                     'last_checked_candle_time': candle['time'],  # Track last checked candle
                     'sl_moved_to_breakeven': False,  # Track if SL has been moved to breakeven
                     'is_pending': is_pending_order,  # Track if this is a pending order
-                    'candles_waited': 0  # Track candles waited for pending order fill
+                    'candles_waited': 0,              # Track candles waited for pending order fill
+                    'pending_placed_at': now,         # Wall-clock time when LIMIT was placed
                 }
 
                 log(f"")
@@ -925,7 +1173,7 @@ def run_bot(args):
 
                 wfl = waiting_for_limit  # shorthand
 
-                # Check if new candle appeared → increment counter
+                # Track candle progress
                 try:
                     current_candle = get_current_candle(mt5, args.symbol, timeframe)
                 except Exception as e:
@@ -935,52 +1183,90 @@ def run_bot(args):
                 if current_candle and current_candle['time'] > wfl['last_checked_candle_time']:
                     wfl['candles_waited'] += 1
                     wfl['last_checked_candle_time'] = current_candle['time']
-                    log(f"[WAIT] Waiting for LIMIT: {wfl['candles_waited']}/{args.pending_order_max_candles} candles")
+                    expire = args.pending_order_expire_candles
+                    if expire > 0:
+                        log(f"[WAIT] Waiting for LIMIT: {wfl['candles_waited']}/{expire} candles")
+                    else:
+                        log(f"[WAIT] Waiting for LIMIT: {wfl['candles_waited']} candles elapsed")
 
-                    # Check if exceeded max candles
-                    if args.pending_order_max_candles > 0 and wfl['candles_waited'] >= args.pending_order_max_candles:
-                        log(f"[SKIP] Max candles reached ({wfl['candles_waited']}) — price never returned to LIMIT side")
-                        log(f"  Trade skipped entirely. Bot stopping.")
+                    # close_based SL: check previous candle close vs SL on candle boundary
+                    if sl_type == "close_based":
+                        prev_close = current_candle.get('open', None)  # Current candle open ≈ previous candle close
+                        # Use copy_rates to get actual previous candle close
+                        try:
+                            rates = mt5.copy_rates_from_pos(args.symbol, timeframe, 1, 1)
+                            if rates is not None and len(rates) > 0:
+                                prev_close = rates[0]['close']
+                        except Exception:
+                            pass
+
+                        if prev_close is not None:
+                            sl_hit = False
+                            if wfl['direction'] == "BUY" and prev_close <= wfl['stop_loss']:
+                                sl_hit = True
+                                log(f"[SKIP] Previous candle CLOSED past SL! close={prev_close:.5f} <= SL={wfl['stop_loss']:.5f}")
+                            elif wfl['direction'] == "SELL" and prev_close >= wfl['stop_loss']:
+                                sl_hit = True
+                                log(f"[SKIP] Previous candle CLOSED past SL! close={prev_close:.5f} >= SL={wfl['stop_loss']:.5f}")
+
+                            if sl_hit:
+                                send_telegram_async(
+                                    f"⏹ <b>Trade Skipped (close-based SL)</b>\n"
+                                    f"Symbol: {args.symbol}\n"
+                                    f"Reason: Candle closed past SL while waiting for LIMIT\n"
+                                    f"SL: {wfl['stop_loss']:.5f}\n"
+                                    f"Candle close: {prev_close:.5f}\n\n"
+                                    f"Bot stopping...")
+                                mt5.shutdown()
+                                log("Bot stopping — candle closed past SL during wait")
+                                return
+
+                    # Check if expired
+                    if expire > 0 and wfl['candles_waited'] >= expire:
+                        log(f"[SKIP] LIMIT not filled after {wfl['candles_waited']} candles — cancelling")
                         send_telegram_async(
-                            f"[SKIP] <b>Trade Skipped</b>\n"
+                            f"[SKIP] <b>LIMIT Expired</b>\n"
                             f"Symbol: {args.symbol}\n"
                             f"Direction: {wfl['direction']}\n"
-                            f"Reason: Price did not return to entry level after {wfl['candles_waited']} candles\n"
+                            f"Price did not return to entry after {wfl['candles_waited']} candles\n"
                             f"Entry target: {wfl['entry_price']:.5f}\n\n"
                             f"Bot stopping...")
                         mt5.shutdown()
-                        log("Bot stopping — waiting for LIMIT expired")
+                        log("Bot stopping — LIMIT fill expired")
                         return
 
                 # Check current price
                 tick = mt5.symbol_info_tick(args.symbol)
                 if tick:
-                    # Safety: if price moved past SL, invalidate immediately
-                    if wfl['direction'] == "BUY" and tick.ask <= wfl['stop_loss']:
-                        log(f"[SKIP] Price moved past SL while waiting! ask={tick.ask:.5f} <= SL={wfl['stop_loss']:.5f}")
-                        send_telegram_async(
-                            f"[SKIP] <b>Trade Skipped</b>\n"
-                            f"Symbol: {args.symbol}\n"
-                            f"Reason: Price moved past SL while waiting for LIMIT\n"
-                            f"SL: {wfl['stop_loss']:.5f}\n"
-                            f"Current ask: {tick.ask:.5f}\n\n"
-                            f"Bot stopping...")
-                        mt5.shutdown()
-                        log("Bot stopping — price past SL during wait")
-                        return
+                    # Safety: if price moved past SL, invalidate
+                    # price_based: check tick immediately (wick-touch)
+                    # close_based: already handled above at candle boundary — skip tick check here
+                    if sl_type == "price_based":
+                        if wfl['direction'] == "BUY" and tick.ask <= wfl['stop_loss']:
+                            log(f"[SKIP] Price moved past SL while waiting! ask={tick.ask:.5f} <= SL={wfl['stop_loss']:.5f}")
+                            send_telegram_async(
+                                f"⏹ <b>Trade Skipped</b>\n"
+                                f"Symbol: {args.symbol}\n"
+                                f"Reason: Price moved past SL while waiting for LIMIT\n"
+                                f"SL: {wfl['stop_loss']:.5f}\n"
+                                f"Current ask: {tick.ask:.5f}\n\n"
+                                f"Bot stopping...")
+                            mt5.shutdown()
+                            log("Bot stopping — price past SL during wait")
+                            return
 
-                    if wfl['direction'] == "SELL" and tick.bid >= wfl['stop_loss']:
-                        log(f"[SKIP] Price moved past SL while waiting! bid={tick.bid:.5f} >= SL={wfl['stop_loss']:.5f}")
-                        send_telegram_async(
-                            f"[SKIP] <b>Trade Skipped</b>\n"
-                            f"Symbol: {args.symbol}\n"
-                            f"Reason: Price moved past SL while waiting for LIMIT\n"
-                            f"SL: {wfl['stop_loss']:.5f}\n"
-                            f"Current bid: {tick.bid:.5f}\n\n"
-                            f"Bot stopping...")
-                        mt5.shutdown()
-                        log("Bot stopping — price past SL during wait")
-                        return
+                        if wfl['direction'] == "SELL" and tick.bid >= wfl['stop_loss']:
+                            log(f"[SKIP] Price moved past SL while waiting! bid={tick.bid:.5f} >= SL={wfl['stop_loss']:.5f}")
+                            send_telegram_async(
+                                f"⏹ <b>Trade Skipped</b>\n"
+                                f"Symbol: {args.symbol}\n"
+                                f"Reason: Price moved past SL while waiting for LIMIT\n"
+                                f"SL: {wfl['stop_loss']:.5f}\n"
+                                f"Current bid: {tick.bid:.5f}\n\n"
+                                f"Bot stopping...")
+                            mt5.shutdown()
+                            log("Bot stopping — price past SL during wait")
+                            return
 
                     # Check if price has returned to valid LIMIT side
                     can_place_now = False
@@ -1005,8 +1291,8 @@ def run_bot(args):
                             direction=wfl['direction'],
                             volume=wfl['lot'],
                             entry_price=wfl['entry_price'],
-                            sl=wfl['stop_loss'],
-                            tp=wfl['take_profit'],
+                            sl=wfl['stop_loss'] if send_sl_to_mt5 else None,
+                            tp=wfl['take_profit'] if send_tp_to_mt5 else None,
                             credentials=credentials
                         )
 
@@ -1027,6 +1313,7 @@ def run_bot(args):
                                 'sl': wfl['stop_loss'],
                                 'tp': wfl['take_profit'],
                                 'original_sl': wfl['stop_loss'],
+                                'close_price': wfl['close_price'],  # Master candle close price
                                 'candles': 0,
                                 'ticket': order_ticket,
                                 'lot': wfl['lot'],
@@ -1036,6 +1323,7 @@ def run_bot(args):
                                 'sl_moved_to_breakeven': False,
                                 'is_pending': True,
                                 'candles_waited': 0,  # Reset for pending order fill tracking
+                                'pending_placed_at': now,
                             }
                             waiting_for_limit = None  # Clear waiting state
 
@@ -1099,14 +1387,17 @@ def run_bot(args):
 
                             if position_data:
                                 active_trade['entry'] = position_data['price_open']
-                                active_trade['sl'] = position_data['sl']
-                                active_trade['tp'] = position_data['tp']
+                                # Only override SL/TP from MT5 if we actually sent them
+                                if send_sl_to_mt5 and position_data['sl'] > 0:
+                                    active_trade['sl'] = position_data['sl']
+                                if send_tp_to_mt5 and position_data['tp'] > 0:
+                                    active_trade['tp'] = position_data['tp']
                                 # Use actual position ticket (may differ from order ticket on some brokers)
                                 if position_data['ticket'] != active_trade['ticket']:
                                     log(f"Position ticket differs: order={active_trade['ticket']}, position={position_data['ticket']}")
                                 active_trade['ticket'] = position_data['ticket']
                                 active_trade['is_pending'] = False
-                                log(f"Actual position - Entry={position_data['price_open']:.5f}, SL={position_data['sl']:.5f}, TP={position_data['tp']:.5f}")
+                                log(f"Actual position - Entry={position_data['price_open']:.5f}, SL={active_trade['sl']:.5f}, TP={active_trade['tp']:.5f}")
                             else:
                                 log("Warning: Position details not available after fill", "WARN")
                                 active_trade['is_pending'] = False  # Still mark as filled
@@ -1117,43 +1408,66 @@ def run_bot(args):
                             continue
 
                         elif status == 'PENDING':
-                            # Still pending - check if exceeded max candles
-                            # Get current candle to check if new candle appeared
-                            try:
-                                current_candle = get_current_candle(mt5, args.symbol, timeframe)
-                            except Exception as e:
-                                log(f"Error getting current candle: {e}", "ERROR")
-                                current_candle = None
+                            # Still pending — track elapsed candles via wall-clock time
+                            # (avoids copy_rates_from_pos which requires market data subscription)
+                            expire = args.pending_order_expire_candles
+                            tf_seconds = get_timeframe_seconds(timeframe)
+                            placed_at = active_trade.get('pending_placed_at')
+                            elapsed_seconds = (datetime.now(TIMEZONE) - placed_at).total_seconds() if placed_at else 0
+                            expire_at_seconds = expire * tf_seconds if expire > 0 else float('inf')
+                            seconds_to_expire = expire_at_seconds - elapsed_seconds
 
-                            if current_candle and current_candle['time'] > active_trade['last_checked_candle_time']:
-                                # New candle - increment counter
-                                active_trade['candles_waited'] += 1
-                                active_trade['last_checked_candle_time'] = current_candle['time']
-                                log(f"Pending order waiting: {active_trade['candles_waited']}/{args.pending_order_max_candles} candles")
+                            if expire > 0:
+                                candles_elapsed = int(elapsed_seconds / tf_seconds)
+                                # Log once per candle boundary
+                                prev = active_trade.get('candles_waited', 0)
+                                if candles_elapsed > prev:
+                                    active_trade['candles_waited'] = candles_elapsed
+                                    log(f"Pending order waiting: {candles_elapsed}/{expire} candles ({elapsed_seconds:.0f}s elapsed)")
 
-                                # Check if exceeded max candles
-                                if args.pending_order_max_candles > 0 and active_trade['candles_waited'] >= args.pending_order_max_candles:
-                                    # Cancel order
-                                    log(f"[WARN] Pending order expired after {active_trade['candles_waited']} candles - cancelling")
+                                if seconds_to_expire <= 0:
+                                    log(f"[WARN] Pending order expired after {candles_elapsed} candles — attempting cancel")
                                     cancel_success, cancel_msg = cancel_order(active_trade['ticket'], credentials)
-
                                     if cancel_success:
                                         log(f"[OK] {cancel_msg}")
-                                        send_telegram_async(f"[WARN] <b>Pending Order Expired</b>\n"
-                                                     f"Ticket: {active_trade['ticket']}\n"
-                                                     f"Reason: Price did not reach entry after {active_trade['candles_waited']} candles\n"
-                                                     f"Entry target: {active_trade['entry']:.5f}\n\n"
-                                                     f"Bot stopping...")
+                                        send_telegram_async(
+                                            f"[WARN] <b>Pending Order Expired</b>\n"
+                                            f"Ticket: {active_trade['ticket']}\n"
+                                            f"Not filled after {candles_elapsed} candles\n"
+                                            f"Entry target: {active_trade['entry']:.5f}\n\n"
+                                            f"Bot stopping...")
+                                        mt5.shutdown()
+                                        log("Bot stopping — pending order not filled")
+                                        return
                                     else:
-                                        log(f"[FAIL] Cancel failed: {cancel_msg}", "ERROR")
+                                        # Cancel failed — order may have just filled, re-check status
+                                        log(f"[WARN] Cancel failed ({cancel_msg}) — re-checking order status", "WARN")
+                                        status2, status_msg2, position_data2 = check_order_status(active_trade['ticket'], credentials)
+                                        if status2 == 'FILLED':
+                                            log(f"[OK] Order filled just before cancel — continuing to monitor")
+                                            if position_data2:
+                                                active_trade['entry'] = position_data2['price_open']
+                                                if send_sl_to_mt5 and position_data2['sl'] > 0:
+                                                    active_trade['sl'] = position_data2['sl']
+                                                if send_tp_to_mt5 and position_data2['tp'] > 0:
+                                                    active_trade['tp'] = position_data2['tp']
+                                                active_trade['ticket'] = position_data2['ticket']
+                                            active_trade['is_pending'] = False
+                                        else:
+                                            log(f"[FAIL] Cancel failed and order still {status2} — stopping", "ERROR")
+                                            mt5.shutdown()
+                                            return
 
-                                    mt5.shutdown()
-                                    log("Bot stopping - pending order not filled")
-                                    return
+                            # Adaptive sleep: fast poll near expiry, slow poll when far away
+                            # - >10s to expire: check every 2s (reduce MT5 connection overhead)
+                            # - <=10s to expire: check every 100ms (tight loop to catch fill/expire)
+                            if seconds_to_expire > 10:
+                                sleep_duration = 2.0
+                            else:
+                                sleep_duration = 0.1
 
-                            # Continue waiting (fast loop)
                             mt5.shutdown()
-                            time.sleep(0.1)
+                            time.sleep(sleep_duration)
                             continue
 
                         elif status == 'CANCELLED':
@@ -1250,10 +1564,21 @@ def run_bot(args):
                                 strategy=args.strategy, user=args.user
                             )
                         else:
-                            log("Position closed by MT5 (details unavailable)")
+                            log("Position closed by MT5 (details unavailable)", "WARN")
+                            log(f"  DEBUG: Trade state at close:")
+                            log(f"    Entry: {active_trade['entry']:.5f}")
+                            log(f"    SL: {active_trade['sl']:.5f} (type: {sl_type})")
+                            log(f"    TP: {active_trade['tp']:.5f} (type: {tp_type})")
+                            log(f"    Candles: {active_trade['candles']}/{max_candles if max_candles > 0 else '∞'}")
+                            log(f"    SL sent to MT5: {send_sl_to_mt5}")
+                            log(f"    TP sent to MT5: {send_tp_to_mt5}")
+                            log(f"    BE moved: {active_trade.get('sl_moved_to_breakeven', False)}")
                             send_telegram_async(f"⚪ <b>Position Closed</b>\n\n"
                                          f"Ticket: {active_trade['ticket']}\n"
-                                         f"Symbol: {args.symbol}\n\n"
+                                         f"Symbol: {args.symbol}\n"
+                                         f"Entry: {active_trade['entry']:.5f}\n"
+                                         f"SL: {active_trade['sl']:.5f} ({sl_type})\n"
+                                         f"TP: {active_trade['tp']:.5f} ({tp_type})\n\n"
                                          f"Bot stopping...")
 
                         mt5.shutdown()
@@ -1267,12 +1592,14 @@ def run_bot(args):
                             current_price = tick.bid if active_trade['direction'] == "SELL" else tick.ask
                             entry = active_trade['entry']
                             tp = active_trade['tp']
+                            # Breakeven target: entry price or master candle close price
+                            be_target = active_trade.get('close_price', entry) if breakeven_target == "close" else entry
 
                             if active_trade['direction'] == "BUY":
                                 tp_distance = tp - entry
                                 trigger_price = entry + (tp_distance * breakeven_trigger_percent / 100)
                                 if current_price >= trigger_price:
-                                    new_sl = entry
+                                    new_sl = be_target
                                     request = {
                                         "action": mt5.TRADE_ACTION_SLTP,
                                         "symbol": args.symbol,
@@ -1280,21 +1607,24 @@ def run_bot(args):
                                         "sl": new_sl,
                                         "tp": tp
                                     }
+                                    log(f"  [BE] Trigger hit! price={current_price:.5f} >= trigger={trigger_price:.5f}, moving SL to {new_sl:.5f}")
                                     result = mt5.order_send(request)
                                     if result.retcode == mt5.TRADE_RETCODE_DONE:
-                                        log(f"[OK] SL moved to breakeven: {new_sl:.5f}")
+                                        log(f"[OK] SL moved to breakeven ({breakeven_target}): {new_sl:.5f}")
                                         send_telegram_async(f"[OK] <b>SL Moved to Breakeven</b>\n\n"
                                                      f"Symbol: {args.symbol}\n"
                                                      f"Entry: {entry:.5f}\n"
-                                                     f"New SL: {new_sl:.5f}\n\n"
+                                                     f"New SL: {new_sl:.5f} ({breakeven_target})\n\n"
                                                      f"Trade is now risk-free!")
                                         active_trade['sl'] = new_sl
                                         active_trade['sl_moved_to_breakeven'] = True
+                                    else:
+                                        log(f"  [ERROR] Failed to move SL to breakeven: {result.retcode} - {result.comment}", "ERROR")
                             else:  # SELL
                                 tp_distance = entry - tp
                                 trigger_price = entry - (tp_distance * breakeven_trigger_percent / 100)
                                 if current_price <= trigger_price:
-                                    new_sl = entry
+                                    new_sl = be_target
                                     request = {
                                         "action": mt5.TRADE_ACTION_SLTP,
                                         "symbol": args.symbol,
@@ -1302,16 +1632,86 @@ def run_bot(args):
                                         "sl": new_sl,
                                         "tp": tp
                                     }
+                                    log(f"  [BE] Trigger hit! price={current_price:.5f} <= trigger={trigger_price:.5f}, moving SL to {new_sl:.5f}")
                                     result = mt5.order_send(request)
                                     if result.retcode == mt5.TRADE_RETCODE_DONE:
-                                        log(f"[OK] SL moved to breakeven: {new_sl:.5f}")
+                                        log(f"[OK] SL moved to breakeven ({breakeven_target}): {new_sl:.5f}")
                                         send_telegram_async(f"[OK] <b>SL Moved to Breakeven</b>\n\n"
                                                      f"Symbol: {args.symbol}\n"
                                                      f"Entry: {entry:.5f}\n"
-                                                     f"New SL: {new_sl:.5f}\n\n"
+                                                     f"New SL: {new_sl:.5f} ({breakeven_target})\n\n"
                                                      f"Trade is now risk-free!")
                                         active_trade['sl'] = new_sl
                                         active_trade['sl_moved_to_breakeven'] = True
+                                    else:
+                                        log(f"  [ERROR] Failed to move SL to breakeven: {result.retcode} - {result.comment}", "ERROR")
+
+                    # LIVE MODE: Candle-based monitoring (close_based exits + max_candles TIME exit)
+                    # Must run here since LIVE mode doesn't reach test-mode monitoring below
+                    needs_candle_monitoring = (max_candles > 0) or (not send_sl_to_mt5) or (not send_tp_to_mt5)
+                    if needs_candle_monitoring:
+                        candle = get_current_candle(mt5, args.symbol, timeframe)
+                        if candle and candle['time'] > active_trade.get('last_checked_candle_time', active_trade['entry_candle_time']):
+                            # New candle — increment counter
+                            if candle['time'] > active_trade['entry_candle_time']:
+                                active_trade['candles'] += 1
+                                log(f"Monitoring: Candle {active_trade['candles']}/{max_candles if max_candles > 0 else '∞'}")
+                                log(f"  Candle: O={candle['open']:.5f} H={candle['high']:.5f} L={candle['low']:.5f} C={candle['close']:.5f}")
+                                log(f"  Trade: Entry={active_trade['entry']:.5f} SL={active_trade['sl']:.5f} TP={active_trade['tp']:.5f}")
+                                if not send_sl_to_mt5:
+                                    log(f"  [close_based SL] checking candle close vs SL...")
+                                if not send_tp_to_mt5:
+                                    log(f"  [close_based TP] checking candle close vs TP...")
+                            active_trade['last_checked_candle_time'] = candle['time']
+
+                            # Check close_based TP/SL exits on candle close
+                            if (not send_sl_to_mt5) or (not send_tp_to_mt5):
+                                from src.utils import check_exit
+                                cb_exit_type, cb_exit_price = check_exit(
+                                    direction=active_trade['direction'],
+                                    candle={'high': candle['high'], 'low': candle['low'], 'close': candle['close']},
+                                    tp=active_trade['tp'],
+                                    sl=active_trade['sl'],
+                                    tp_type=tp_type,
+                                    sl_type=sl_type
+                                )
+
+                                if cb_exit_type:
+                                    log(f"[{cb_exit_type} EXIT] close_based exit detected: {cb_exit_type} @ {cb_exit_price:.5f}")
+                                    from src.orders import close_position
+                                    success, msg = close_position(active_trade['ticket'], credentials=credentials)
+                                    if success:
+                                        log(f"{cb_exit_type} exit: Position {active_trade['ticket']} closed at market")
+                                        send_telegram_async(
+                                            f"{'🟢' if cb_exit_type == 'TP' else '🔴'} <b>{cb_exit_type} EXIT (close_based)</b>\n\n"
+                                            f"Symbol: {args.symbol}\n"
+                                            f"Direction: {active_trade['direction']}\n"
+                                            f"Entry: {active_trade['entry']:.5f}\n"
+                                            f"Exit trigger: {cb_exit_price:.5f}\n"
+                                            f"Candle close: {candle['close']:.5f}\n\n"
+                                            f"Position closed at market."
+                                        )
+                                    else:
+                                        log(f"[ERROR] Failed to close position for {cb_exit_type} exit: {msg}", "ERROR")
+
+                            # TIME exit: close position after max_candles
+                            if max_candles > 0 and active_trade['candles'] >= max_candles:
+                                log(f"[TIME EXIT] Max candles reached ({active_trade['candles']}/{max_candles}), closing position...")
+                                from src.orders import close_position
+                                success, msg = close_position(active_trade['ticket'], credentials=credentials)
+                                if success:
+                                    log(f"TIME exit: Position {active_trade['ticket']} closed")
+                                    send_telegram_async(
+                                        f"⏰ <b>TIME EXIT</b>\n\n"
+                                        f"Symbol: {args.symbol}\n"
+                                        f"Direction: {active_trade['direction']}\n"
+                                        f"Max candles reached: {active_trade['candles']}/{max_candles}\n\n"
+                                        f"Position closed at market."
+                                    )
+                                else:
+                                    log(f"[ERROR] Failed to close position for TIME exit: {msg}", "ERROR")
+                                # Don't return yet — let next loop iteration detect position gone
+                                # and handle exit logging properly
 
                     mt5.shutdown()
                     # Fast loop for LIVE mode (100ms)
@@ -1342,13 +1742,15 @@ def run_bot(args):
                         # Calculate trigger price (breakeven_trigger_percent% of TP distance)
                         entry = active_trade['entry']
                         tp = active_trade['tp']
+                        # Breakeven target: entry price or master candle close price
+                        be_target = active_trade.get('close_price', entry) if breakeven_target == "close" else entry
 
                         if active_trade['direction'] == "BUY":
                             tp_distance = tp - entry
                             trigger_price = entry + (tp_distance * breakeven_trigger_percent / 100)
                             # Check if price has reached trigger (use high for BUY)
                             if h >= trigger_price:
-                                new_sl = entry  # Move SL to entry (breakeven)
+                                new_sl = be_target
 
                                 # Modify SL in LIVE mode
                                 if not args.test and active_trade['ticket']:
@@ -1362,12 +1764,12 @@ def run_bot(args):
                                     }
                                     result = mt5.order_send(request)
                                     if result.retcode == mt5.TRADE_RETCODE_DONE:
-                                        log(f"[OK] SL moved to breakeven: {new_sl:.5f} (was {active_trade['sl']:.5f})")
+                                        log(f"[OK] SL moved to breakeven ({breakeven_target}): {new_sl:.5f} (was {active_trade['sl']:.5f})")
                                         send_telegram_async(f"[OK] <b>SL Moved to Breakeven</b>\n\n"
                                                      f"Symbol: {args.symbol}\n"
                                                      f"Direction: {active_trade['direction']}\n"
                                                      f"Entry: {entry:.5f}\n"
-                                                     f"New SL: {new_sl:.5f}\n"
+                                                     f"New SL: {new_sl:.5f} ({breakeven_target})\n"
                                                      f"Trigger: {trigger_price:.5f} ({breakeven_trigger_percent}% TP)\n\n"
                                                      f"Trade is now risk-free!")
                                         active_trade['sl'] = new_sl
@@ -1376,12 +1778,12 @@ def run_bot(args):
                                         log(f"[WARN] Failed to modify SL: {result.comment}", "WARN")
                                 else:
                                     # TEST mode: just update tracking
-                                    log(f"[OK] SL moved to breakeven: {new_sl:.5f} (was {active_trade['sl']:.5f})")
+                                    log(f"[OK] SL moved to breakeven ({breakeven_target}): {new_sl:.5f} (was {active_trade['sl']:.5f})")
                                     send_telegram_async(f"[OK] <b>SL Moved to Breakeven</b>\n\n"
                                                  f"Symbol: {args.symbol}\n"
                                                  f"Direction: {active_trade['direction']}\n"
                                                  f"Entry: {entry:.5f}\n"
-                                                 f"New SL: {new_sl:.5f}\n"
+                                                 f"New SL: {new_sl:.5f} ({breakeven_target})\n"
                                                  f"Trigger: {trigger_price:.5f} ({breakeven_trigger_percent}% TP)\n\n"
                                                  f"Trade is now risk-free!")
                                     active_trade['sl'] = new_sl
@@ -1392,7 +1794,7 @@ def run_bot(args):
                             trigger_price = entry - (tp_distance * breakeven_trigger_percent / 100)
                             # Check if price has reached trigger (use low for SELL)
                             if l <= trigger_price:
-                                new_sl = entry  # Move SL to entry (breakeven)
+                                new_sl = be_target
 
                                 # Modify SL in LIVE mode
                                 if not args.test and active_trade['ticket']:
@@ -1406,12 +1808,12 @@ def run_bot(args):
                                     }
                                     result = mt5.order_send(request)
                                     if result.retcode == mt5.TRADE_RETCODE_DONE:
-                                        log(f"[OK] SL moved to breakeven: {new_sl:.5f} (was {active_trade['sl']:.5f})")
+                                        log(f"[OK] SL moved to breakeven ({breakeven_target}): {new_sl:.5f} (was {active_trade['sl']:.5f})")
                                         send_telegram_async(f"[OK] <b>SL Moved to Breakeven</b>\n\n"
                                                      f"Symbol: {args.symbol}\n"
                                                      f"Direction: {active_trade['direction']}\n"
                                                      f"Entry: {entry:.5f}\n"
-                                                     f"New SL: {new_sl:.5f}\n"
+                                                     f"New SL: {new_sl:.5f} ({breakeven_target})\n"
                                                      f"Trigger: {trigger_price:.5f} ({breakeven_trigger_percent}% TP)\n\n"
                                                      f"Trade is now risk-free!")
                                         active_trade['sl'] = new_sl
@@ -1420,12 +1822,12 @@ def run_bot(args):
                                         log(f"[WARN] Failed to modify SL: {result.comment}", "WARN")
                                 else:
                                     # TEST mode: just update tracking
-                                    log(f"[OK] SL moved to breakeven: {new_sl:.5f} (was {active_trade['sl']:.5f})")
+                                    log(f"[OK] SL moved to breakeven ({breakeven_target}): {new_sl:.5f} (was {active_trade['sl']:.5f})")
                                     send_telegram_async(f"[OK] <b>SL Moved to Breakeven</b>\n\n"
                                                  f"Symbol: {args.symbol}\n"
                                                  f"Direction: {active_trade['direction']}\n"
                                                  f"Entry: {entry:.5f}\n"
-                                                 f"New SL: {new_sl:.5f}\n"
+                                                 f"New SL: {new_sl:.5f} ({breakeven_target})\n"
                                                  f"Trigger: {trigger_price:.5f} ({breakeven_trigger_percent}% TP)\n\n"
                                                  f"Trade is now risk-free!")
                                     active_trade['sl'] = new_sl
@@ -1513,10 +1915,21 @@ def run_bot(args):
                                     strategy=args.strategy, user=args.user
                                 )
                             else:
-                                log("Position closed by MT5 (details unavailable)")
+                                log("Position closed by MT5 (details unavailable)", "WARN")
+                                log(f"  DEBUG: Trade state at close:")
+                                log(f"    Entry: {active_trade['entry']:.5f}")
+                                log(f"    SL: {active_trade['sl']:.5f} (type: {sl_type})")
+                                log(f"    TP: {active_trade['tp']:.5f} (type: {tp_type})")
+                                log(f"    Candles: {active_trade['candles']}/{max_candles if max_candles > 0 else '∞'}")
+                                log(f"    SL sent to MT5: {send_sl_to_mt5}")
+                                log(f"    TP sent to MT5: {send_tp_to_mt5}")
+                                log(f"    BE moved: {active_trade.get('sl_moved_to_breakeven', False)}")
                                 send_telegram_async(f"⚪ <b>Position Closed</b>\n\n"
                                              f"Ticket: {active_trade['ticket']}\n"
-                                             f"Symbol: {args.symbol}\n\n"
+                                             f"Symbol: {args.symbol}\n"
+                                             f"Entry: {active_trade['entry']:.5f}\n"
+                                             f"SL: {active_trade['sl']:.5f} ({sl_type})\n"
+                                             f"TP: {active_trade['tp']:.5f} ({tp_type})\n\n"
                                              f"Bot stopping...")
 
                             # Bot should stop after position is closed

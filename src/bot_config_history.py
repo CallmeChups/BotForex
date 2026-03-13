@@ -64,6 +64,7 @@ def save_bot_config(bot_info: dict, preset_name: str = None) -> str:
         'risk_mode', 'risk_percent', 'risk_amount', 'risk_compounding',
         'tp_type', 'sl_type', 'move_sl_to_breakeven',
         'breakeven_trigger_percent', 'pending_order_max_candles',
+        'window_start', 'window_end', 'priority_direction',
     ]
     config = {k: bot_info.get(k) for k in config_keys if bot_info.get(k) is not None}
 

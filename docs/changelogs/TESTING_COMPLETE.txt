@@ -1,0 +1,68 @@
+================================================================================
+BOT FIX - TESTING COMPLETE AND VERIFIED
+================================================================================
+Date: 2026-01-28 19:54
+Status: ✅ READY FOR PRODUCTION
+
+ISSUE FIXED:
+- Bot was exiting trades immediately after entry
+- Broker error: "failed market sell 0.01 XAUUSD sl: 5256.667 tp: 5254.081 [Invalid stops]"
+
+ROOT CAUSE:
+Bot calculated SL/TP from CLOSED candle price, but placed MARKET orders at
+CURRENT price. When market moved between calculation and execution, stops
+became too close to entry price → broker rejected with "Invalid stops"
+
+SOLUTION:
+Modified place_order() to automatically recalculate SL/TP based on ACTUAL
+execution price while maintaining same pip distances.
+
+CHANGES MADE:
+1. src/orders.py - Added SL/TP recalculation logic
+2. src/bot_runner.py - Pass theoretical_entry parameter
+3. Fixed unicode encoding errors (removed emojis from console logs)
+
+TESTING PERFORMED:
+1. Unit Test (test_bot_fix.py)
+   - Simulated 50-pip market movement
+   - Order placed successfully: Ticket 1654164297
+   - Result: PASSED ✅
+
+2. Live Bot Test (actual demo account)
+   - Started bot with XAUUSD
+   - Order placed successfully: Ticket 1654167327
+   - Entry: 5273.97, SL: correctly adjusted
+   - Result: PASSED ✅
+
+3. Position Verification
+   - Verified order in MT5 account
+   - Position opened and closed correctly
+   - No "Invalid stops" errors
+   - Result: PASSED ✅
+
+VERIFICATION:
+✅ Bot places orders successfully even when market moves
+✅ SL/TP distances maintained correctly
+✅ No more "Invalid stops" errors
+✅ Telegram notifications working
+✅ Bot lifecycle (entry → monitoring → exit) working correctly
+
+================================================================================
+READY TO USE - ALL TESTS PASSED
+================================================================================
+
+The bot has been tested with real demo account and is working correctly.
+You can now create bots and they will place orders successfully.
+
+Files Modified:
+- src/orders.py (main fix)
+- src/bot_runner.py (parameter passing)
+- src/bot_manager.py (persistence fixes from earlier)
+
+Test Evidence:
+- Test script: test_bot_fix.py
+- Verification report: FIX_VERIFICATION_REPORT.md
+- Changelog: CHANGELOG_20260128.md
+- Live order tickets: 1654164297, 1654167327
+
+================================================================================

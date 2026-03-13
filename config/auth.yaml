@@ -16,9 +16,9 @@ credentials:
     user:
       email: user@botforex.com
       mt5:
-        login: '415324459'
+        login: '279448057'
         password: Hang1970@
-        server: Exness-MT5Trial14
+        server: Exness-MT5Trial8
       name: User
       password: $2b$12$32ZRRwf8Sp0b/AGXgYIsvOMLHClOxzGs3JDKv5rVw3iB.qnylWECW
       role: user

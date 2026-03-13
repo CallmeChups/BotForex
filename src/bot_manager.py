@@ -18,6 +18,7 @@ import platform
 TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
 BOTS_FILE = "data/running_bots.json"
 BOT_SCRIPT = "src/bot_runner.py"
+BOT_SCRIPT_MULTI = "src/bot_runner_multi.py"
 
 
 def get_bots_file() -> str:
@@ -130,8 +131,14 @@ def start_bot(
     # Move SL to Breakeven parameters
     move_sl_to_breakeven: bool = None,
     breakeven_trigger_percent: float = None,
+    breakeven_target: str = None,
     # Pending order parameters
-    pending_order_max_candles: int = None
+    pending_order_max_candles: int = None,
+    pending_order_expire_candles: int = None,
+    # Multiple Master Candle parameters
+    window_start: str = None,
+    window_end: str = None,
+    priority_direction: str = None
 ) -> tuple:
     """
     Start a new bot process
@@ -142,13 +149,14 @@ def start_bot(
     # Load existing bots
     bots = load_bots()
 
-    # Build command
+    # Build command — pick runner script based on strategy type
     python_exe = sys.executable
-    script_path = os.path.abspath(BOT_SCRIPT)
+    is_multi = window_start is not None and window_end is not None
+    script = os.path.abspath(BOT_SCRIPT_MULTI if is_multi else BOT_SCRIPT)
 
     cmd = [
         python_exe,
-        script_path,
+        script,
         "--strategy", strategy,
         "--symbol", symbol,
         "--user", user,
@@ -198,10 +206,22 @@ def start_bot(
         cmd.extend(["--move_sl_to_breakeven", "1" if move_sl_to_breakeven else "0"])
     if breakeven_trigger_percent is not None:
         cmd.extend(["--breakeven_trigger_percent", str(breakeven_trigger_percent)])
+    if breakeven_target is not None:
+        cmd.extend(["--breakeven_target", breakeven_target])
 
     # Pending order parameters
     if pending_order_max_candles is not None:
         cmd.extend(["--pending_order_max_candles", str(pending_order_max_candles)])
+    if pending_order_expire_candles is not None:
+        cmd.extend(["--pending_order_expire_candles", str(pending_order_expire_candles)])
+
+    # Multiple Master Candle parameters
+    if window_start:
+        cmd.extend(["--window_start", window_start])
+    if window_end:
+        cmd.extend(["--window_end", window_end])
+    if priority_direction:
+        cmd.extend(["--priority_direction", priority_direction])
 
     try:
         # Create logs directory
@@ -271,7 +291,12 @@ def start_bot(
             'sl_type': sl_type,
             'move_sl_to_breakeven': move_sl_to_breakeven,
             'breakeven_trigger_percent': breakeven_trigger_percent,
+            'breakeven_target': breakeven_target,
             'pending_order_max_candles': pending_order_max_candles,
+            'pending_order_expire_candles': pending_order_expire_candles,
+            'window_start': window_start,
+            'window_end': window_end,
+            'priority_direction': priority_direction,
             'started_at': datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M:%S'),
             'log_file': final_log,
             'command': ' '.join(cmd)
@@ -286,6 +311,13 @@ def start_bot(
         try:
             from src.bot_config_history import save_bot_config as _save_config
             _save_config(bot_info)
+        except Exception:
+            pass  # Non-critical — don't block bot start
+
+        # Clean up empty log files (housekeeping)
+        try:
+            from src.log_manager import cleanup_empty_logs
+            cleanup_empty_logs()
         except Exception:
             pass  # Non-critical — don't block bot start
 
@@ -449,7 +481,12 @@ def restart_bot(pid: int) -> tuple:
         sl_type=bot.get('sl_type'),
         move_sl_to_breakeven=bot.get('move_sl_to_breakeven'),
         breakeven_trigger_percent=bot.get('breakeven_trigger_percent'),
-        pending_order_max_candles=bot.get('pending_order_max_candles')
+        breakeven_target=bot.get('breakeven_target'),
+        pending_order_max_candles=bot.get('pending_order_max_candles'),
+        pending_order_expire_candles=bot.get('pending_order_expire_candles'),
+        window_start=bot.get('window_start'),
+        window_end=bot.get('window_end'),
+        priority_direction=bot.get('priority_direction')
     )
 
 

@@ -21,6 +21,7 @@ st.set_page_config(
 from src.auth import require_auth, get_user_mt5_credentials, has_mt5_credentials
 username, name = require_auth()
 
+from src.i18n import t, lang_toggle_button
 from src.utils import get_pip_value, is_mt5_available, check_exit
 from src.strategy_manager import list_strategies, get_strategy_parameters
 
@@ -158,23 +159,24 @@ def run_simulation(symbol: str, sl_pips: float, rr_ratio: float, max_candles: in
 
 
 def main():
-    st.title("Strategy Simulation")
-    st.caption("Run single simulation on live MT5 data")
+    lang_toggle_button(st.sidebar)
+    st.title(t("page_simulation"))
+    st.caption(t("simulation_caption"))
 
     now = datetime.now(TIMEZONE)
-    st.markdown(f"**Current Time:** {now.strftime('%H:%M:%S %d/%m/%Y')} (HCM)")
+    st.markdown(f"**{t('current_time')}:** {now.strftime('%H:%M:%S %d/%m/%Y')} (HCM)")
 
     # MT5 availability check
     mt5_available = is_mt5_available()
     if mt5_available:
-        st.success("MT5 available - Live simulation enabled")
+        st.success(t("mt5_live_enabled"))
     else:
-        st.warning("MT5 not available (Windows only) - Demo mode")
+        st.warning(t("mt5_demo_mode"))
 
     # Check MT5 credentials
     if not has_mt5_credentials(username):
-        st.warning("MT5 account not configured. Please go to Settings first.")
-        st.page_link("pages/8_Settings.py", label="Go to Settings", icon="⚙️")
+        st.warning(t("no_credentials"))
+        st.page_link("pages/8_Settings.py", label=t("go_settings"), icon="⚙️")
         return
 
     user_creds = get_user_mt5_credentials(username)
@@ -186,7 +188,7 @@ def main():
     enabled_strategies = [s for s in strategies if s.get('enabled', True)]
 
     # Strategy parameters
-    st.subheader("Simulation Parameters")
+    st.subheader(t("sim_params"))
 
     col1, col2 = st.columns(2)
 
@@ -194,29 +196,29 @@ def main():
         if enabled_strategies:
             strategy_options = {s['name']: s['id'] for s in enabled_strategies}
             selected_strategy_name = st.selectbox(
-                "Strategy",
+                t("strategy"),
                 options=list(strategy_options.keys())
             )
             selected_strategy = strategy_options[selected_strategy_name]
             params = get_strategy_parameters(selected_strategy)
         else:
-            st.info("No strategies defined. Using default parameters.")
+            st.info(t("no_strategies_default"))
             params = {'symbols': ['XAUUSD'], 'sl_pips': 30, 'rr_ratio': 2.0, 'max_candles': 7}
 
         # Symbol selection
         strategy_symbols = params.get('symbols', ['XAUUSD'])
-        symbol = st.selectbox("Symbol", options=strategy_symbols)
+        symbol = st.selectbox(t("symbol"), options=strategy_symbols)
 
     with col2:
         sl_pips = st.number_input(
-            "SL (pips)",
+            t("sl_pips"),
             value=int(params.get('sl_pips', 30)),
             min_value=1,
             max_value=200
         )
 
         rr_ratio = st.number_input(
-            "RR Ratio",
+            t("rr_ratio"),
             value=float(params.get('rr_ratio', 2.0)),
             min_value=0.5,
             max_value=10.0,
@@ -224,7 +226,7 @@ def main():
         )
 
         max_candles = st.number_input(
-            "Max Candles",
+            t("max_candles"),
             value=int(params.get('max_candles', 7)),
             min_value=1,
             max_value=50
@@ -233,8 +235,8 @@ def main():
     st.divider()
 
     # Run simulation
-    if st.button("Run Simulation", width='stretch', type="primary"):
-        with st.spinner("Connecting to MT5 and running simulation..."):
+    if st.button(t("run_simulation"), width='stretch', type="primary"):
+        with st.spinner(t("connecting_sim")):
             result, error = run_simulation(
                 symbol=symbol,
                 sl_pips=sl_pips,
@@ -247,10 +249,10 @@ def main():
             st.error(f"Error: {error}")
         else:
             # Display results
-            st.success("Simulation completed!")
+            st.success(t("sim_completed"))
 
             # Master candle info
-            st.markdown(f"### Master Candle: {result['master_time']}")
+            st.markdown(f"### {t('master_candle', time=result['master_time'])}")
 
             col1, col2 = st.columns(2)
 
@@ -267,10 +269,10 @@ def main():
             st.divider()
 
             # Candle tracking
-            st.markdown("### Candle Tracking")
+            st.markdown(f"### {t('candle_tracking')}")
 
             candles_df = pd.DataFrame(result['candles'])
-            candles_df.columns = ["#", "Time", "High", "Low", "Close", "Exit"]
+            candles_df.columns = ["#", t("time_col"), "High", "Low", "Close", t("exit_type")]
             st.dataframe(candles_df, width='stretch', hide_index=True)
 
             # Result
@@ -280,18 +282,18 @@ def main():
 
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("Exit Type", exit_emoji)
+                st.metric(t("exit_type"), exit_emoji)
             with col2:
-                st.metric("Exit Price", f"{result['exit_price']:.2f}")
+                st.metric(t("exit_price"), f"{result['exit_price']:.2f}")
             with col3:
-                st.metric("P&L", f"{result['pnl']:+.1f} pips", delta="profit" if result['pnl'] > 0 else "loss" if result['pnl'] < 0 else None)
+                st.metric("P&L", f"{result['pnl']:+.1f} pips", delta=t("profit") if result['pnl'] > 0 else t("loss") if result['pnl'] < 0 else None)
 
             st.caption(f"Exited on candle #{result['exit_candle']}")
 
     st.divider()
 
     # Exit rules explanation
-    with st.expander("Exit Rules Explained"):
+    with st.expander(t("exit_rules_explained")):
         st.markdown("""
         **TP (Take Profit) - Price-based:**
         - Triggers immediately when price touches TP level

@@ -2,6 +2,7 @@
 Backtest Module for Master Candle Strategy
 
 Fetches historical M5 data from MT5 and simulates trades.
+Mirrors bot_runner.py fill/exit logic exactly.
 """
 
 from datetime import datetime, timedelta
@@ -60,8 +61,13 @@ def calculate_flex_lot_size(
     # lot_size = risk_amount / (sl_pips × pip_value_per_lot)
     lot_size = actual_risk / (sl_pips * pip_value_per_lot)
 
-    # Round down to lot step
-    lot_size = max(min_lot, (lot_size // lot_step) * lot_step)
+    # Round down to lot step (floor, never round up — avoids over-risking)
+    lot_size = (lot_size // lot_step) * lot_step
+
+    # If calculated lot is below minimum, return min_lot but caller should be
+    # aware actual risk will exceed target (can't size smaller than broker minimum)
+    if lot_size < min_lot:
+        lot_size = min_lot
 
     return round(lot_size, 2)
 
@@ -150,6 +156,54 @@ def fetch_historical_data(symbol: str, start_date: datetime, end_date: datetime,
         return None, str(e)
 
 
+def _check_limit_fill(direction: str, candle: dict, entry_price: float) -> tuple:
+    """
+    Check if a LIMIT order would fill on this candle. Mirrors bot_runner logic.
+
+    Bot runner flow for LIMIT orders:
+    1. LIMIT can only be PLACED when price is on the correct side of entry
+       (BUY LIMIT: ask > entry, SELL LIMIT: bid < entry).
+    2. If price is already past entry, bot WAITS for price to return.
+    3. LIMIT fills when price touches entry from the correct side.
+
+    So in backtest terms:
+    BUY LIMIT: open >= entry AND low <= entry → fills at entry_price
+    SELL LIMIT: open <= entry AND high >= entry → fills at entry_price
+
+    If open is on the wrong side (below entry for BUY, above entry for SELL),
+    that candle is a "waiting" candle — no fill, no gap-fill. The bot waits
+    for price to return to the correct side before placing the LIMIT.
+
+    Returns:
+        (filled: bool, fill_price: float or None)
+    """
+    ck_open = candle['open']
+    ck_high = candle['high']
+    ck_low  = candle['low']
+
+    if direction == "BUY":
+        # BUY LIMIT can only be placed when price > entry (open >= entry)
+        if ck_open >= entry_price and ck_low <= entry_price:
+            return True, entry_price
+    else:  # SELL
+        # SELL LIMIT can only be placed when price < entry (open <= entry)
+        if ck_open <= entry_price and ck_high >= entry_price:
+            return True, entry_price
+
+    return False, None
+
+
+def _price_past_sl(direction: str, candle: dict, stop_loss: float) -> bool:
+    """
+    Check if price has moved past SL on a candle (trade invalidated before fill).
+    Mirrors live bot's pre-fill SL check.
+    """
+    if direction == "BUY":
+        return candle['low'] <= stop_loss
+    else:
+        return candle['high'] >= stop_loss
+
+
 def run_backtest(
     df: pd.DataFrame,
     symbol: str,
@@ -172,10 +226,36 @@ def run_backtest(
     entry_percent: float = 0.0,
     move_sl_to_breakeven: bool = False,
     breakeven_trigger_percent: float = 50.0,
-    pending_order_max_candles: int = 3
+    breakeven_target: str = "entry",
+    pending_order_max_candles: int = 3,
+    pending_order_expire_candles: int = 0
 ) -> dict:
     """
-    Run backtest on historical data
+    Run backtest on historical data.
+
+    Mirrors bot_runner.py fill/exit logic exactly:
+
+    Entry flow:
+        1. Entry candle closes → compute direction, entry_price, SL, TP.
+        2. For each subsequent candle, simulate bot_runner state machine:
+
+        "close" mode (bot_runner market fallback):
+            a. If open past entry AND past SL → MISSED.
+            b. If open past entry but NOT past SL → MARKET fill at open price.
+            c. If open on correct side, wick touches entry → LIMIT fill at entry_price.
+
+        "range_percent" mode (bot_runner WAIT state):
+            a. If open on wrong side and wick hits SL → MISSED.
+            b. If open on wrong side, no SL → WAIT (continue to next candle).
+            c. If open on correct side, wick touches entry → LIMIT fill at entry_price.
+
+        3. pending_order_expire_candles: if not filled within N candles → MISSED.
+           0 = wait indefinitely.
+
+    Exit flow (after fill, from next candle onward):
+        - check_exit() per candle (same as live bot test-mode monitoring).
+        - Breakeven SL move: same trigger logic as live bot.
+        - Time exit: after max_candles candles (counted from fill candle+1).
 
     Args:
         df: DataFrame with OHLC data
@@ -195,14 +275,13 @@ def run_backtest(
         starting_equity: Starting equity in USD for flex mode
         tp_type: "price_based" (immediate on wick) or "close_based" (delayed on close)
         sl_type: "close_based" (delayed on close) or "price_based" (immediate on wick)
-        entry_mode: "close" (enter at close) or "range_percent" (enter at % of H-L range)
+        entry_mode: "close" (LIMIT at close price) or "range_percent" (LIMIT at % of body)
         entry_percent: For range_percent mode - BUY: High - X%(H-L), SELL: Low + X%(H-L)
         move_sl_to_breakeven: If True, move SL to entry when price reaches breakeven_trigger_percent of TP
         breakeven_trigger_percent: % of TP distance to trigger SL move (default 50%)
-
-    SL Calculation (both modes):
-        BUY: SL pips = (Close - Low) / pip_value + buffer_k
-        SELL: SL pips = (High - Close) / pip_value + buffer_k
+        breakeven_target: "entry" or "close" (master candle close price)
+        pending_order_max_candles: Not used in backtest (kept for API compatibility)
+        pending_order_expire_candles: Cancel LIMIT if not filled after N candles (0 = unlimited)
 
     Returns:
         dict with results
@@ -226,68 +305,52 @@ def run_backtest(
     df['hour'] = df['time'].dt.hour
     df['minute'] = df['time'].dt.minute
 
-    # Find all entry candles (21:05)
+    # Find all entry candles
     entry_candles = df[(df['hour'] == entry_hour) & (df['minute'] == entry_minute)]
 
     for idx, entry_row in entry_candles.iterrows():
         entry_time = entry_row['time']
         o, h, l, c = entry_row['open'], entry_row['high'], entry_row['low'], entry_row['close']
 
-        # Determine direction and calculate entry/SL/TP
-        # SL price = Low - buffer_k (BUY) or High + buffer_k (SELL)
+        # Determine direction
         candle_body = abs(c - o)
 
         if c > o:
             direction = "BUY"
-
-            # Calculate entry price based on entry_mode
-            if entry_mode == "range_percent":
-                # BUY: Close - X% of body (Close - Open)
-                entry_price = c - (entry_percent / 100) * candle_body
-            else:
-                entry_price = c
-
-            # buffer_k * point_value = price offset (uses point, not pip)
-            buffer_offset = buffer_k * point_value
-
-            # SL is placed buffer_offset below the Low
-            stop_loss = l - buffer_offset
-
-            # SL pips from entry to SL
-            candle_sl_pips = (entry_price - stop_loss) / pip_value
-
-            risk = entry_price - stop_loss
-            take_profit = entry_price + (risk * rr_ratio)
-
         elif c < o:
             direction = "SELL"
-
-            # Calculate entry price based on entry_mode
-            if entry_mode == "range_percent":
-                # SELL: Close + X% of body (Open - Close)
-                entry_price = c + (entry_percent / 100) * candle_body
-            else:
-                entry_price = c
-
-            # buffer_k * point_value = price offset (uses point, not pip)
-            buffer_offset = buffer_k * point_value
-
-            # SL is placed buffer_offset above the High
-            stop_loss = h + buffer_offset
-
-            # SL pips from entry to SL
-            candle_sl_pips = (stop_loss - entry_price) / pip_value
-
-            risk = stop_loss - entry_price
-            take_profit = entry_price - (risk * rr_ratio)
         else:
             # Doji - skip
             continue
 
+        # Calculate entry price based on entry_mode
+        buffer_offset = buffer_k * point_value
+
+        if direction == "BUY":
+            if entry_mode == "range_percent":
+                entry_price = c - (entry_percent / 100) * candle_body
+            else:
+                entry_price = c
+
+            stop_loss = l - buffer_offset
+            candle_sl_pips = (entry_price - stop_loss) / pip_value
+            risk = entry_price - stop_loss
+            take_profit = entry_price + (risk * rr_ratio)
+
+        else:  # SELL
+            if entry_mode == "range_percent":
+                entry_price = c + (entry_percent / 100) * candle_body
+            else:
+                entry_price = c
+
+            stop_loss = h + buffer_offset
+            candle_sl_pips = (stop_loss - entry_price) / pip_value
+            risk = stop_loss - entry_price
+            take_profit = entry_price - (risk * rr_ratio)
+
         # Calculate lot size
         if lot_mode == "flex":
             if risk_mode == "fixed_amount":
-                # Fixed dollar amount risk - constant per trade
                 lot_size = calculate_flex_lot_size(
                     equity=current_equity,
                     risk_percent=0,
@@ -296,8 +359,6 @@ def run_backtest(
                     risk_amount=risk_amount
                 )
             else:
-                # Percentage risk
-                # Use starting_equity if not compounding, current_equity if compounding
                 equity_for_risk = starting_equity if not risk_compounding else current_equity
                 lot_size = calculate_flex_lot_size(
                     equity=equity_for_risk,
@@ -308,108 +369,198 @@ def run_backtest(
         else:
             lot_size = fixed_lot
 
-        # Simulate pending order for range_percent mode (LIMIT only, no market fallback)
-        if entry_mode == "range_percent":
-            # Get entry index
-            entry_idx = df.index.get_loc(idx)
+        # ── PHASE 1: LIMIT ORDER FILL ─────────────────────────────────────────
+        # Both 'close' and 'range_percent' modes place a LIMIT order.
+        # Mirrors bot_runner state machine:
+        #
+        # "close" mode:
+        #   - Price still above entry → LIMIT at entry, wait for fill
+        #   - Price already below entry → market fill at open (unless SL hit → SKIP)
+        #   - expire counts from entry candle (LIMIT is placed immediately)
+        #
+        # "range_percent" mode:
+        #   - Price on correct side → place LIMIT immediately, wait for fill
+        #   - Price on wrong side (open < entry for BUY) → WAIT (no LIMIT placed yet)
+        #   - expire counts only from when LIMIT IS PLACED (price returns to correct side)
+        #   - WAIT candles do NOT count against expire
 
-            # Check next candles to see if price touches entry_price
-            # pending_order_max_candles=0 means unlimited wait (check all remaining)
-            order_filled = False
-            fill_candle_idx = None
-            if pending_order_max_candles > 0:
-                pending_candles_to_check = df.iloc[entry_idx + 1: entry_idx + 1 + pending_order_max_candles]
+        entry_df_idx = df.index.get_loc(idx)
+        expire = pending_order_expire_candles
+        # Scan all candles from entry+1 (expire enforced per-mode below)
+        fill_candles = df.iloc[entry_df_idx + 1:]
+
+        order_filled = False
+        fill_candle_iloc = None   # integer position in df for the fill candle
+        actual_fill_price = entry_price  # may differ if gap fill
+
+        # Mirrors bot_runner two-phase expire (both use pending_order_expire_candles):
+        #   Phase 1 – WAIT state (range_percent only): counting candles while price is on
+        #     wrong side and LIMIT not yet placed. Expire → MISSED (bot stops).
+        #   Phase 2 – FILL state: counting candles after LIMIT is placed on broker.
+        #     Expire → LIMIT cancelled → MISSED. Counter resets when LIMIT is placed.
+        # "close" mode skips WAIT phase entirely (LIMIT placed immediately at entry close).
+        limit_placed = (entry_mode == "close")  # close mode: no WAIT phase
+        candles_waited = 0        # Phase-1 counter (WAIT phase)
+        candles_since_limit_placed = 0  # Phase-2 counter (FILL phase)
+
+        for check_idx, check_candle in fill_candles.iterrows():
+            ck_open  = check_candle['open']
+            ck_high  = check_candle['high']
+            ck_low   = check_candle['low']
+
+            ck_close = check_candle['close']
+
+            if direction == "BUY":
+                if ck_open < entry_price:
+                    # Price on wrong side — WAIT phase (range_percent) or gap-fill (close)
+                    # SL invalidation respects sl_type:
+                    #   price_based → wick hits SL → trade invalid immediately
+                    #   close_based → only close below SL invalidates (wick alone is OK)
+                    sl_invalid = (ck_low <= stop_loss) if sl_type == "price_based" else (ck_close <= stop_loss)
+                    if sl_invalid:
+                        break  # SL hit while waiting → MISSED
+
+                    if entry_mode == "close":
+                        # "close" mode: market fill at open
+                        order_filled = True
+                        fill_candle_iloc = df.index.get_loc(check_idx)
+                        actual_fill_price = ck_open
+                        break
+                    else:
+                        # "range_percent": WAIT — each candle counts against expire
+                        candles_waited += 1
+                        if expire > 0 and candles_waited >= expire:
+                            break  # WAIT expired → MISSED
+                        continue
+                else:
+                    # Open >= entry — LIMIT placed (or already was), FILL phase
+                    if not limit_placed:
+                        limit_placed = True
+                        candles_since_limit_placed = 0  # reset for FILL phase
+
+                    candles_since_limit_placed += 1
+                    if expire > 0 and candles_since_limit_placed > expire:
+                        break  # FILL expired → MISSED
+
+                    if ck_low <= entry_price:
+                        order_filled = True
+                        fill_candle_iloc = df.index.get_loc(check_idx)
+                        actual_fill_price = entry_price
+                        break
+
+            else:  # SELL
+                if ck_open > entry_price:
+                    # Price on wrong side — WAIT phase (range_percent) or gap-fill (close)
+                    sl_invalid = (ck_high >= stop_loss) if sl_type == "price_based" else (ck_close >= stop_loss)
+                    if sl_invalid:
+                        break  # SL hit while waiting → MISSED
+
+                    if entry_mode == "close":
+                        # "close" mode: market fill at open
+                        order_filled = True
+                        fill_candle_iloc = df.index.get_loc(check_idx)
+                        actual_fill_price = ck_open
+                        break
+                    else:
+                        # "range_percent": WAIT — each candle counts against expire
+                        candles_waited += 1
+                        if expire > 0 and candles_waited >= expire:
+                            break  # WAIT expired → MISSED
+                        continue
+                else:
+                    # Open <= entry — LIMIT placed (or already was), FILL phase
+                    if not limit_placed:
+                        limit_placed = True
+                        candles_since_limit_placed = 0
+
+                    candles_since_limit_placed += 1
+                    if expire > 0 and candles_since_limit_placed > expire:
+                        break  # FILL expired → MISSED
+
+                    if ck_high >= entry_price:
+                        order_filled = True
+                        fill_candle_iloc = df.index.get_loc(check_idx)
+                        actual_fill_price = entry_price
+                        break
+
+        if not order_filled:
+            if expire > 0:
+                miss_reason = f"LIMIT not filled after {expire} candles"
             else:
-                pending_candles_to_check = df.iloc[entry_idx + 1:]
+                miss_reason = "LIMIT not filled (price hit SL before entry)" if len(fill_candles) > 0 else "LIMIT never filled (end of data)"
+            trades.append({
+                "date": entry_time.strftime("%Y-%m-%d"),
+                "time": entry_time.strftime("%H:%M"),
+                "direction": direction,
+                "entry": entry_price,
+                "sl": stop_loss,
+                "tp": take_profit,
+                "sl_pips": round(candle_sl_pips, 1),
+                "tp_pips": round(candle_sl_pips * rr_ratio, 1),
+                "exit_type": "MISSED",
+                "exit_price": None,
+                "pnl_pips": 0,
+                "pnl_usd": 0,
+                "lot": lot_size,
+                "candles": 0,
+                "sl_moved_to_breakeven": False,
+                "final_sl": stop_loss,
+                "status": "MISSED",
+                "miss_reason": miss_reason
+            })
+            continue
 
-            for check_idx, check_candle in pending_candles_to_check.iterrows():
-                # Safety: if price moved past SL before filling, invalidate
-                if direction == "BUY" and check_candle['low'] <= stop_loss:
-                    break  # Price hit SL zone before entry — skip
-                elif direction == "SELL" and check_candle['high'] >= stop_loss:
-                    break  # Price hit SL zone before entry — skip
+        # Recalculate SL/TP if market fill at different price ("close" mode gap fill)
+        if actual_fill_price != entry_price:
+            if direction == "BUY":
+                risk = actual_fill_price - stop_loss
+                take_profit = actual_fill_price + (risk * rr_ratio)
+                candle_sl_pips = risk / pip_value
+            else:
+                risk = stop_loss - actual_fill_price
+                take_profit = actual_fill_price - (risk * rr_ratio)
+                candle_sl_pips = risk / pip_value
 
-                # Check if price touched entry_price
-                if direction == "BUY":
-                    # BUY LIMIT: price must go down to entry_price (or below)
-                    if check_candle['low'] <= entry_price:
-                        order_filled = True
-                        fill_candle_idx = check_idx
-                        break
-                else:  # SELL
-                    # SELL LIMIT: price must go up to entry_price (or above)
-                    if check_candle['high'] >= entry_price:
-                        order_filled = True
-                        fill_candle_idx = check_idx
-                        break
+        # ── PHASE 2: EXIT MONITORING ──────────────────────────────────────────
+        # Start monitoring from the candle AFTER the fill candle.
+        # Mirrors bot_runner: LIMIT fill confirmed → next loop iteration monitors.
 
-            # If order not filled within max candles, mark as MISSED
-            if not order_filled:
-                miss_reason = f"LIMIT not filled after {pending_order_max_candles} candles" if pending_order_max_candles > 0 else "LIMIT never filled (unlimited wait)"
-                trades.append({
-                    "date": entry_time.strftime("%Y-%m-%d"),
-                    "time": entry_time.strftime("%H:%M"),
-                    "direction": direction,
-                    "entry": entry_price,
-                    "sl": stop_loss,
-                    "tp": take_profit,
-                    "sl_pips": round(candle_sl_pips, 1),
-                    "tp_pips": round(candle_sl_pips * rr_ratio, 1),
-                    "exit_type": "MISSED",
-                    "exit_price": None,
-                    "pnl_pips": 0,
-                    "pnl_usd": 0,
-                    "lot": lot_size,
-                    "candles": 0,
-                    "sl_moved_to_breakeven": False,
-                    "final_sl": stop_loss,
-                    "status": "MISSED",
-                    "miss_reason": miss_reason
-                })
-                continue  # Skip to next entry candle
+        exit_candles_start = fill_candle_iloc + 1
 
-            # Order filled - use fill_candle_idx as new entry point
-            idx = fill_candle_idx
-
-        # Get next candles for exit check
-        entry_idx = df.index.get_loc(idx)
-
-        # max_candles=0 means no limit - get all remaining candles
         if max_candles > 0:
-            next_candles = df.iloc[entry_idx + 1: entry_idx + 1 + max_candles]
+            next_candles = df.iloc[exit_candles_start: exit_candles_start + max_candles]
         else:
-            next_candles = df.iloc[entry_idx + 1:]
+            next_candles = df.iloc[exit_candles_start:]
 
         exit_type = None
         exit_price = None
         exit_time = None
         candles_held = 0
         sl_moved_to_breakeven = False
-        current_sl = stop_loss  # Track current SL (may change if moved to breakeven)
+        current_sl = stop_loss
 
         for candle_idx, candle_row in next_candles.iterrows():
             candles_held += 1
             candle = {
-                "high": candle_row['high'],
-                "low": candle_row['low'],
+                "high":  candle_row['high'],
+                "low":   candle_row['low'],
                 "close": candle_row['close']
             }
 
-            # Check if we should move SL to breakeven
+            # Breakeven SL move — mirrors bot_runner test-mode logic exactly
             if move_sl_to_breakeven and not sl_moved_to_breakeven:
+                be_target = c if breakeven_target == "close" else actual_fill_price
                 if direction == "BUY":
-                    tp_distance = take_profit - entry_price
-                    trigger_price = entry_price + (tp_distance * breakeven_trigger_percent / 100)
-                    # Check if price reached trigger (use HIGH for BUY)
+                    tp_distance = take_profit - actual_fill_price
+                    trigger_price = actual_fill_price + (tp_distance * breakeven_trigger_percent / 100)
                     if candle['high'] >= trigger_price:
-                        current_sl = entry_price  # Move SL to breakeven
+                        current_sl = be_target
                         sl_moved_to_breakeven = True
                 else:  # SELL
-                    tp_distance = entry_price - take_profit
-                    trigger_price = entry_price - (tp_distance * breakeven_trigger_percent / 100)
-                    # Check if price reached trigger (use LOW for SELL)
+                    tp_distance = actual_fill_price - take_profit
+                    trigger_price = actual_fill_price - (tp_distance * breakeven_trigger_percent / 100)
                     if candle['low'] <= trigger_price:
-                        current_sl = entry_price  # Move SL to breakeven
+                        current_sl = be_target
                         sl_moved_to_breakeven = True
 
             exit_type, exit_price = check_exit(direction, candle, take_profit, current_sl, tp_type, sl_type)
@@ -426,18 +577,17 @@ def run_backtest(
             exit_time = last_candle['time']
             candles_held = len(next_candles)
 
-        # Skip if no exit data (end of dataset or no TP/SL hit when max_candles disabled)
+        # Skip if no exit data (end of dataset or max_candles disabled with no hit)
         if not exit_type:
             continue
 
-        # Calculate P&L in pips
+        # Calculate P&L in pips using actual fill price
         if direction == "BUY":
-            pnl_pips = (exit_price - entry_price) / pip_value
+            pnl_pips = (exit_price - actual_fill_price) / pip_value
         else:
-            pnl_pips = (entry_price - exit_price) / pip_value
+            pnl_pips = (actual_fill_price - exit_price) / pip_value
 
         # Calculate P&L in USD
-        # pnl_usd = lot_size * pnl_pips * pip_value_per_lot
         pip_value_per_lot = get_pip_value_per_lot(symbol)
         pnl_usd = lot_size * pnl_pips * pip_value_per_lot
 
@@ -448,7 +598,7 @@ def run_backtest(
             "date": entry_time.strftime("%Y-%m-%d"),
             "time": entry_time.strftime("%H:%M"),
             "direction": direction,
-            "entry": entry_price,
+            "entry": actual_fill_price,
             "sl": stop_loss,
             "tp": take_profit,
             "sl_pips": round(candle_sl_pips, 1),

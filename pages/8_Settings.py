@@ -18,6 +18,7 @@ st.set_page_config(
 
 # Auth check
 from src.auth import require_auth, is_admin, get_user_mt5_credentials, set_user_mt5_credentials, has_mt5_credentials
+from src.i18n import t, lang_toggle_button
 username, name = require_auth()
 
 TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
@@ -25,66 +26,67 @@ ENV_FILE = ".env"
 
 
 def main():
-    st.title("⚙️ Settings")
+    lang_toggle_button(st.sidebar)
+    st.title(f"⚙️ {t('page_settings')}")
 
     # Show admin status
     if is_admin(username):
-        st.success(f"Logged in as Admin: {name}")
+        st.success(t("logged_as_admin", name=name))
     else:
-        st.info(f"Logged in as: {name}")
+        st.info(t("logged_as_user", name=name))
 
     now = datetime.now(TIMEZONE)
-    st.markdown(f"**Current Time:** {now.strftime('%H:%M:%S %d/%m/%Y')} (HCM)")
+    st.markdown(f"**{t('current_time')}:** {now.strftime('%H:%M:%S %d/%m/%Y')} (HCM)")
 
     st.divider()
 
     # MT5 Settings - Per user
-    st.subheader("Your MT5 Account")
+    st.subheader(t("mt5_account"))
 
     # Get current user's MT5 credentials
     user_mt5 = get_user_mt5_credentials(username)
 
     if has_mt5_credentials(username):
-        st.success("MT5 account configured")
+        st.success(t("mt5_configured"))
     else:
-        st.warning("MT5 account not configured. Please enter your credentials below.")
+        st.warning(t("mt5_not_configured"))
 
     with st.form("mt5_form"):
         col1, col2 = st.columns(2)
 
         with col1:
             mt5_login = st.text_input(
-                "MT5 Login",
+                t("mt5_login"),
                 value=user_mt5.get('login', ''),
                 type="default",
                 placeholder="Your MT5 account number"
             )
             mt5_server = st.text_input(
-                "MT5 Server",
+                t("mt5_server"),
                 value=user_mt5.get('server', ''),
                 placeholder="e.g., Exness-MT5Trial8"
             )
 
         with col2:
             mt5_password = st.text_input(
-                "MT5 Password",
+                t("mt5_password"),
                 value=user_mt5.get('password', ''),
                 type="password",
                 placeholder="Your MT5 password"
             )
             symbol = st.text_input(
-                "Trading Symbol",
+                t("trading_symbol"),
                 value=os.getenv("SYMBOL", "XAUUSD"),
                 help="Use XAUUSDm for Standard account, XAUUSD for Pro/Raw"
             )
 
-        if st.form_submit_button("Save MT5 Credentials", type="primary", width='stretch'):
+        if st.form_submit_button(t("save_mt5_creds"), type="primary", width='stretch'):
             if not mt5_login or not mt5_password or not mt5_server:
-                st.error("Please fill in all MT5 fields")
+                st.error(t("fill_mt5_fields"))
             else:
                 success = set_user_mt5_credentials(username, mt5_login, mt5_password, mt5_server)
                 if success:
-                    st.success("MT5 credentials saved!")
+                    st.success(t("save_mt5_success"))
                     st.rerun()
                 else:
                     st.error("Failed to save credentials")
@@ -92,13 +94,13 @@ def main():
     st.divider()
 
     # Test MT5 connection
-    st.subheader("Test Connection")
+    st.subheader(t("test_connection"))
 
-    if st.button("Test MT5 Connection", width='stretch'):
+    if st.button(t("test_mt5_conn"), width='stretch'):
         try:
             import MetaTrader5 as mt5
         except ImportError:
-            st.error("MT5 not available (Windows only)")
+            st.error(t("no_mt5"))
             st.stop()
 
         # Use user's credentials
@@ -116,7 +118,7 @@ def main():
                     st.error("MT5 credentials not configured. Please save your credentials above.")
                 elif mt5.login(login=login, password=password, server=server):
                     account = mt5.account_info()._asdict()
-                    st.success(f"Connected! Balance: ${account['balance']:,.2f}")
+                    st.success(t("connected_balance", bal=account['balance']))
                     mt5.shutdown()
                 else:
                     st.error(f"Login failed: {mt5.last_error()}")
@@ -129,35 +131,35 @@ def main():
         st.divider()
 
         # Telegram Settings (Admin only)
-        st.subheader("Telegram Configuration (Admin)")
+        st.subheader(t("telegram_config"))
 
         col1, col2 = st.columns(2)
 
         with col1:
             telegram_token = st.text_input(
-                "Bot Token",
+                t("bot_token"),
                 value=os.getenv("TELEGRAM_BOT_TOKEN", ""),
                 type="password"
             )
             telegram_chat_id = st.text_input(
-                "Main Chat ID",
+                t("main_chat_id"),
                 value=os.getenv("TELEGRAM_CHAT_ID", ""),
                 help="Main group for trade signals"
             )
 
         with col2:
             telegram_error_chat_id = st.text_input(
-                "Error Chat ID",
+                t("error_chat_id"),
                 value=os.getenv("TELEGRAM_ERROR_CHAT_ID", ""),
                 help="Group for error notifications"
             )
             telegram_test_chat_id = st.text_input(
-                "Test Chat ID",
+                t("test_chat_id"),
                 value=os.getenv("TELEGRAM_TEST_CHAT_ID", ""),
                 help="Group for testing"
             )
 
-        if st.button("Test Telegram", width='stretch'):
+        if st.button(t("test_telegram"), width='stretch'):
             try:
                 import requests
 
@@ -173,7 +175,7 @@ def main():
                 response = requests.post(url, json=payload)
 
                 if response.ok:
-                    st.success("Message sent!")
+                    st.success(t("msg_sent"))
                 else:
                     st.error(f"Failed: {response.text}")
             except Exception as e:
@@ -181,10 +183,40 @@ def main():
 
         st.divider()
 
-        # Current .env display (Admin only)
-        st.subheader("System Configuration")
+        # Log Management (Admin only)
+        st.subheader(t("log_management"))
 
-        with st.expander("View .env (masked)"):
+        from src.log_manager import get_log_summary, cleanup_empty_logs, cleanup_old_logs
+
+        summary = get_log_summary()
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric(t("total_log_files"), summary["total_count"])
+        m2.metric(t("empty_log_files"), summary["empty_count"])
+        m3.metric(t("log_size_mb"), f"{summary['total_size_mb']}")
+        m4.metric(
+            t("newest_log"),
+            summary["newest_dt"].strftime("%m/%d %H:%M") if summary["newest_dt"] else "-",
+        )
+
+        col_a, col_b = st.columns(2)
+        with col_a:
+            if st.button(t("clean_empty_logs"), key="btn_clean_empty"):
+                n = cleanup_empty_logs()
+                st.success(t("cleaned_empty", n=n))
+                st.rerun()
+        with col_b:
+            days = st.number_input(t("max_age_days"), min_value=1, max_value=90, value=7, key="clean_age_days")
+            if st.button(t("clean_old_logs"), key="btn_clean_old"):
+                n = cleanup_old_logs(max_age_days=int(days))
+                st.success(t("cleaned_old", n=n))
+                st.rerun()
+
+        st.divider()
+
+        # Current .env display (Admin only)
+        st.subheader(t("system_config"))
+
+        with st.expander(t("view_env")):
             st.code(f"""
 # Trading
 SYMBOL={os.getenv('SYMBOL', '')}
@@ -199,7 +231,7 @@ TELEGRAM_TEST_CHAT_ID={os.getenv('TELEGRAM_TEST_CHAT_ID', '')}
     st.divider()
 
     # Info
-    st.subheader("Information")
+    st.subheader(t("information"))
 
     st.markdown("""
     **MT5 Account:** Each user has their own MT5 credentials.

@@ -201,7 +201,7 @@ def get_strategy_parameters(strategy_id: str) -> dict:
 
     return {
         'timeframe': entry.get('timeframe', 'M5'),
-        'entry_time': entry.get('time', '21:05'),
+        'entry_time': entry.get('time', None),  # None for window-based strategies
         'timezone': entry.get('timezone', 'Asia/Ho_Chi_Minh'),
         'sl_pips': params.get('sl_pips', 30),
         'rr_ratio': params.get('rr_ratio', 2.0),
@@ -209,7 +209,11 @@ def get_strategy_parameters(strategy_id: str) -> dict:
         'max_candles': exit_config.get('time_limit', {}).get('max_candles', 7),
         'tp_type': exit_config.get('tp', {}).get('type', 'price_based'),
         'sl_type': exit_config.get('sl', {}).get('type', 'close_based'),
-        'symbols': strategy.get('symbols', [])
+        'symbols': strategy.get('symbols', []),
+        # Multiple Master Candle params (None for single-entry strategies)
+        'window_start': entry.get('window_start', None),
+        'window_end': entry.get('window_end', None),
+        'priority_direction': entry.get('priority_direction', None)
     }
 
 

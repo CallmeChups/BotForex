@@ -461,7 +461,7 @@ def place_order(
                 error_msg += " | Invalid price - check price levels"
             elif result.retcode == 10016:
                 error_msg += f" | Invalid stops - SL/TP too close (min: {min_stop_distance:.5f})"
-                error_msg += f" | Requested SL={final_sl:.5f}, TP={final_tp:.5f}, Entry={actual_entry:.5f}"
+                error_msg += f" | Requested SL={final_sl if final_sl else 'None'}, TP={final_tp if final_tp else 'None'}, Entry={actual_entry:.5f}"
             elif result.retcode == 10019:
                 error_msg += " | No money - insufficient funds"
             elif result.retcode == 10027:
@@ -473,7 +473,9 @@ def place_order(
             return False, error_msg, None
 
         mt5.shutdown()
-        return True, f"Order placed at {actual_entry:.5f} (SL={final_sl:.5f}, TP={final_tp:.5f})", result.order
+        sl_str = f"{final_sl:.5f}" if final_sl else "None"
+        tp_str = f"{final_tp:.5f}" if final_tp else "None"
+        return True, f"Order placed at {actual_entry:.5f} (SL={sl_str}, TP={tp_str})", result.order
 
     except Exception as e:
         mt5.shutdown()
@@ -541,10 +543,42 @@ def place_pending_order(
                 mt5.shutdown()
                 return False, f"SELL LIMIT price ({entry_price:.5f}) must be above current bid ({tick.bid:.5f})", None
 
-        # For pending orders: use RETURN filling to avoid IOC/FOK cancellation
-        # on volatile symbols (e.g. BTCUSDm on Exness Standard accounts).
-        # RETURN keeps order on book until fully filled — always supported by MT5.
-        filling_type = mt5.ORDER_FILLING_RETURN
+        # Enforce minimum stop distance required by broker
+        point = symbol_info.point
+        stops_level = getattr(symbol_info, 'trade_stops_level', 0)
+        if stops_level == 0:
+            stops_level = 10
+        min_stop_distance = stops_level * point
+        margin = point
+
+        final_sl = sl
+        final_tp = tp
+
+        if final_sl and final_sl > 0:
+            if direction.upper() == "BUY":
+                if (entry_price - final_sl) < min_stop_distance:
+                    final_sl = entry_price - min_stop_distance - margin
+            else:
+                if (final_sl - entry_price) < min_stop_distance:
+                    final_sl = entry_price + min_stop_distance + margin
+
+        if final_tp and final_tp > 0:
+            if direction.upper() == "BUY":
+                if (final_tp - entry_price) < min_stop_distance:
+                    final_tp = entry_price + min_stop_distance + margin
+            else:
+                if (entry_price - final_tp) < min_stop_distance:
+                    final_tp = entry_price - min_stop_distance - margin
+
+        # Auto-detect filling type from symbol (different symbols support different modes)
+        # Build candidate list: try symbol-supported modes first, then RETURN as fallback
+        filling_mode = symbol_info.filling_mode
+        filling_candidates = []
+        if filling_mode & 1:  # FOK supported
+            filling_candidates.append(mt5.ORDER_FILLING_FOK)
+        if filling_mode & 2:  # IOC supported
+            filling_candidates.append(mt5.ORDER_FILLING_IOC)
+        filling_candidates.append(mt5.ORDER_FILLING_RETURN)  # Always try RETURN as fallback
 
         # Create order request
         request = {
@@ -557,14 +591,30 @@ def place_pending_order(
             "magic": 234000,
             "comment": "BotForex_Pending",
             "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": filling_type,
+            "type_filling": filling_candidates[0],
         }
 
         # Add SL/TP if provided
-        if sl is not None and sl > 0:
-            request["sl"] = round(sl, symbol_info.digits)
-        if tp is not None and tp > 0:
-            request["tp"] = round(tp, symbol_info.digits)
+        if final_sl is not None and final_sl > 0:
+            request["sl"] = round(final_sl, symbol_info.digits)
+        if final_tp is not None and final_tp > 0:
+            request["tp"] = round(final_tp, symbol_info.digits)
+
+        # Try each filling type with order_check() to find one the broker accepts
+        best_filling = None
+        for ft in filling_candidates:
+            request["type_filling"] = ft
+            check = mt5.order_check(request)
+            if check and check.retcode == mt5.TRADE_RETCODE_DONE:
+                best_filling = ft
+                break
+
+        if best_filling is None:
+            # No filling type passed order_check — send with first candidate anyway
+            # to get a meaningful error from order_send
+            request["type_filling"] = filling_candidates[0]
+        else:
+            request["type_filling"] = best_filling
 
         # Send order
         result = mt5.order_send(request)
@@ -575,11 +625,17 @@ def place_pending_order(
 
         if result.retcode != mt5.TRADE_RETCODE_DONE:
             error_msg = f"Order failed: {result.comment} (code {result.retcode})"
+            if result.retcode == 10006:
+                error_msg += f" | Rejected (filling_mode={filling_mode}, tried={[f for f in filling_candidates]})"
+            elif result.retcode == 10016:
+                error_msg += f" | Stops too close (min={min_stop_distance:.5f})"
             mt5.shutdown()
             return False, error_msg, None
 
         mt5.shutdown()
-        return True, f"Pending order placed at {entry_price:.5f} (SL={sl:.5f}, TP={tp:.5f})", result.order
+        sl_str = f"{final_sl:.5f}" if final_sl else "None"
+        tp_str = f"{final_tp:.5f}" if final_tp else "None"
+        return True, f"Pending order placed at {entry_price:.5f} (SL={sl_str}, TP={tp_str})", result.order
 
     except Exception as e:
         mt5.shutdown()

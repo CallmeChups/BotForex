@@ -21,6 +21,7 @@ st.set_page_config(
 from src.auth import require_auth, get_user_mt5_credentials, has_mt5_credentials
 username, name = require_auth()
 
+from src.i18n import t, lang_toggle_button
 from src.orders import (
     fetch_open_positions,
     close_position,
@@ -36,23 +37,24 @@ TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
 
 
 def main():
-    st.title("Orders Management")
+    lang_toggle_button(st.sidebar)
+    st.title(t("page_orders"))
 
     now = datetime.now(TIMEZONE)
-    st.markdown(f"**Current Time:** {now.strftime('%H:%M:%S %d/%m/%Y')} (HCM)")
+    st.markdown(f"**{t('current_time')}:** {now.strftime('%H:%M:%S %d/%m/%Y')} (HCM)")
 
     st.divider()
 
     # Check MT5 availability
     if not is_mt5_available():
-        st.warning("MT5 not available (Windows only). Showing demo mode.")
+        st.warning(t("no_mt5"))
         show_demo_mode()
         return
 
     # Check if user has MT5 credentials configured
     if not has_mt5_credentials(username):
-        st.warning("MT5 account not configured. Please go to Settings to add your MT5 credentials.")
-        st.page_link("pages/8_Settings.py", label="Go to Settings", icon="⚙️")
+        st.warning(t("no_credentials"))
+        st.page_link("pages/8_Settings.py", label=t("go_settings"), icon="⚙️")
         show_demo_mode()
         return
 
@@ -60,32 +62,32 @@ def main():
     user_creds = get_user_mt5_credentials(username)
 
     # Account Info
-    st.subheader("Account Info")
+    st.subheader(t("account_info"))
 
     account, error = get_account_info(user_creds)
 
     if error:
-        st.error(f"Failed to get account info: {error}")
+        st.error(f"{t('account_info')}: {error}")
     else:
         col1, col2, col3, col4 = st.columns(4)
 
         with col1:
-            st.metric("Balance", f"${account['balance']:,.2f}")
+            st.metric(t("balance"), f"${account['balance']:,.2f}")
 
         with col2:
-            st.metric("Equity", f"${account['equity']:,.2f}")
+            st.metric(t("equity"), f"${account['equity']:,.2f}")
 
         with col3:
-            profit_delta = "profit" if account['profit'] > 0 else "loss" if account['profit'] < 0 else None
-            st.metric("Floating P&L", f"${account['profit']:,.2f}", delta=profit_delta)
+            profit_delta = t("profit") if account['profit'] > 0 else t("loss") if account['profit'] < 0 else None
+            st.metric(t("floating_pnl"), f"${account['profit']:,.2f}", delta=profit_delta)
 
         with col4:
-            st.metric("Free Margin", f"${account['free_margin']:,.2f}")
+            st.metric(t("free_margin"), f"${account['free_margin']:,.2f}")
 
     st.divider()
 
     # Tabs for different sections
-    tab1, tab2, tab3 = st.tabs(["All Positions", "Bot Orders", "Place Order"])
+    tab1, tab2, tab3 = st.tabs([t("all_positions"), t("bot_orders"), t("place_manual")])
 
     with tab1:
         show_open_positions(user_creds, filter_bot=False)
@@ -99,12 +101,12 @@ def main():
     st.divider()
 
     # Order close history
-    st.subheader("Manual Close History")
+    st.subheader(t("manual_close_history"))
 
     history_df = get_order_history()
 
     if history_df.empty:
-        st.info("No manual closes recorded yet")
+        st.info(t("no_manual_closes"))
     else:
         st.dataframe(history_df, width='stretch', hide_index=True)
 
@@ -114,24 +116,24 @@ def show_open_positions(user_creds: dict, filter_bot: bool = False):
 
     # Open Positions
     if filter_bot:
-        st.subheader("Bot Orders Only")
+        st.subheader(t("bot_orders_only"))
     else:
-        st.subheader("All Open Positions")
+        st.subheader(t("all_positions"))
 
     # Controls
     col1, col2, col3 = st.columns([1, 1, 2])
 
     with col1:
-        if st.button("Refresh Positions", width='stretch', type="primary"):
+        if st.button(t("refresh_positions"), width='stretch', type="primary"):
             st.rerun()
 
     with col2:
-        auto_refresh = st.checkbox("Auto-refresh", value=False)
+        auto_refresh = st.checkbox(t("auto_refresh"), value=False)
 
     with col3:
         if auto_refresh:
             refresh_interval = st.select_slider(
-                "Interval",
+                t("interval"),
                 options=[5, 10, 15, 30, 60],
                 value=10,
                 format_func=lambda x: f"{x}s"
@@ -152,11 +154,11 @@ def show_open_positions(user_creds: dict, filter_bot: bool = False):
 
     if not positions:
         if filter_bot:
-            st.info("No bot orders found")
+            st.info(t("no_bot_orders"))
         else:
-            st.info("No open positions")
+            st.info(t("no_open_positions"))
     else:
-        st.success(f"Found {len(positions)} open position(s)")
+        st.success(t("found_positions", n=len(positions)))
 
         # Position table
         for pos in positions:
@@ -169,8 +171,7 @@ def show_open_positions(user_creds: dict, filter_bot: bool = False):
                     st.caption(f"Ticket: {pos['ticket']} | Vol: {pos['volume']} | Open: {pos['open_time']}")
 
                 with col2:
-                    st.metric("Entry", f"{pos['open_price']:.2f}")
-                    # Show SL/TP below entry
+                    st.metric(t("entry"), f"{pos['open_price']:.2f}")
                     sl_display = f"{pos['sl']:.2f}" if pos['sl'] > 0 else "-"
                     tp_display = f"{pos['tp']:.2f}" if pos['tp'] > 0 else "-"
                     st.caption(f"SL: {sl_display} | TP: {tp_display}")
@@ -185,7 +186,6 @@ def show_open_positions(user_creds: dict, filter_bot: bool = False):
                     st.caption(f"{pos['pnl_pips']:+.1f} pips")
 
                 with col5:
-                    # Show distance to SL/TP
                     if pos['sl'] > 0 or pos['tp'] > 0:
                         if pos['type'] == "BUY":
                             sl_dist = pos['current_price'] - pos['sl'] if pos['sl'] > 0 else 0
@@ -193,14 +193,14 @@ def show_open_positions(user_creds: dict, filter_bot: bool = False):
                         else:
                             sl_dist = pos['sl'] - pos['current_price'] if pos['sl'] > 0 else 0
                             tp_dist = pos['current_price'] - pos['tp'] if pos['tp'] > 0 else 0
-                        st.markdown("**Distance**")
+                        st.markdown(f"**{t('distance')}**")
                         if pos['sl'] > 0:
                             st.caption(f"SL: {sl_dist:.2f}")
                         if pos['tp'] > 0:
                             st.caption(f"TP: {tp_dist:.2f}")
 
                 with col6:
-                    if st.button("Close", key=f"close_{pos['ticket']}", type="secondary"):
+                    if st.button(t("close_pos"), key=f"close_{pos['ticket']}", type="secondary"):
                         success, msg = close_position(pos['ticket'], credentials=user_creds)
                         if success:
                             st.success(msg)
@@ -216,12 +216,12 @@ def show_open_positions(user_creds: dict, filter_bot: bool = False):
         col1, col2, col3 = st.columns([2, 1, 2])
 
         with col2:
-            if st.button("Close All Positions", type="secondary", width='stretch'):
+            if st.button(t("close_all"), type="secondary", width='stretch'):
                 closed, error = close_all_positions(credentials=user_creds)
                 if error:
                     st.warning(error)
                 else:
-                    st.success(f"Closed {closed} position(s)")
+                    st.success(t("closed_positions", n=closed))
                     time.sleep(1)
                     st.rerun()
 
@@ -234,23 +234,23 @@ def show_open_positions(user_creds: dict, filter_bot: bool = False):
 def show_bot_orders(user_creds: dict):
     """Show bot-placed orders with enhanced tracking"""
 
-    st.subheader("Bot Orders")
-    st.caption("Orders placed by trading bots (identified by 'BotForex' comment)")
+    st.subheader(t("bot_orders"))
+    st.caption(t("bot_orders_caption"))
 
     # Controls
     col1, col2, col3 = st.columns([1, 1, 2])
 
     with col1:
-        if st.button("Refresh Bot Orders", width='stretch', type="primary", key="refresh_bot"):
+        if st.button(t("refresh_bot_orders"), width='stretch', type="primary", key="refresh_bot"):
             st.rerun()
 
     with col2:
-        auto_refresh_bot = st.checkbox("Auto-refresh", value=False, key="auto_refresh_bot")
+        auto_refresh_bot = st.checkbox(t("auto_refresh"), value=False, key="auto_refresh_bot")
 
     with col3:
         if auto_refresh_bot:
             refresh_interval_bot = st.select_slider(
-                "Interval",
+                t("interval"),
                 options=[5, 10, 15, 30, 60],
                 value=10,
                 format_func=lambda x: f"{x}s",
@@ -268,9 +268,9 @@ def show_bot_orders(user_creds: dict):
     bot_positions = [p for p in all_positions if p.get('comment', '').startswith('BotForex')]
 
     if not bot_positions:
-        st.info("No bot orders found. Bots will appear here when they place orders.")
+        st.info(t("no_bot_orders"))
     else:
-        st.success(f"Found {len(bot_positions)} bot order(s)")
+        st.success(t("found_bot_orders", n=len(bot_positions)))
 
         # Enhanced position table for bots
         for pos in bot_positions:
@@ -283,7 +283,7 @@ def show_bot_orders(user_creds: dict):
                     st.markdown(f"### {pos['symbol']} - :{direction_color}[{pos['type']}]")
 
                 with col2:
-                    if st.button("Close Position", key=f"close_bot_{pos['ticket']}", type="secondary"):
+                    if st.button(t("close_position"), key=f"close_bot_{pos['ticket']}", type="secondary"):
                         success, msg = close_position(pos['ticket'], credentials=user_creds)
                         if success:
                             st.success(msg)
@@ -296,11 +296,11 @@ def show_bot_orders(user_creds: dict):
                 col1, col2, col3, col4, col5 = st.columns(5)
 
                 with col1:
-                    st.metric("Entry Price", f"{pos['open_price']:.5f}")
+                    st.metric(t("entry"), f"{pos['open_price']:.5f}")
                     st.caption(f"Opened: {pos['open_time']}")
 
                 with col2:
-                    st.metric("Current Price", f"{pos['current_price']:.5f}")
+                    st.metric(t("current_price"), f"{pos['current_price']:.5f}")
                     st.caption(f"Volume: {pos['volume']} lot")
 
                 with col3:
@@ -310,28 +310,28 @@ def show_bot_orders(user_creds: dict):
                     st.caption(f"{pos['pnl_pips']:+.1f} pips")
 
                 with col4:
-                    st.markdown("**Stop Loss**")
+                    st.markdown(f"**{t('stop_loss')}**")
                     if pos['sl'] > 0:
                         st.markdown(f"{pos['sl']:.5f}")
                         if pos['type'] == "BUY":
                             sl_dist = pos['current_price'] - pos['sl']
                         else:
                             sl_dist = pos['sl'] - pos['current_price']
-                        st.caption(f"Distance: {sl_dist:.5f}")
+                        st.caption(f"{t('distance')}: {sl_dist:.5f}")
                     else:
-                        st.caption("Not set")
+                        st.caption(t("not_set"))
 
                 with col5:
-                    st.markdown("**Take Profit**")
+                    st.markdown(f"**{t('take_profit')}**")
                     if pos['tp'] > 0:
                         st.markdown(f"{pos['tp']:.5f}")
                         if pos['type'] == "BUY":
                             tp_dist = pos['tp'] - pos['current_price']
                         else:
                             tp_dist = pos['current_price'] - pos['tp']
-                        st.caption(f"Distance: {tp_dist:.5f}")
+                        st.caption(f"{t('distance')}: {tp_dist:.5f}")
                     else:
-                        st.caption("Not set")
+                        st.caption(t("not_set"))
 
                 # Additional info
                 st.caption(f"🎫 Ticket: `{pos['ticket']}` | 🤖 Bot: `{pos['comment']}`")

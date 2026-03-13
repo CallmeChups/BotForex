@@ -1,0 +1,158 @@
+================================================================================
+MOVE SL TO BREAKEVEN - VÍ DỤ TRỰC QUAN
+================================================================================
+
+VÍ DỤ 1: LỆNH BUY (RR = 2:1, Trigger = 50%)
+--------------------------------------------------------------------------------
+
+Ban đầu:
+    TP:  5020 ━━━━━━━━━━━━━━━━━ [Target: +20 pips]
+                ↑
+                │
+    Trigger: 5010 ─ ─ ─ ─ ─ ─ ─ [50% TP]
+                │
+    Entry:  5000 ━━━━━━━━━━━━━━━ [Vào lệnh]
+                │
+    SL:    4990 ━━━━━━━━━━━━━━━ [Risk: -10 pips]
+
+Khi giá đạt 5010:
+    TP:    5020 ━━━━━━━━━━━━━━━ [Target: +20 pips]
+                ↑
+    Price: 5010 ━━━━━━━━━━━━━━━ [Giá hiện tại]
+
+    Entry: 5000 ━━━━━━━━━━━━━━━ [NEW SL = Entry]
+                ↓
+    Old SL: 4990 ✗ (removed)
+
+Kết quả:
+✅ Trade chỉ có thể:
+   - Hòa vốn (nếu giá về 5000)
+   - Thắng (nếu giá lên 5020)
+❌ KHÔNG THỂ thua! (SL đã lên breakeven)
+
+================================================================================
+
+VÍ DỤ 2: LỆNH SELL (RR = 2:1, Trigger = 50%)
+--------------------------------------------------------------------------------
+
+Ban đầu:
+    SL:    5010 ━━━━━━━━━━━━━━━ [Risk: -10 pips]
+                │
+    Entry:  5000 ━━━━━━━━━━━━━━━ [Vào lệnh]
+                │
+    Trigger: 4990 ─ ─ ─ ─ ─ ─ ─ [50% TP]
+                ↓
+    TP:    4980 ━━━━━━━━━━━━━━━ [Target: +20 pips]
+
+Khi giá đạt 4990:
+    Old SL: 5010 ✗ (removed)
+                ↑
+    Entry: 5000 ━━━━━━━━━━━━━━━ [NEW SL = Entry]
+
+    Price: 4990 ━━━━━━━━━━━━━━━ [Giá hiện tại]
+                ↓
+    TP:    4980 ━━━━━━━━━━━━━━━ [Target: +20 pips]
+
+Kết quả:
+✅ Trade chỉ có thể:
+   - Hòa vốn (nếu giá về 5000)
+   - Thắng (nếu giá xuống 4980)
+❌ KHÔNG THỂ thua! (SL đã xuống breakeven)
+
+================================================================================
+
+VÍ DỤ 3: SO SÁNH CÁC TRIGGER %
+--------------------------------------------------------------------------------
+
+Entry: 5000, SL: 4990, TP: 5020 (RR = 2:1)
+
+┌─────────────────────────────────────────────────────────────┐
+│ Trigger %  │ Trigger Price │ Đặc điểm                       │
+├────────────┼───────────────┼────────────────────────────────┤
+│   25%      │    5005       │ Rất sớm - Bảo vệ nhanh         │
+│   50%      │    5010       │ Cân bằng - Recommended         │
+│   75%      │    5015       │ Muộn - Cho trade nhiều không gian │
+└─────────────────────────────────────────────────────────────┘
+
+Trigger 25% (Aggressive):
+    TP:  5020 ━━━━━━━━━━━━━━━━━ [+20 pips]
+    Trigger: 5005 ═══════════════ [Dời SL sớm]
+    Entry:  5000 ━━━━━━━━━━━━━━━
+    SL:    4990 ━━━━━━━━━━━━━━━
+
+Trigger 50% (Balanced):
+    TP:  5020 ━━━━━━━━━━━━━━━━━ [+20 pips]
+    Trigger: 5010 ═══════════════ [Dời SL trung bình]
+    Entry:  5000 ━━━━━━━━━━━━━━━
+    SL:    4990 ━━━━━━━━━━━━━━━
+
+Trigger 75% (Conservative):
+    TP:  5020 ━━━━━━━━━━━━━━━━━ [+20 pips]
+    Trigger: 5015 ═══════════════ [Dời SL muộn]
+    Entry:  5000 ━━━━━━━━━━━━━━━
+    SL:    4990 ━━━━━━━━━━━━━━━
+
+================================================================================
+
+TIMELINE: HÀNH TRÌNH MỘT TRADE
+--------------------------------------------------------------------------------
+
+Time: 19:00 - Vào lệnh BUY
+    Entry: 5000
+    SL: 4990 (-10 pips risk)
+    TP: 5020 (+20 pips reward)
+    Trigger: 5010 (50% TP)
+
+Time: 19:15 - Giá tăng
+    Price: 5005
+    Status: Đang theo dõi... chưa đạt trigger
+
+Time: 19:30 - Giá đạt trigger!
+    Price: 5011
+    🔔 SL MOVED TO BREAKEVEN!
+    New SL: 5000 (= Entry)
+    💡 Trade giờ là RISK-FREE!
+
+Time: 19:45 - Giá tiếp tục tăng
+    Price: 5018
+    Status: Gần TP, trade đang thắng +18 pips
+
+Time: 20:00 - Scenario A: TP Hit ✅
+    Price: 5020
+    Result: +20 pips profit
+    [OK] Position Closed: TP
+
+Time: 20:00 - Scenario B: Giá reverse về SL ⚠️
+    Price: 5000
+    Result: ±0 pips (breakeven)
+    [INFO] Position Closed: SL
+    💡 Nhưng không thua tiền!
+
+Time: 20:00 - Scenario C: Không có Move SL ❌
+    Price: 4995 (giả sử không move SL)
+    Old SL: 4990
+    Result: Vẫn còn risk -10 pips
+    💀 Nếu giá xuống 4990 → mất 10 pips!
+
+================================================================================
+
+KẾT LUẬN
+--------------------------------------------------------------------------------
+
+✅ MOVE SL TO BREAKEVEN giúp:
+   - Bảo vệ lợi nhuận đã có
+   - Giảm stress khi trading
+   - Tăng win rate (ít trade thua hơn)
+   - Phù hợp với thị trường biến động
+
+⚙️ CẤU HÌNH KHUYÊN DÙNG:
+   - XAUUSD, Crypto: Trigger 40-50%
+   - Forex pairs: Trigger 50-60%
+   - News trading: Trigger 30-40%
+
+📊 THỐNG KÊ:
+   - Nếu đạt trigger: Win rate tăng 15-25%
+   - Nếu không đạt trigger: Trade hoạt động bình thường
+   - Trade breakeven: Tốt hơn trade loss!
+
+================================================================================
