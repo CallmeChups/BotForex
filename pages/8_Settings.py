@@ -59,12 +59,12 @@ def main():
                 t("mt5_login"),
                 value=user_mt5.get('login', ''),
                 type="default",
-                placeholder="Your MT5 account number"
+                placeholder=t("mt5_login_placeholder")
             )
             mt5_server = st.text_input(
                 t("mt5_server"),
                 value=user_mt5.get('server', ''),
-                placeholder="e.g., Exness-MT5Trial8"
+                placeholder=t("mt5_server_placeholder")
             )
 
         with col2:
@@ -72,12 +72,12 @@ def main():
                 t("mt5_password"),
                 value=user_mt5.get('password', ''),
                 type="password",
-                placeholder="Your MT5 password"
+                placeholder=t("mt5_password_placeholder")
             )
             symbol = st.text_input(
                 t("trading_symbol"),
                 value=os.getenv("SYMBOL", "XAUUSD"),
-                help="Use XAUUSDm for Standard account, XAUUSD for Pro/Raw"
+                help=t("mt5_symbol_help")
             )
 
         if st.form_submit_button(t("save_mt5_creds"), type="primary", width='stretch'):
@@ -89,7 +89,7 @@ def main():
                     st.success(t("save_mt5_success"))
                     st.rerun()
                 else:
-                    st.error("Failed to save credentials")
+                    st.error(t("save_failed"))
 
     st.divider()
 
@@ -108,20 +108,20 @@ def main():
 
         try:
             if not mt5.initialize():
-                st.error("MT5 initialization failed")
+                st.error(t("mt5_init_failed"))
             else:
                 login = int(user_creds.get('login') or 0)
                 password = user_creds.get('password', '')
                 server = user_creds.get('server', '')
 
                 if not login or not password or not server:
-                    st.error("MT5 credentials not configured. Please save your credentials above.")
+                    st.error(t("mt5_creds_not_configured"))
                 elif mt5.login(login=login, password=password, server=server):
                     account = mt5.account_info()._asdict()
                     st.success(t("connected_balance", bal=account['balance']))
                     mt5.shutdown()
                 else:
-                    st.error(f"Login failed: {mt5.last_error()}")
+                    st.error(t("login_failed", err=mt5.last_error()))
                     mt5.shutdown()
         except Exception as e:
             st.error(f"Error: {e}")
@@ -144,19 +144,19 @@ def main():
             telegram_chat_id = st.text_input(
                 t("main_chat_id"),
                 value=os.getenv("TELEGRAM_CHAT_ID", ""),
-                help="Main group for trade signals"
+                help=t("telegram_signal_help")
             )
 
         with col2:
             telegram_error_chat_id = st.text_input(
                 t("error_chat_id"),
                 value=os.getenv("TELEGRAM_ERROR_CHAT_ID", ""),
-                help="Group for error notifications"
+                help=t("telegram_error_help")
             )
             telegram_test_chat_id = st.text_input(
                 t("test_chat_id"),
                 value=os.getenv("TELEGRAM_TEST_CHAT_ID", ""),
-                help="Group for testing"
+                help=t("telegram_test_help")
             )
 
         if st.button(t("test_telegram"), width='stretch'):
@@ -233,12 +233,12 @@ TELEGRAM_TEST_CHAT_ID={os.getenv('TELEGRAM_TEST_CHAT_ID', '')}
     # Info
     st.subheader(t("information"))
 
-    st.markdown("""
-    **MT5 Account:** Each user has their own MT5 credentials.
+    st.markdown(f"""
+    **{t('mt5_account_info')}**
 
-    **Account Types:**
-    - Standard account: Use symbols with `m` suffix (ETHUSDm, BTCUSDm)
-    - Pro/Raw account: Use symbols without suffix (ETHUSD, BTCUSD)
+    **{t('timeframe')}:**
+    - {t('mt5_standard_info')}
+    - {t('mt5_pro_info')}
     """)
 
     # App info
@@ -246,13 +246,13 @@ TELEGRAM_TEST_CHAT_ID={os.getenv('TELEGRAM_TEST_CHAT_ID', '')}
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        st.caption("**Version:** 0.1.0")
+        st.caption(f"**{t('version')}:** 0.1.0")
 
     with col2:
-        st.caption("**Strategy:** Master Candle")
+        st.caption(f"**{t('strategy')}:** Master Candle")
 
     with col3:
-        st.caption("**Timeframe:** M5")
+        st.caption(f"**{t('timeframe')}:** M5")
 
 
 if __name__ == "__main__":

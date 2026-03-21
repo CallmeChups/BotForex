@@ -1189,37 +1189,8 @@ def run_bot(args):
                     else:
                         log(f"[WAIT] Waiting for LIMIT: {wfl['candles_waited']} candles elapsed")
 
-                    # close_based SL: check previous candle close vs SL on candle boundary
-                    if sl_type == "close_based":
-                        prev_close = current_candle.get('open', None)  # Current candle open ≈ previous candle close
-                        # Use copy_rates to get actual previous candle close
-                        try:
-                            rates = mt5.copy_rates_from_pos(args.symbol, timeframe, 1, 1)
-                            if rates is not None and len(rates) > 0:
-                                prev_close = rates[0]['close']
-                        except Exception:
-                            pass
-
-                        if prev_close is not None:
-                            sl_hit = False
-                            if wfl['direction'] == "BUY" and prev_close <= wfl['stop_loss']:
-                                sl_hit = True
-                                log(f"[SKIP] Previous candle CLOSED past SL! close={prev_close:.5f} <= SL={wfl['stop_loss']:.5f}")
-                            elif wfl['direction'] == "SELL" and prev_close >= wfl['stop_loss']:
-                                sl_hit = True
-                                log(f"[SKIP] Previous candle CLOSED past SL! close={prev_close:.5f} >= SL={wfl['stop_loss']:.5f}")
-
-                            if sl_hit:
-                                send_telegram_async(
-                                    f"⏹ <b>Trade Skipped (close-based SL)</b>\n"
-                                    f"Symbol: {args.symbol}\n"
-                                    f"Reason: Candle closed past SL while waiting for LIMIT\n"
-                                    f"SL: {wfl['stop_loss']:.5f}\n"
-                                    f"Candle close: {prev_close:.5f}\n\n"
-                                    f"Bot stopping...")
-                                mt5.shutdown()
-                                log("Bot stopping — candle closed past SL during wait")
-                                return
+                    # NOTE: No SL check during WAIT — LIMIT not placed yet, no position exists.
+                    # SL only applies after the trade is actually entered.
 
                     # Check if expired
                     if expire > 0 and wfl['candles_waited'] >= expire:
@@ -1238,36 +1209,6 @@ def run_bot(args):
                 # Check current price
                 tick = mt5.symbol_info_tick(args.symbol)
                 if tick:
-                    # Safety: if price moved past SL, invalidate
-                    # price_based: check tick immediately (wick-touch)
-                    # close_based: already handled above at candle boundary — skip tick check here
-                    if sl_type == "price_based":
-                        if wfl['direction'] == "BUY" and tick.ask <= wfl['stop_loss']:
-                            log(f"[SKIP] Price moved past SL while waiting! ask={tick.ask:.5f} <= SL={wfl['stop_loss']:.5f}")
-                            send_telegram_async(
-                                f"⏹ <b>Trade Skipped</b>\n"
-                                f"Symbol: {args.symbol}\n"
-                                f"Reason: Price moved past SL while waiting for LIMIT\n"
-                                f"SL: {wfl['stop_loss']:.5f}\n"
-                                f"Current ask: {tick.ask:.5f}\n\n"
-                                f"Bot stopping...")
-                            mt5.shutdown()
-                            log("Bot stopping — price past SL during wait")
-                            return
-
-                        if wfl['direction'] == "SELL" and tick.bid >= wfl['stop_loss']:
-                            log(f"[SKIP] Price moved past SL while waiting! bid={tick.bid:.5f} >= SL={wfl['stop_loss']:.5f}")
-                            send_telegram_async(
-                                f"⏹ <b>Trade Skipped</b>\n"
-                                f"Symbol: {args.symbol}\n"
-                                f"Reason: Price moved past SL while waiting for LIMIT\n"
-                                f"SL: {wfl['stop_loss']:.5f}\n"
-                                f"Current bid: {tick.bid:.5f}\n\n"
-                                f"Bot stopping...")
-                            mt5.shutdown()
-                            log("Bot stopping — price past SL during wait")
-                            return
-
                     # Check if price has returned to valid LIMIT side
                     can_place_now = False
                     if wfl['direction'] == "BUY" and tick.ask > wfl['entry_price']:

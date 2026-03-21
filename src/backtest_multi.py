@@ -60,7 +60,8 @@ def _make_missed(po: dict, reason: str, rr_ratio: float) -> dict:
     mt = po["master_time"]
     return {
         "date":                  mt.strftime("%Y-%m-%d"),
-        "time":                  mt.strftime("%H:%M"),
+        "time":                  mt.strftime("%H:%M"),   # No fill occurred; use master candle time
+        "setup_time":            mt.strftime("%H:%M"),   # Master candle (signal candle)
         "direction":             po["direction"],
         "entry":                 po["entry_price"],
         "sl":                    po["stop_loss"],
@@ -113,7 +114,8 @@ def _finalize_trade(
 
     completed_trades.append({
         "date":                  mt.strftime("%Y-%m-%d"),
-        "time":                  mt.strftime("%H:%M"),
+        "time":                  ot["fill_time"].strftime("%H:%M"),  # Actual fill candle time
+        "setup_time":            mt.strftime("%H:%M"),               # Master candle (signal candle)
         "direction":             direction,
         "entry":                 fill_price,
         "sl":                    ot["stop_loss"],
@@ -339,17 +341,17 @@ def run_backtest_multi(
 
             if direction == "BUY":
                 if ck_open < entry_price:
-                    # Open below entry
-                    if ck_low <= stop_loss:
-                        completed_trades.append(
-                            _make_missed(po, "SL hit before fill", rr_ratio)
-                        )
-                        continue
+                    # Open below entry — WAIT phase (range_percent) or gap-fill (close)
+                    # NOTE: No SL check here — no position exists yet.
                     if entry_mode == "close":
-                        # Market fallback: fill at open price
                         filled            = True
                         actual_fill_price = ck_open
-                    # range_percent: keep waiting (fall through to expire check)
+                    else:
+                        # range_percent WAIT: check if wick crossed ABOVE entry (wick-through fill)
+                        if ck_high >= entry_price:
+                            filled            = True
+                            actual_fill_price = entry_price
+                        # else: pure WAIT, fall through to expire check
                 else:
                     # Open >= entry -- LIMIT can be placed, check wick fill
                     if ck_low <= entry_price:
@@ -358,15 +360,17 @@ def run_backtest_multi(
 
             else:  # SELL
                 if ck_open > entry_price:
-                    # Open above entry
-                    if ck_high >= stop_loss:
-                        completed_trades.append(
-                            _make_missed(po, "SL hit before fill", rr_ratio)
-                        )
-                        continue
+                    # Open above entry — WAIT phase (range_percent) or gap-fill (close)
+                    # NOTE: No SL check here — no position exists yet.
                     if entry_mode == "close":
                         filled            = True
                         actual_fill_price = ck_open
+                    else:
+                        # range_percent WAIT: check if wick crossed BELOW entry (wick-through fill)
+                        if ck_low <= entry_price:
+                            filled            = True
+                            actual_fill_price = entry_price
+                        # else: pure WAIT, fall through to expire check
                 else:
                     # Open <= entry -- LIMIT can be placed, check wick fill
                     if ck_high >= entry_price:

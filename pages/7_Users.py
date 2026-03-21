@@ -69,9 +69,9 @@ def main():
         col1, col2 = st.columns(2)
 
         with col1:
-            new_username = st.text_input(f"{t('username')}*", placeholder="johndoe")
-            new_name = st.text_input(t("full_name"), placeholder="John Doe")
-            new_email = st.text_input(t("email"), placeholder="john@example.com")
+            new_username = st.text_input(f"{t('username')}*", placeholder=t("placeholder_username"))
+            new_name = st.text_input(t("full_name"), placeholder=t("placeholder_fullname"))
+            new_email = st.text_input(t("email"), placeholder=t("placeholder_email"))
 
         with col2:
             new_password = st.text_input(f"{t('password')}*", type="password")

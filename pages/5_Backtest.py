@@ -883,7 +883,8 @@ def show_trade_table(trades: list, lot_mode: str, strategy_name: str, symbol: st
     # Rename columns for display
     rename_cols = {
         'date': 'Date',
-        'time': 'Time',
+        'setup_time': 'Signal',    # Master candle time (the configured entry time)
+        'time': 'Fill Time',       # Actual candle when LIMIT was filled
         'direction': 'Direction',
         'entry': 'Entry',
         'sl': 'SL',
@@ -968,8 +969,11 @@ def show_interactive_chart(trades: list, ohlc_data: pd.DataFrame, symbol: str):
         st.warning("No OHLC data available for chart")
         return
 
-    # Trade selector
-    trade_options = [f"Trade {i+1}: {t['date']} {t['time']} - {t['direction']} ({t['exit_type']})" for i, t in enumerate(trades)]
+    # Trade selector — show setup_time (signal candle) in label for clarity
+    trade_options = [
+        f"Trade {i+1}: {t['date']} {t.get('setup_time', t['time'])} - {t['direction']} ({t['exit_type']})"
+        for i, t in enumerate(trades)
+    ]
     selected_idx = st.selectbox(
         "Select Trade to View",
         options=range(len(trades)),
@@ -978,26 +982,39 @@ def show_interactive_chart(trades: list, ohlc_data: pd.DataFrame, symbol: str):
 
     trade = trades[selected_idx]
 
-    # Parse trade datetime
-    trade_datetime_str = f"{trade['date']} {trade['time']}"
+    # Parse master candle time (setup_time) — used as chart anchor to load OHLC window
+    setup_time_str = trade.get('setup_time', trade['time'])
+    trade_datetime_str = f"{trade['date']} {setup_time_str}"
     trade_dt = datetime.strptime(trade_datetime_str, "%Y-%m-%d %H:%M")
+
+    # Parse fill candle time (time field) — where entry marker is drawn
+    fill_time_str = trade.get('time', setup_time_str)
+    fill_datetime_str = f"{trade['date']} {fill_time_str}"
+    fill_dt = datetime.strptime(fill_datetime_str, "%Y-%m-%d %H:%M")
 
     # Filter OHLC data around the trade (30 candles before and after)
     ohlc_data['time_naive'] = ohlc_data['time'].dt.tz_localize(None) if ohlc_data['time'].dt.tz is not None else ohlc_data['time']
 
-    # Find the entry candle index
+    # Find the master candle index (for chart window centering)
     entry_mask = ohlc_data['time_naive'] == trade_dt
     if not entry_mask.any():
-        # Try to find closest candle
         time_diffs = abs(ohlc_data['time_naive'] - trade_dt)
         entry_idx = time_diffs.idxmin()
     else:
         entry_idx = ohlc_data[entry_mask].index[0]
 
+    # Find the fill candle index (for entry marker position)
+    fill_mask = ohlc_data['time_naive'] == fill_dt
+    if not fill_mask.any():
+        time_diffs = abs(ohlc_data['time_naive'] - fill_dt)
+        fill_idx = time_diffs.idxmin()
+    else:
+        fill_idx = ohlc_data[fill_mask].index[0]
+
     # Get data range (30 candles before, candles + 10 after)
-    start_idx = max(0, entry_idx - 30)
-    candles_count = trade.get('candles', 10)  # Default 10 candles for missed trades
-    end_idx = min(len(ohlc_data), entry_idx + candles_count + 15)
+    start_idx = max(0, entry_idx - 30)                              # 30 candles before master candle
+    candles_count = trade.get('candles', 10)
+    end_idx = min(len(ohlc_data), fill_idx + candles_count + 15)   # extend past last exit candle
     chart_data = ohlc_data.iloc[start_idx:end_idx].copy()
 
     # Create candlestick chart
@@ -1021,8 +1038,8 @@ def show_interactive_chart(trades: list, ohlc_data: pd.DataFrame, symbol: str):
     x_min = chart_data['time'].iloc[0]
     x_max = chart_data['time'].iloc[-1]
 
-    # Entry marker
-    entry_time = ohlc_data.iloc[entry_idx]['time']
+    # Entry marker — placed at the fill candle (not master/signal candle)
+    entry_time = ohlc_data.iloc[fill_idx]['time']
     entry_price = trade['entry']
 
     fig.add_trace(
@@ -1040,6 +1057,24 @@ def show_interactive_chart(trades: list, ohlc_data: pd.DataFrame, symbol: str):
             legendgroup="entry"
         )
     )
+
+    # Signal candle marker — master candle that triggered the setup (shown only if different from fill candle)
+    if setup_time_str != fill_time_str:
+        signal_candle_time = ohlc_data.iloc[entry_idx]['time']
+        signal_candle_high = ohlc_data.iloc[entry_idx]['high']
+        fig.add_trace(
+            go.Scatter(
+                x=[signal_candle_time],
+                y=[signal_candle_high * 1.001],  # slightly above candle high
+                mode='markers+text',
+                marker=dict(symbol='star', size=12, color='orange'),
+                text=['Signal'],
+                textposition='top center',
+                textfont=dict(size=10, color='orange'),
+                name=f"Signal Candle ({setup_time_str})",
+                legendgroup="signal"
+            )
+        )
 
     # Entry price line (toggleable)
     fig.add_trace(
@@ -1082,7 +1117,8 @@ def show_interactive_chart(trades: list, ohlc_data: pd.DataFrame, symbol: str):
     # Exit marker (skip for MISSED trades with no exit_price)
     exit_price = trade.get('exit_price')
     if exit_price is not None:
-        exit_candle_idx = entry_idx + candles_count
+        # candles_count is counted from fill candle, so exit is fill_idx + candles_count
+        exit_candle_idx = fill_idx + candles_count
         if exit_candle_idx < len(ohlc_data):
             exit_time = ohlc_data.iloc[exit_candle_idx]['time']
         else:

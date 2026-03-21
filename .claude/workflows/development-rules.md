@@ -40,3 +40,13 @@
 - Implement features according to specifications
 - Handle edge cases and error scenarios
 - **DO NOT** create new enhanced files, update to the existing files directly.
+
+## Bug Fix Verification — MANDATORY
+**After every bug fix, MUST self-verify before reporting done:**
+1. Run a real script (`python << 'EOF' ... EOF`) that exercises the exact fixed code path with real data
+2. Assert the specific buggy case now produces correct output (e.g. `assert result == expected`)
+3. Assert at least 2 regression cases still pass (don't break existing behavior)
+4. Only report fix complete after all assertions pass in terminal output
+- **NEVER** rely on code-reading alone to confirm a fix works — always execute
+- **NEVER** trust Streamlit UI hot-reload; always test via CLI script with `importlib.reload()` if needed
+- For backtest fixes: run with real OHLC data + exact user config, print all trades, verify fill time & exit type

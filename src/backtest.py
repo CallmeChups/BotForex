@@ -413,21 +413,23 @@ def run_backtest(
             if direction == "BUY":
                 if ck_open < entry_price:
                     # Price on wrong side — WAIT phase (range_percent) or gap-fill (close)
-                    # SL invalidation respects sl_type:
-                    #   price_based → wick hits SL → trade invalid immediately
-                    #   close_based → only close below SL invalidates (wick alone is OK)
-                    sl_invalid = (ck_low <= stop_loss) if sl_type == "price_based" else (ck_close <= stop_loss)
-                    if sl_invalid:
-                        break  # SL hit while waiting → MISSED
-
+                    # NOTE: No SL check here — no position exists yet.
                     if entry_mode == "close":
-                        # "close" mode: market fill at open
+                        # "close" mode: market fill at open price
                         order_filled = True
                         fill_candle_iloc = df.index.get_loc(check_idx)
                         actual_fill_price = ck_open
                         break
                     else:
-                        # "range_percent": WAIT — each candle counts against expire
+                        # "range_percent" WAIT phase.
+                        # Even though open is below entry, check if wick crossed ABOVE entry
+                        # (price dipped below then rose above entry → BUY LIMIT fills same candle).
+                        if ck_high >= entry_price:
+                            order_filled = True
+                            fill_candle_iloc = df.index.get_loc(check_idx)
+                            actual_fill_price = entry_price
+                            break
+                        # Pure WAIT: wick never reached entry
                         candles_waited += 1
                         if expire > 0 and candles_waited >= expire:
                             break  # WAIT expired → MISSED
@@ -451,18 +453,23 @@ def run_backtest(
             else:  # SELL
                 if ck_open > entry_price:
                     # Price on wrong side — WAIT phase (range_percent) or gap-fill (close)
-                    sl_invalid = (ck_high >= stop_loss) if sl_type == "price_based" else (ck_close >= stop_loss)
-                    if sl_invalid:
-                        break  # SL hit while waiting → MISSED
-
+                    # NOTE: No SL check here — no position exists yet.
                     if entry_mode == "close":
-                        # "close" mode: market fill at open
+                        # "close" mode: market fill at open price
                         order_filled = True
                         fill_candle_iloc = df.index.get_loc(check_idx)
                         actual_fill_price = ck_open
                         break
                     else:
-                        # "range_percent": WAIT — each candle counts against expire
+                        # "range_percent" WAIT phase.
+                        # Even though open is above entry, check if wick crossed BELOW entry
+                        # (price rose above then dipped below entry → SELL LIMIT fills same candle).
+                        if ck_low <= entry_price:
+                            order_filled = True
+                            fill_candle_iloc = df.index.get_loc(check_idx)
+                            actual_fill_price = entry_price
+                            break
+                        # Pure WAIT: wick never reached entry
                         candles_waited += 1
                         if expire > 0 and candles_waited >= expire:
                             break  # WAIT expired → MISSED
@@ -485,12 +492,20 @@ def run_backtest(
 
         if not order_filled:
             if expire > 0:
-                miss_reason = f"LIMIT not filled after {expire} candles"
+                if entry_mode == "range_percent" and not limit_placed:
+                    miss_reason = f"Price never returned to entry side within {expire} candles (WAIT expired)"
+                else:
+                    miss_reason = f"LIMIT placed but not filled within {expire} candles (FILL expired)"
             else:
-                miss_reason = "LIMIT not filled (price hit SL before entry)" if len(fill_candles) > 0 else "LIMIT never filled (end of data)"
+                # expire=0 (unlimited): loop ended without fill — determine why
+                if entry_mode == "range_percent" and not limit_placed:
+                    miss_reason = "Price never returned to entry side (WAIT — end of data)"
+                else:
+                    miss_reason = "LIMIT placed but price never reached entry (SL hit or end of data)"
             trades.append({
                 "date": entry_time.strftime("%Y-%m-%d"),
-                "time": entry_time.strftime("%H:%M"),
+                "time": entry_time.strftime("%H:%M"),        # Master candle (no fill time for MISSED)
+                "setup_time": entry_time.strftime("%H:%M"),
                 "direction": direction,
                 "entry": entry_price,
                 "sl": stop_loss,
@@ -511,6 +526,7 @@ def run_backtest(
             continue
 
         # Recalculate SL/TP if market fill at different price ("close" mode gap fill)
+        fill_time = df.iloc[fill_candle_iloc]['time']  # Actual candle where fill occurred
         if actual_fill_price != entry_price:
             if direction == "BUY":
                 risk = actual_fill_price - stop_loss
@@ -596,7 +612,8 @@ def run_backtest(
 
         trades.append({
             "date": entry_time.strftime("%Y-%m-%d"),
-            "time": entry_time.strftime("%H:%M"),
+            "time": fill_time.strftime("%H:%M"),        # Candle when LIMIT was filled (entry_mode candle)
+            "setup_time": entry_time.strftime("%H:%M"), # Master candle time (signal candle)
             "direction": direction,
             "entry": actual_fill_price,
             "sl": stop_loss,

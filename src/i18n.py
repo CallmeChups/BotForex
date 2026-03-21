@@ -361,6 +361,63 @@ TRANSLATIONS = {
     "max_age_days":         {"en": "Max age (days)",          "vi": "Tuổi tối đa (ngày)"},
     "cleaned_empty":        {"en": "Deleted {n} empty log files.", "vi": "Đã xóa {n} file log trống."},
     "cleaned_old":          {"en": "Deleted {n} old log files.",   "vi": "Đã xóa {n} file log cũ."},
+
+    # ── Dashboard (app.py) ──
+    "page_dashboard":           {"en": "BotForex Dashboard",             "vi": "Bảng điều khiển BotForex"},
+    "login_title":              {"en": "BotForex",                        "vi": "BotForex"},
+    "login_subtitle":           {"en": "Login to Dashboard",             "vi": "Đăng nhập vào Bảng điều khiển"},
+    "welcome_user":             {"en": "Welcome, {name}!",               "vi": "Xin chào, {name}!"},
+    "bot_status_label":         {"en": "Bot Status",                     "vi": "Trạng thái Bot"},
+    "todays_signals":           {"en": "Today's Signals",                "vi": "Tín hiệu hôm nay"},
+    "total_pnl_label":          {"en": "Total P&L",                      "vi": "Tổng lãi/lỗ"},
+    "strategy_rules":           {"en": "Strategy Rules",                 "vi": "Quy tắc chiến lược"},
+    "quick_actions":            {"en": "Quick Actions",                  "vi": "Thao tác nhanh"},
+    "refresh_data":             {"en": "Refresh Data",                   "vi": "Làm mới dữ liệu"},
+    "test_telegram_btn":        {"en": "Test Telegram",                  "vi": "Kiểm tra Telegram"},
+    "run_simulation_btn":       {"en": "Run Simulation",                 "vi": "Chạy mô phỏng"},
+    "demo_credentials":         {"en": "Demo Credentials",               "vi": "Thông tin đăng nhập demo"},
+    "login_error":              {"en": "Username/password is incorrect", "vi": "Tên đăng nhập/mật khẩu không đúng"},
+    "login_prompt":             {"en": "Please enter your username and password", "vi": "Vui lòng nhập tên đăng nhập và mật khẩu"},
+    "no_signals_caption":       {"en": "No signals yet. Bot will trigger at scheduled time.", "vi": "Chưa có tín hiệu. Bot sẽ kích hoạt vào giờ đã lên lịch."},
+    "telegram_not_configured":  {"en": "Telegram not configured. Check Settings.", "vi": "Chưa cấu hình Telegram. Kiểm tra Cài đặt."},
+    "telegram_send_failed":     {"en": "Failed to send message",         "vi": "Gửi tin nhắn thất bại"},
+    "go_simulation":            {"en": "Go to Strategy page to run simulation", "vi": "Đến trang Chiến lược để chạy mô phỏng"},
+    "recent_signals":           {"en": "Recent Signals",                 "vi": "Tín hiệu gần đây"},
+    "entry_rules_desc":         {"en": "Entry Rules",                    "vi": "Quy tắc vào lệnh"},
+    "risk_management_desc":     {"en": "Risk Management",                "vi": "Quản lý rủi ro"},
+    "exit_rules_desc":          {"en": "Exit Rules",                     "vi": "Quy tắc thoát lệnh"},
+    "master_candle_strategy":   {"en": "Master Candle Strategy",         "vi": "Chiến lược Nến chủ"},
+    "logout":                   {"en": "Logout",                         "vi": "Đăng xuất"},
+    "current_time_label":       {"en": "Current Time",                   "vi": "Thời gian hiện tại"},
+    "risk_percent_label":       {"en": "Risk %",                         "vi": "Rủi ro %"},
+
+    # ── Settings page extras ──
+    "mt5_login_placeholder":    {"en": "Your MT5 account number",        "vi": "Số tài khoản MT5 của bạn"},
+    "mt5_server_placeholder":   {"en": "e.g., Exness-MT5Trial8",         "vi": "VD: Exness-MT5Trial8"},
+    "mt5_password_placeholder": {"en": "Your MT5 password",              "vi": "Mật khẩu MT5 của bạn"},
+    "mt5_symbol_help":          {"en": "Standard: XAUUSDm | Pro/Raw: XAUUSD", "vi": "Tài khoản Standard: XAUUSDm | Pro/Raw: XAUUSD"},
+    "save_failed":              {"en": "Failed to save credentials",     "vi": "Lưu thông tin đăng nhập thất bại"},
+    "mt5_init_failed":          {"en": "MT5 initialization failed",      "vi": "Khởi tạo MT5 thất bại"},
+    "mt5_creds_not_configured": {"en": "MT5 credentials not configured. Please save your credentials above.", "vi": "Chưa cấu hình thông tin MT5. Vui lòng lưu thông tin đăng nhập ở trên."},
+    "login_failed":             {"en": "Login failed: {err}",            "vi": "Đăng nhập thất bại: {err}"},
+    "telegram_signal_help":     {"en": "Main group for trade signals",   "vi": "Nhóm chính để nhận tín hiệu giao dịch"},
+    "telegram_error_help":      {"en": "Group for error notifications",  "vi": "Nhóm nhận thông báo lỗi"},
+    "telegram_test_help":       {"en": "Group for testing",              "vi": "Nhóm dành cho kiểm tra"},
+    "mt5_account_info":         {"en": "MT5 Account: Each user has their own MT5 credentials.", "vi": "Tài khoản MT5: Mỗi người dùng có thông tin đăng nhập MT5 riêng."},
+    "mt5_standard_info":        {"en": "Standard account: Use symbols with 'm' suffix (XAUUSDm)", "vi": "Tài khoản Standard: Dùng symbol có đuôi 'm' (XAUUSDm)"},
+    "mt5_pro_info":             {"en": "Pro/Raw account: Use symbols without suffix (XAUUSD)", "vi": "Tài khoản Pro/Raw: Dùng symbol không có đuôi (XAUUSD)"},
+
+    # ── Users page extras ──
+    "placeholder_username":     {"en": "johndoe",                        "vi": "nguyenvana"},
+    "placeholder_fullname":     {"en": "John Doe",                       "vi": "Nguyễn Văn A"},
+    "placeholder_email":        {"en": "john@example.com",               "vi": "nguyenvana@email.com"},
+
+    # ── UI status badges ──
+    "status_running":           {"en": "Running",                        "vi": "Đang chạy"},
+    "status_stopped":           {"en": "Stopped",                        "vi": "Đã dừng"},
+    "status_waiting":           {"en": "Waiting",                        "vi": "Đang chờ"},
+    "status_error":             {"en": "Error",                          "vi": "Lỗi"},
+    "status_success":           {"en": "Success",                        "vi": "Thành công"},
 }
 
 
