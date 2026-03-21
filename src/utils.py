@@ -149,7 +149,7 @@ def check_exit(
 
     Args:
         direction: "BUY" or "SELL"
-        candle: dict with "high", "low", "close"
+        candle: dict with "high", "low", "close", and optionally "open"
         tp: Take profit level
         sl: Stop loss level
         tp_type: "price_based" (immediate on wick) or "close_based" (delayed on close)
@@ -158,49 +158,62 @@ def check_exit(
     Returns:
         (exit_type, exit_price) or (None, None)
         exit_type: "TP", "SL", or None
+
+    Same-candle priority (both price_based):
+        When a candle's wick hits BOTH TP and SL on the same candle (rare but possible),
+        we compare distance from candle open to each level.
+        The level closer to open is assumed to have been hit first (shorter travel = earlier).
+        If open is not provided in candle dict, TP takes priority (original behavior).
     """
     h, l, c = candle["high"], candle["low"], candle["close"]
+    candle_open = candle.get("open")  # optional — used for same-candle priority
 
     if direction == "BUY":
-        # TP check
-        if tp_type == "price_based":
-            # Immediate: wick touches TP
-            if h >= tp:
+        tp_hit = (tp_type == "price_based" and h >= tp) or (tp_type == "close_based" and c >= tp)
+        sl_hit = (sl_type == "price_based" and l <= sl) or (sl_type == "close_based" and c <= sl)
+
+        if tp_hit and sl_hit:
+            # Both hit on same candle — determine which fired first via distance from open
+            if candle_open is not None and tp_type == "price_based" and sl_type == "price_based":
+                dist_to_sl = candle_open - sl  # downward distance
+                dist_to_tp = tp - candle_open  # upward distance
+                if dist_to_sl < dist_to_tp:
+                    return ("SL", sl)   # SL closer to open → hit first
+                else:
+                    return ("TP", tp)   # TP closer to open → hit first
+            # Fallback (close_based, or no open provided): TP wins
+            if tp_type == "price_based":
                 return ("TP", tp)
-        else:  # close_based
-            # Delayed: close beyond TP
-            if c >= tp:
+            elif tp_type == "close_based":
                 return ("TP", c)
 
-        # SL check
-        if sl_type == "close_based":
-            # Delayed: close beyond SL
-            if c <= sl:
-                return ("SL", c)
-        else:  # price_based
-            # Immediate: wick touches SL
-            if l <= sl:
-                return ("SL", sl)
+        if tp_hit:
+            return ("TP", tp) if tp_type == "price_based" else ("TP", c)
+        if sl_hit:
+            return ("SL", sl) if sl_type == "price_based" else ("SL", c)
 
     else:  # SELL
-        # TP check
-        if tp_type == "price_based":
-            # Immediate: wick touches TP
-            if l <= tp:
+        tp_hit = (tp_type == "price_based" and l <= tp) or (tp_type == "close_based" and c <= tp)
+        sl_hit = (sl_type == "price_based" and h >= sl) or (sl_type == "close_based" and c >= sl)
+
+        if tp_hit and sl_hit:
+            # Both hit on same candle — determine which fired first via distance from open
+            if candle_open is not None and tp_type == "price_based" and sl_type == "price_based":
+                dist_to_sl = sl - candle_open  # upward distance
+                dist_to_tp = candle_open - tp  # downward distance
+                if dist_to_sl < dist_to_tp:
+                    return ("SL", sl)   # SL closer to open → hit first
+                else:
+                    return ("TP", tp)   # TP closer to open → hit first
+            # Fallback: TP wins
+            if tp_type == "price_based":
                 return ("TP", tp)
-        else:  # close_based
-            # Delayed: close beyond TP
-            if c <= tp:
+            elif tp_type == "close_based":
                 return ("TP", c)
 
-        # SL check
-        if sl_type == "close_based":
-            # Delayed: close beyond SL
-            if c >= sl:
-                return ("SL", c)
-        else:  # price_based
-            # Immediate: wick touches SL
-            if h >= sl:
-                return ("SL", sl)
+        if tp_hit:
+            return ("TP", tp) if tp_type == "price_based" else ("TP", c)
+        if sl_hit:
+            return ("SL", sl) if sl_type == "price_based" else ("SL", c)
 
     return (None, None)

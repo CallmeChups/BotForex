@@ -441,7 +441,7 @@ def run_backtest(
                         candles_since_limit_placed = 0  # reset for FILL phase
 
                     candles_since_limit_placed += 1
-                    if expire > 0 and candles_since_limit_placed > expire:
+                    if expire > 0 and candles_since_limit_placed >= expire:
                         break  # FILL expired → MISSED
 
                     if ck_low <= entry_price:
@@ -481,7 +481,7 @@ def run_backtest(
                         candles_since_limit_placed = 0
 
                     candles_since_limit_placed += 1
-                    if expire > 0 and candles_since_limit_placed > expire:
+                    if expire > 0 and candles_since_limit_placed >= expire:
                         break  # FILL expired → MISSED
 
                     if ck_high >= entry_price:
@@ -541,6 +541,61 @@ def run_backtest(
         # Start monitoring from the candle AFTER the fill candle.
         # Mirrors bot_runner: LIMIT fill confirmed → next loop iteration monitors.
 
+        # ── CHECK FILL CANDLE FOR IMMEDIATE EXIT ──────────────────────────────
+        # After a LIMIT fill, the fill candle may still have price movement
+        # (wicks) that hits TP or SL. We must check the fill candle itself
+        # before moving on to subsequent candles.
+        # Example: BUY fill at 2400, same candle has low=2385 < SL=2390 → SL.
+        fill_candle_row = df.iloc[fill_candle_iloc]
+        fill_candle_for_exit = {
+            "open":  fill_candle_row['open'],
+            "high":  fill_candle_row['high'],
+            "low":   fill_candle_row['low'],
+            "close": fill_candle_row['close'],
+        }
+        fill_candle_exit_type, fill_candle_exit_price = check_exit(
+            direction, fill_candle_for_exit, take_profit, stop_loss, tp_type, sl_type
+        )
+
+        if fill_candle_exit_type:
+            # Exit on the fill candle itself
+            exit_price = fill_candle_exit_price
+            exit_type  = fill_candle_exit_type
+            exit_time  = fill_candle_row['time']
+            candles_held = 0  # exited same candle as fill
+
+            if direction == "BUY":
+                pnl_pips = (exit_price - actual_fill_price) / pip_value
+            else:
+                pnl_pips = (actual_fill_price - exit_price) / pip_value
+
+            pip_value_per_lot = get_pip_value_per_lot(symbol)
+            pnl_usd = lot_size * pnl_pips * pip_value_per_lot
+            current_equity += pnl_usd
+
+            trades.append({
+                "date": entry_time.strftime("%Y-%m-%d"),
+                "time": fill_time.strftime("%H:%M"),
+                "setup_time": entry_time.strftime("%H:%M"),
+                "direction": direction,
+                "entry": actual_fill_price,
+                "sl": stop_loss,
+                "tp": take_profit,
+                "sl_pips": round(candle_sl_pips, 1),
+                "lot": lot_size,
+                "exit_type": exit_type,
+                "exit_price": exit_price,
+                "exit_time": exit_time.strftime("%H:%M") if exit_time else "",
+                "candles": candles_held,
+                "pnl_pips": round(pnl_pips, 1),
+                "pnl_usd": round(pnl_usd, 2),
+                "sl_moved_to_breakeven": False,
+                "final_sl": stop_loss,
+            })
+            equity_curve_pips.append(equity_curve_pips[-1] + pnl_pips)
+            equity_curve_usd.append(current_equity)
+            continue  # done with this trade setup
+
         exit_candles_start = fill_candle_iloc + 1
 
         if max_candles > 0:
@@ -558,6 +613,7 @@ def run_backtest(
         for candle_idx, candle_row in next_candles.iterrows():
             candles_held += 1
             candle = {
+                "open":  candle_row['open'],   # needed for same-candle TP/SL priority
                 "high":  candle_row['high'],
                 "low":   candle_row['low'],
                 "close": candle_row['close']
