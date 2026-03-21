@@ -322,14 +322,14 @@ def show_backtest_config(params, selected_strategy_name, user_creds, now, is_mul
         entry_percent = st.number_input(
             t("entry_percent"), value=float(preset.get('entry_percent', 30.0)),
             min_value=0.0, max_value=100.0, step=5.0,
-            help="Range Percent only. BUY: Close - X%(body) | SELL: Close + X%(body)",
+            help=t("tip_entry_percent"),
             key="bt_w_entry_pct"
         )
     with col2:
         pending_order_expire_candles = st.number_input(
             t("expire_candles"), value=int(preset.get('pending_order_expire_candles', 0)),
             min_value=0, max_value=50, step=1,
-            help="Range Percent only. Cancel LIMIT if not filled after N candles (0=wait forever)",
+            help=t("tip_expire_candles"),
             key="bt_w_expire_candles"
         )
 
@@ -345,7 +345,7 @@ def show_backtest_config(params, selected_strategy_name, user_creds, now, is_mul
                 t("tp_type"), options=tp_type_options,
                 format_func=lambda x: t("tp_price") if x == "price_based" else t("tp_close"),
                 index=tp_type_idx,
-                help="Price: exit when wick touches TP | Close: exit when candle closes beyond TP",
+                help=t("tip_tp_price"),
                 key="bt_w_tp_type"
             )
 
@@ -357,7 +357,7 @@ def show_backtest_config(params, selected_strategy_name, user_creds, now, is_mul
                 t("sl_type"), options=sl_type_options,
                 format_func=lambda x: t("sl_close") if x == "close_based" else t("sl_price"),
                 index=sl_type_idx,
-                help="Close: exit when candle closes beyond SL | Price: exit when wick touches SL",
+                help=t("tip_sl_close"),
                 key="bt_w_sl_type"
             )
 
@@ -367,7 +367,7 @@ def show_backtest_config(params, selected_strategy_name, user_creds, now, is_mul
             max_candles = st.number_input(
                 t("max_candles_limit"), value=int(preset_max_c) if preset_max_c and preset_max_c > 0 else int(params.get('max_candles', 7)),
                 min_value=1, max_value=50,
-                help="Force close after N candles. Ignored if unchecked.",
+                help=t("tip_max_candles"),
                 key="bt_w_max_candles_val"
             )
             if not use_max_candles:
@@ -376,11 +376,11 @@ def show_backtest_config(params, selected_strategy_name, user_creds, now, is_mul
         with col4:
             preset_be = preset.get('move_sl_to_breakeven', False)
             move_sl_to_breakeven = st.checkbox(t("breakeven"), value=bool(preset_be), key="bt_be",
-                                               help="Move SL when TP partially reached")
+                                               help=t("tip_breakeven"))
             breakeven_trigger_percent = st.number_input(
                 t("breakeven_trigger"), value=float(preset.get('breakeven_trigger_percent') or 50.0),
                 min_value=10.0, max_value=90.0, step=5.0,
-                help="Move SL at this % of TP. Only if Breakeven ON.",
+                help=t("tip_breakeven"),
                 key="bt_w_be_trigger"
             )
             be_target_options = ["entry", "close"]
@@ -390,7 +390,7 @@ def show_backtest_config(params, selected_strategy_name, user_creds, now, is_mul
                 t("breakeven_sl_target"), options=be_target_options,
                 format_func=lambda x: t("breakeven_entry") if x == "entry" else t("breakeven_close"),
                 horizontal=True, key="bt_be_target", index=be_target_idx,
-                help="'Candle Close' useful for Range % mode. Only if Breakeven ON."
+                help=t("tip_breakeven")
             )
 
     # ── SECTION 4: Position Sizing ──
@@ -401,14 +401,15 @@ def show_backtest_config(params, selected_strategy_name, user_creds, now, is_mul
         lot_mode = st.radio(
             t("lot_mode"), options=lot_mode_options,
             format_func=lambda x: t("lot_fixed") if x == "fixed" else t("lot_flex"),
-            horizontal=True, index=lot_mode_idx, key="bt_w_lot_mode"
+            horizontal=True, index=lot_mode_idx, key="bt_w_lot_mode",
+            help=t("tip_lot_fixed") if lot_mode_idx == 0 else t("tip_lot_flex")
         )
 
         # Fixed mode
         fixed_lot = st.number_input(
             t("lot_size"), value=float(preset.get('fixed_lot') or params.get('lot_size', 0.01)),
             min_value=0.01, max_value=10.0, step=0.01, format="%.2f",
-            help="Fixed mode only.", key="bt_w_fixed_lot"
+            help=t("tip_lot_fixed"), key="bt_w_fixed_lot"
         )
 
         # Flex mode fields (always shown)
@@ -417,7 +418,7 @@ def show_backtest_config(params, selected_strategy_name, user_creds, now, is_mul
             starting_equity = st.number_input(
                 t("starting_equity"), value=float(preset.get('starting_equity') or 1000.0),
                 min_value=100.0, max_value=1000000.0, step=100.0,
-                help="Flex mode only.", key="bt_w_equity"
+                help=t("tip_starting_equity"), key="bt_w_equity"
             )
         with col2:
             risk_mode_options = ["percent", "fixed_amount"]
@@ -426,22 +427,22 @@ def show_backtest_config(params, selected_strategy_name, user_creds, now, is_mul
             risk_mode = st.radio(
                 t("risk_mode"), options=risk_mode_options,
                 format_func=lambda x: t("risk_percent_label") if x == "percent" else t("risk_fixed_label"),
-                horizontal=True, help="Flex mode only.", index=risk_mode_idx, key="bt_w_risk_mode"
+                horizontal=True, help=t("tip_lot_flex"), index=risk_mode_idx, key="bt_w_risk_mode"
             )
         with col3:
             risk_percent = st.number_input(
                 t("risk_per_trade_pct"), value=float(preset.get('risk_percent') or 0.5),
                 min_value=0.1, max_value=5.0, step=0.1, format="%.1f",
-                help="Flex + % mode.", key="bt_w_risk_pct"
+                help=t("tip_risk_percent"), key="bt_w_risk_pct"
             )
             risk_amount = st.number_input(
                 t("risk_per_trade_usd"), value=float(preset.get('risk_amount') or 5.0),
                 min_value=1.0, max_value=1000.0, step=1.0, format="%.2f",
-                help="Flex + Fixed $ mode.", key="bt_w_risk_amt"
+                help=t("tip_risk_amount"), key="bt_w_risk_amt"
             )
 
         risk_compounding = st.checkbox(t("compounding"), value=bool(preset.get('risk_compounding', True)),
-                                       help="Flex only. ON: risk % of current equity | OFF: of starting equity",
+                                       help=t("tip_compounding"),
                                        key="bt_w_compounding")
 
     sl_pips = 0

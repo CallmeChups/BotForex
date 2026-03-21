@@ -367,6 +367,21 @@ def show_create_bot():
     """Show config widgets to create new bot — no st.form, no dynamic computation"""
     st.subheader("Create New Bot")
 
+    # ── SIMPLE / ADVANCED MODE TOGGLE ──────────────────────────────────────
+    mode_col, _ = st.columns([1, 3])
+    with mode_col:
+        ui_mode = st.radio(
+            t("ui_mode_label"),
+            options=[t("ui_mode_simple"), t("ui_mode_advanced")],
+            horizontal=True,
+            key="create_bot_ui_mode",
+            help="Simple: chỉ hiện các cài đặt cốt lõi | Advanced: tất cả tùy chọn"
+        )
+    is_advanced = ui_mode == t("ui_mode_advanced")
+    if not is_advanced:
+        st.caption(f"💡 {t('simple_mode_hint')}")
+    st.divider()
+
     # ── PRESET LOADER (data built once and cached, not rebuilt on every widget change) ──
     with st.expander(t("load_from_past")):
         preset_options = _build_preset_options(username)
@@ -479,12 +494,6 @@ def show_create_bot():
     # ═══════════════════════════════════════════════════════
     st.markdown(f"**{t('section_trade_setup')}**")
 
-    buffer_help = (
-        "Extra points beyond candle wick for SL.\n"
-        "XAUUSD: 1pt=0.01 (5pts=$0.05) | BTCUSD: 1pt=1 (50pts=$50)\n"
-        "EURUSD: 1pt=0.00001 (50pts=$0.0005)"
-    )
-
     col1, col2, col3 = st.columns(3)
     with col1:
         preset_em = st.session_state.get('preset_entry_mode', 'close')
@@ -492,83 +501,112 @@ def show_create_bot():
         em_idx = em_options.index(preset_em) if preset_em in em_options else 0
         entry_mode = st.radio(t("entry_mode"), em_options, index=em_idx,
                               format_func=lambda x: t("entry_mode_close") if x == "close" else t("entry_mode_range"),
-                              horizontal=True, help="Close: order at candle close | Range %: LIMIT at % retracement")
+                              horizontal=True, help=t("tip_entry_mode"))
     with col2:
         preset_rr = st.session_state.get('preset_rr_ratio')
         rr_default = float(preset_rr) if preset_rr is not None else float(params.get('rr_ratio', 2.0))
-        rr_ratio = st.number_input(t("rr_ratio"), value=rr_default, min_value=0.5, max_value=10.0, step=0.5)
+        rr_ratio = st.number_input(t("rr_ratio"), value=rr_default, min_value=0.5, max_value=10.0, step=0.5,
+                                   help=t("tip_rr_ratio"))
     with col3:
         preset_buf = st.session_state.get('preset_buffer_k')
         buf_default = float(preset_buf) if preset_buf is not None else float(params.get('buffer_k', 5.0))
-        buffer_k = st.number_input(t("buffer_k"), value=buf_default, min_value=0.0, max_value=1000.0, step=1.0, help=buffer_help)
+        buffer_k = st.number_input(t("buffer_k"), value=buf_default, min_value=0.0, max_value=1000.0, step=1.0,
+                                   help=t("tip_buffer_k"))
 
-    # Range percent fields (always shown — ignored when entry_mode is "close")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        preset_ep = st.session_state.get('preset_entry_percent')
-        ep_default = float(preset_ep) if preset_ep is not None else 30.0
-        entry_percent = st.number_input(t("entry_percent"), value=ep_default,
-                                        min_value=0.0, max_value=100.0, step=5.0,
-                                        help="Range Percent only. BUY: Close - X%(body) | SELL: Close + X%(body)")
-    with col2:
-        preset_pomc = st.session_state.get('preset_pending_order_max_candles')
-        pomc_default = int(preset_pomc) if preset_pomc is not None else 3
-        pending_order_max_candles = st.number_input(t("retry_candles"), value=pomc_default,
-                                                    min_value=1, max_value=10, step=1,
-                                                    help="Range Percent only. Retry placing LIMIT if broker rejects, stop after N candles")
-    with col3:
-        preset_poec = st.session_state.get('preset_pending_order_expire_candles')
-        poec_default = int(preset_poec) if preset_poec is not None else 0
-        pending_order_expire_candles = st.number_input(t("expire_candles"), value=poec_default,
-                                                        min_value=0, max_value=50, step=1,
-                                                        help="Range Percent only. Cancel LIMIT if not filled after N candles (0=wait forever)")
-
-    # ═══════════════════════════════════════════════════════
-    # SECTION 3: Exit Rules (collapsible)
-    # ═══════════════════════════════════════════════════════
-    with st.expander(t("section_exit_rules"), expanded=False):
-        col1, col2, col3, col4 = st.columns(4)
-
+    # Range percent fields — hidden in Simple mode unless range_percent selected
+    if is_advanced or entry_mode == "range_percent":
+        col1, col2, col3 = st.columns(3)
         with col1:
-            preset_tp = st.session_state.get('preset_tp_type', 'price_based')
-            tp_options = ["price_based", "close_based"]
-            tp_idx = tp_options.index(preset_tp) if preset_tp in tp_options else 0
-            tp_type = st.radio(t("tp_type"), tp_options, index=tp_idx,
-                               format_func=lambda x: t("tp_price") if x == "price_based" else t("tp_close"),
-                               help="Price: exit when wick touches TP | Close: exit when candle closes beyond TP")
-
+            preset_ep = st.session_state.get('preset_entry_percent')
+            ep_default = float(preset_ep) if preset_ep is not None else 30.0
+            entry_percent = st.number_input(t("entry_percent"), value=ep_default,
+                                            min_value=0.0, max_value=100.0, step=5.0,
+                                            help=t("tip_entry_percent"))
         with col2:
-            preset_sl = st.session_state.get('preset_sl_type', 'price_based')
-            sl_options = ["price_based", "close_based"]
-            sl_idx = sl_options.index(preset_sl) if preset_sl in sl_options else 0
-            sl_type = st.radio(t("sl_type"), sl_options, index=sl_idx,
-                               format_func=lambda x: t("sl_close") if x == "close_based" else t("sl_price"),
-                               help="Close: exit when candle closes beyond SL | Price: exit when wick touches SL")
-
+            preset_pomc = st.session_state.get('preset_pending_order_max_candles')
+            pomc_default = int(preset_pomc) if preset_pomc is not None else 3
+            pending_order_max_candles = st.number_input(t("retry_candles"), value=pomc_default,
+                                                        min_value=1, max_value=10, step=1,
+                                                        help=t("tip_retry_candles"))
         with col3:
-            preset_mc = st.session_state.get('preset_max_candles')
-            mc_val = int(preset_mc) if preset_mc is not None and int(preset_mc) > 0 else int(params.get('max_candles', 7))
-            use_max_candles = st.checkbox(t("max_candles"), value=True if preset_mc is None else bool(preset_mc and int(preset_mc) > 0))
-            max_candles = st.number_input(t("max_candles_limit"), value=mc_val, min_value=1, max_value=50,
-                                          help="Force close after N candles. Ignored if unchecked.")
-            if not use_max_candles:
-                max_candles = 0
+            preset_poec = st.session_state.get('preset_pending_order_expire_candles')
+            poec_default = int(preset_poec) if preset_poec is not None else 0
+            pending_order_expire_candles = st.number_input(t("expire_candles"), value=poec_default,
+                                                            min_value=0, max_value=50, step=1,
+                                                            help=t("tip_expire_candles"))
+    else:
+        # Simple mode + close entry: use defaults silently
+        preset_ep = st.session_state.get('preset_entry_percent')
+        entry_percent = float(preset_ep) if preset_ep is not None else 30.0
+        preset_pomc = st.session_state.get('preset_pending_order_max_candles')
+        pending_order_max_candles = int(preset_pomc) if preset_pomc is not None else 3
+        preset_poec = st.session_state.get('preset_pending_order_expire_candles')
+        pending_order_expire_candles = int(preset_poec) if preset_poec is not None else 0
 
-        with col4:
-            preset_be = st.session_state.get('preset_move_sl_to_breakeven', False)
-            move_sl_to_breakeven = st.checkbox(t("breakeven"), value=bool(preset_be), help="Move SL when TP partially reached")
-            preset_be_pct = st.session_state.get('preset_breakeven_trigger_percent')
-            be_default = float(preset_be_pct) if preset_be_pct is not None else 50.0
-            breakeven_trigger_percent = st.number_input(t("breakeven_trigger"), value=be_default,
-                                                         min_value=10.0, max_value=90.0, step=5.0,
-                                                         help="Move SL at this % of TP. Only if Breakeven ON.")
-            preset_bt = st.session_state.get('preset_breakeven_target', 'entry')
-            bt_options = ["entry", "close"]
-            bt_idx = bt_options.index(preset_bt) if preset_bt in bt_options else 0
-            breakeven_target = st.radio(t("breakeven_sl_target"), bt_options, index=bt_idx,
-                                        format_func=lambda x: t("breakeven_entry") if x == "entry" else t("breakeven_close"),
+    # ═══════════════════════════════════════════════════════
+    # SECTION 3: Exit Rules (collapsible; hidden in Simple mode)
+    # ═══════════════════════════════════════════════════════
+    if is_advanced:
+        with st.expander(t("section_exit_rules"), expanded=False):
+            col1, col2, col3, col4 = st.columns(4)
+
+            with col1:
+                preset_tp = st.session_state.get('preset_tp_type', 'price_based')
+                tp_options = ["price_based", "close_based"]
+                tp_idx = tp_options.index(preset_tp) if preset_tp in tp_options else 0
+                tp_type = st.radio(t("tp_type"), tp_options, index=tp_idx,
+                                   format_func=lambda x: t("tp_price") if x == "price_based" else t("tp_close"),
+                                   help=t("tip_tp_price") if tp_idx == 0 else t("tip_tp_close"))
+
+            with col2:
+                preset_sl = st.session_state.get('preset_sl_type', 'price_based')
+                sl_options = ["price_based", "close_based"]
+                sl_idx = sl_options.index(preset_sl) if preset_sl in sl_options else 0
+                sl_type = st.radio(t("sl_type"), sl_options, index=sl_idx,
+                                   format_func=lambda x: t("sl_close") if x == "close_based" else t("sl_price"),
+                                   help=t("tip_sl_close") if sl_idx == 1 else t("tip_sl_price"))
+
+            with col3:
+                preset_mc = st.session_state.get('preset_max_candles')
+                mc_val = int(preset_mc) if preset_mc is not None and int(preset_mc) > 0 else int(params.get('max_candles', 7))
+                use_max_candles = st.checkbox(t("max_candles"), value=True if preset_mc is None else bool(preset_mc and int(preset_mc) > 0))
+                max_candles = st.number_input(t("max_candles_limit"), value=mc_val, min_value=1, max_value=50,
+                                              help=t("tip_max_candles"))
+                if not use_max_candles:
+                    max_candles = 0
+
+            with col4:
+                preset_be = st.session_state.get('preset_move_sl_to_breakeven', False)
+                move_sl_to_breakeven = st.checkbox(t("breakeven"), value=bool(preset_be), help=t("tip_breakeven"))
+                preset_be_pct = st.session_state.get('preset_breakeven_trigger_percent')
+                be_default = float(preset_be_pct) if preset_be_pct is not None else 50.0
+                breakeven_trigger_percent = st.number_input(t("breakeven_trigger"), value=be_default,
+                                                             min_value=10.0, max_value=90.0, step=5.0,
+                                                             help=t("tip_breakeven"))
+                preset_bt = st.session_state.get('preset_breakeven_target', 'entry')
+                bt_options = ["entry", "close"]
+                bt_idx = bt_options.index(preset_bt) if preset_bt in bt_options else 0
+                breakeven_target = st.radio(t("breakeven_sl_target"), bt_options, index=bt_idx,
+                                            format_func=lambda x: t("breakeven_entry") if x == "entry" else t("breakeven_close"),
                                         horizontal=True,
-                                        help="'Candle Close' useful for Range % mode. Only if Breakeven ON.")
+                                        help=t("tip_breakeven"))
+    else:
+        # Simple mode: use safe defaults for exit rules
+        preset_tp = st.session_state.get('preset_tp_type', 'price_based')
+        tp_type = preset_tp if preset_tp in ["price_based", "close_based"] else 'price_based'
+        preset_sl = st.session_state.get('preset_sl_type', 'price_based')
+        sl_type = preset_sl if preset_sl in ["price_based", "close_based"] else 'price_based'
+        preset_mc = st.session_state.get('preset_max_candles')
+        max_candles = int(preset_mc) if preset_mc is not None and int(preset_mc) > 0 else int(params.get('max_candles', 7))
+        move_sl_to_breakeven = bool(st.session_state.get('preset_move_sl_to_breakeven', False))
+        preset_be_pct = st.session_state.get('preset_breakeven_trigger_percent')
+        breakeven_trigger_percent = float(preset_be_pct) if preset_be_pct is not None else 50.0
+        preset_bt = st.session_state.get('preset_breakeven_target', 'entry')
+        breakeven_target = preset_bt if preset_bt in ["entry", "close"] else 'entry'
+        # Show compact summary of active exit rules
+        tp_lbl = t("tp_price") if tp_type == "price_based" else t("tp_close")
+        sl_lbl = t("sl_close") if sl_type == "close_based" else t("sl_price")
+        st.caption(f"📤 {t('section_exit_rules')}: TP={tp_lbl} | SL={sl_lbl} | Max {max_candles} candles — [switch to ⚙️ Advanced to change]")
 
     # ═══════════════════════════════════════════════════════
     # SECTION 4: Position Sizing (collapsible)
@@ -579,14 +617,15 @@ def show_create_bot():
         lm_idx = lm_options.index(preset_lm) if preset_lm in lm_options else 0
         lot_mode = st.radio(t("lot_mode"), lm_options, index=lm_idx,
                             format_func=lambda x: t("lot_fixed") if x == "fixed" else t("lot_flex"),
-                            horizontal=True)
+                            horizontal=True,
+                            help=t("tip_lot_fixed") if lm_idx == 0 else t("tip_lot_flex"))
 
         # Fixed mode
         preset_ls = st.session_state.get('preset_lot_size')
         ls_default = float(preset_ls) if preset_ls is not None else float(params.get('lot_size', 0.01))
         lot_size = st.number_input(t("lot_size"), value=ls_default,
                                     min_value=0.01, max_value=10.0, step=0.01, format="%.2f",
-                                    help="Fixed mode only.")
+                                    help=t("tip_lot_fixed"))
 
         # Flex mode fields (always shown)
         col1, col2, col3 = st.columns(3)
@@ -595,35 +634,63 @@ def show_create_bot():
             se_default = float(preset_se) if preset_se is not None else 1000.0
             starting_equity = st.number_input(t("starting_equity"), value=se_default,
                                                min_value=100.0, max_value=1000000.0, step=100.0,
-                                               help="Flex mode only.")
+                                               help=t("tip_starting_equity"))
         with col2:
             preset_rm = st.session_state.get('preset_risk_mode', 'percent')
             rm_options = ["percent", "fixed_amount"]
             rm_idx = rm_options.index(preset_rm) if preset_rm in rm_options else 0
             risk_mode = st.radio(t("risk_mode"), rm_options, index=rm_idx,
                                  format_func=lambda x: t("risk_pct_label") if x == "percent" else t("risk_fixed_label"),
-                                 horizontal=True, help="Flex mode only.")
+                                 horizontal=True, help=t("tip_lot_flex"))
         with col3:
             preset_rp = st.session_state.get('preset_risk_percent')
             rp_default = float(preset_rp) if preset_rp is not None else 0.5
             risk_percent = st.number_input(t("risk_per_trade_pct"), value=rp_default,
                                            min_value=0.1, max_value=5.0, step=0.1, format="%.1f",
-                                           help="Flex + % mode.")
+                                           help=t("tip_risk_percent"))
             preset_ra = st.session_state.get('preset_risk_amount')
             ra_default = float(preset_ra) if preset_ra is not None else 5.0
             risk_amount = st.number_input(t("risk_per_trade_usd"), value=ra_default,
                                           min_value=1.0, max_value=1000.0, step=1.0, format="%.2f",
-                                          help="Flex + Fixed $ mode.")
+                                          help=t("tip_risk_amount"))
 
         preset_rc = st.session_state.get('preset_risk_compounding')
         rc_default = bool(preset_rc) if preset_rc is not None else True
         risk_compounding = st.checkbox(t("compounding"), value=rc_default,
-                                       help="Flex only. ON: risk % of current equity | OFF: of starting equity")
+                                       help=t("tip_compounding"))
+
+    # ═══════════════════════════════════════════════════════
+    # CONFIG SUMMARY CARD — preview before start
+    # ═══════════════════════════════════════════════════════
+    st.divider()
+    with st.container(border=True):
+        st.markdown(f"**{t('config_preview')}**")
+        st.caption(t("confirm_start"))
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.markdown(f"**{t('preview_symbol')}:** `{symbol}`")
+            st.markdown(f"**{t('strategy')}:** {selected_strategy_name}")
+            _et_label = entry_times[0] if entry_times else (window_start or "?")
+            st.markdown(f"**{t('entry_time')}:** {_et_label}")
+        with c2:
+            _em_lbl = t("entry_mode_close") if entry_mode == "close" else f"{t('entry_mode_range')} {entry_percent:.0f}%"
+            st.markdown(f"**{t('entry_mode')}:** {_em_lbl}")
+            st.markdown(f"**{t('rr_ratio')}:** {rr_ratio}:1")
+            st.markdown(f"**{t('buffer_k')}:** {buffer_k:.0f} pts")
+        with c3:
+            _tp_lbl = t("tp_price") if tp_type == "price_based" else t("tp_close")
+            _sl_lbl = t("sl_close") if sl_type == "close_based" else t("sl_price")
+            st.markdown(f"**TP:** {_tp_lbl}  |  **SL:** {_sl_lbl}")
+            if lot_mode == "fixed":
+                st.markdown(f"**{t('lot_size')}:** {lot_size:.2f} lot")
+            else:
+                _risk_lbl = f"{risk_percent:.1f}% of ${starting_equity:,.0f}" if risk_mode == "percent" else f"${risk_amount:.2f} fixed"
+                st.markdown(f"**Risk:** {_risk_lbl}")
+            st.markdown(f"**Max Candles:** {max_candles if max_candles > 0 else '∞'}")
 
     # ═══════════════════════════════════════════════════════
     # ACTION BUTTONS
     # ═══════════════════════════════════════════════════════
-    st.divider()
     col1, col2, col3 = st.columns([1, 1, 1])
 
     with col1:

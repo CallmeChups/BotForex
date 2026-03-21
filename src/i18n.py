@@ -327,6 +327,99 @@ TRANSLATIONS = {
     "logged_as_admin":      {"en": "Logged in as Admin: {name}", "vi": "Đăng nhập với tư cách Admin: {name}"},
     "logged_as_user":       {"en": "Logged in as: {name}", "vi": "Đăng nhập với tư cách: {name}"},
 
+    # ── UI Mode (Simple / Advanced) ──
+    "ui_mode_label":        {"en": "Interface Mode",        "vi": "Giao diện"},
+    "ui_mode_simple":       {"en": "🟢 Simple",             "vi": "🟢 Đơn giản"},
+    "ui_mode_advanced":     {"en": "⚙️ Advanced",           "vi": "⚙️ Nâng cao"},
+    "simple_mode_hint":     {"en": "Advanced settings hidden. Switch to ⚙️ Advanced to see all options.", "vi": "Đang ẩn cài đặt nâng cao. Chuyển sang ⚙️ Nâng cao để xem tất cả."},
+
+    # ── Config Summary Card ──
+    "config_preview":       {"en": "📋 Configuration Preview",  "vi": "📋 Xem lại cấu hình"},
+    "confirm_start":        {"en": "Review before starting:",    "vi": "Kiểm tra trước khi khởi động:"},
+    "preview_symbol":       {"en": "Symbol",                     "vi": "Cặp tiền"},
+    "preview_strategy":     {"en": "Strategy",                   "vi": "Chiến lược"},
+    "preview_entry":        {"en": "Entry",                      "vi": "Vào lệnh"},
+    "preview_exit":         {"en": "Exit",                       "vi": "Thoát lệnh"},
+    "preview_sizing":       {"en": "Position",                   "vi": "Khối lượng"},
+
+    # ── Tooltips: Trade Setup ──
+    "tip_rr_ratio":         {
+        "en": "Risk:Reward ratio.\nRR=2 → TP is 2× the SL distance.\nHigher = bigger profit target, harder to reach.\nRecommended: 1.5–3.0",
+        "vi": "Tỷ lệ rủi ro:lợi nhuận.\nRR=2 → TP gấp 2 lần khoảng cách SL.\nCao hơn = lợi nhuận lớn hơn nhưng khó đạt.\nKhuyến nghị: 1.5–3.0"
+    },
+    "tip_buffer_k":         {
+        "en": "Extra points beyond candle wick added to SL (protection buffer).\nXAUUSD: 1pt = $0.01 → 5pts = $0.05 buffer\nForex: 1pt = 0.00001\nBTCUSD: 1pt = $1",
+        "vi": "Điểm thêm vào ngoài đuôi nến cho SL (vùng đệm bảo vệ).\nXAUUSD: 1pt = $0.01 → 5pts = $0.05 buffer\nForex: 1pt = 0.00001"
+    },
+    "tip_entry_mode":       {
+        "en": "Close: enter at candle close price (instant, no waiting).\nRange %: place LIMIT order at X% retracement into candle body (waits for pullback).",
+        "vi": "Đóng cửa: vào lệnh tại giá đóng cửa (ngay lập tức, không chờ).\n% Biên độ: đặt lệnh LIMIT tại X% vào thân nến (chờ pullback)."
+    },
+    "tip_entry_percent":    {
+        "en": "How deep into the candle body to place the LIMIT entry.\n0% = at close price (no pullback)\n50% = halfway into body\n100% = at open price\nRecommended: 20%–50%",
+        "vi": "Độ sâu vào thân nến để đặt lệnh LIMIT.\n0% = tại giá đóng (không pullback)\n50% = giữa thân nến\n100% = tại giá mở\nKhuyến nghị: 20%–50%"
+    },
+    "tip_expire_candles":   {
+        "en": "Cancel LIMIT order if not filled after this many candles.\n0 = wait forever until filled or SL hit.\nM5: 5 candles = 25 minutes",
+        "vi": "Hủy lệnh LIMIT nếu chưa khớp sau số nến này.\n0 = chờ mãi đến khi khớp hoặc chạm SL.\nM5: 5 nến = 25 phút"
+    },
+    "tip_retry_candles":    {
+        "en": "If broker rejects LIMIT placement, retry on next candle. Stop after N attempts.\nUseful when broker has strict stop-level restrictions.",
+        "vi": "Nếu broker từ chối đặt lệnh LIMIT, thử lại lần sau. Dừng sau N lần.\nHữu ích khi broker có giới hạn stop-level nghiêm ngặt."
+    },
+
+    # ── Tooltips: Exit Rules ──
+    "tip_tp_price":         {
+        "en": "TP triggers when price WICK touches TP level (even for 1 tick).\nMore aggressive — exits faster but may miss continuation.",
+        "vi": "TP kích hoạt khi bóng nến chạm mức TP (dù chỉ 1 tick).\nTích cực hơn — thoát nhanh hơn."
+    },
+    "tip_tp_close":         {
+        "en": "TP triggers only when candle CLOSES beyond TP.\nMore conservative — avoids false breakouts, but gives up some profit.",
+        "vi": "TP kích hoạt khi nến đóng cửa vượt qua TP.\nBảo thủ hơn — tránh breakout giả, nhưng có thể mất một phần lợi nhuận."
+    },
+    "tip_sl_price":         {
+        "en": "SL triggers when price WICK touches SL level.\nStrict — protects capital but can be stopped by short spikes.",
+        "vi": "SL kích hoạt khi bóng nến chạm mức SL.\nNghiêm ngặt — bảo vệ vốn nhưng có thể bị dừng bởi spike ngắn."
+    },
+    "tip_sl_close":         {
+        "en": "SL triggers only when candle CLOSES beyond SL.\nMore forgiving — survives temporary spikes, but larger drawdown if trend reverses.",
+        "vi": "SL kích hoạt khi nến đóng cửa vượt SL.\nKhoan dung hơn — sống sót qua spike tạm thời, nhưng drawdown lớn hơn nếu đảo chiều."
+    },
+    "tip_max_candles":      {
+        "en": "Force-close trade after N candles if neither TP nor SL is hit.\nPrevents trades from holding too long.\nM5 timeframe: 7 candles = 35 minutes",
+        "vi": "Đóng lệnh bắt buộc sau N nến nếu chưa đạt TP/SL.\nTránh giữ lệnh quá lâu.\nKhung M5: 7 nến = 35 phút"
+    },
+    "tip_breakeven":        {
+        "en": "Move SL to entry price when trade reaches X% towards TP.\nExample: 50% trigger → SL moves to entry when halfway to TP.\nEliminates risk of a loss after a winning trade.",
+        "vi": "Dời SL về giá vào lệnh khi lệnh đạt X% đường đến TP.\nVí dụ: kích hoạt 50% → SL về entry khi đi được nửa đường đến TP.\nLoại bỏ rủi ro thua lỗ sau một lệnh đang thắng."
+    },
+
+    # ── Tooltips: Position Sizing ──
+    "tip_lot_fixed":        {
+        "en": "Trade the same lot size for every trade, regardless of account balance.\nSimple but doesn't scale with account growth.",
+        "vi": "Giao dịch cùng khối lượng lot cho mọi lệnh, bất kể số dư.\nĐơn giản nhưng không tự động tăng theo tài khoản."
+    },
+    "tip_lot_flex":         {
+        "en": "Automatically calculate lot size to risk a % of your equity per trade.\nSmarter risk management — lot grows/shrinks with your account.",
+        "vi": "Tự động tính khối lượng để rủi ro một % vốn mỗi lệnh.\nQuản lý rủi ro thông minh hơn — lot tự tăng/giảm theo tài khoản."
+    },
+    "tip_starting_equity":  {
+        "en": "Account balance used to calculate lot size.\nCompounding OFF: always uses this fixed value.\nCompounding ON: uses real-time account equity.",
+        "vi": "Số dư tài khoản dùng để tính khối lượng.\nTắt lãi kép: luôn dùng giá trị này.\nBật lãi kép: dùng vốn thực tế hiện tại."
+    },
+    "tip_compounding":      {
+        "en": "ON: Risk % of current equity (lot grows as account grows — compounding effect).\nOFF: Risk % of starting equity (fixed dollar risk per trade).\nExample with 1%, $1000: ON→lot varies | OFF→always risk $10",
+        "vi": "BẬT: Rủi ro % vốn hiện tại (lot tăng khi tài khoản tăng — hiệu ứng lãi kép).\nTẮT: Rủi ro % vốn ban đầu (số tiền rủi ro cố định mỗi lệnh).\nVí dụ 1%, $1000: BẬT→lot thay đổi | TẮT→luôn rủi ro $10"
+    },
+    "tip_risk_percent":     {
+        "en": "% of equity risked per trade (used to calculate lot size).\n1% on $1000 = risk $10/trade\n0.5% = conservative | 1% = standard | 2%+ = aggressive\nRecommended for beginners: 0.5%–1%",
+        "vi": "% vốn rủi ro mỗi lệnh (dùng để tính khối lượng).\n1% trên $1000 = rủi ro $10/lệnh\n0.5% = thận trọng | 1% = tiêu chuẩn | 2%+ = mạo hiểm\nKhuyến nghị cho người mới: 0.5%–1%"
+    },
+    "tip_risk_amount":      {
+        "en": "Fixed dollar amount risked per trade regardless of account size.\nExample: $10 risk → always risk $10, lot size calculated automatically.",
+        "vi": "Số tiền rủi ro cố định mỗi lệnh, bất kể kích cỡ tài khoản.\nVí dụ: rủi ro $10 → luôn rủi ro $10, khối lượng được tính tự động."
+    },
+
     # ── Backtest page ──
     "page_backtest":        {"en": "Backtest Strategy",     "vi": "Kiểm thử chiến lược"},
     "fetching_data":        {"en": "Fetching historical data...", "vi": "Đang tải dữ liệu lịch sử..."},
