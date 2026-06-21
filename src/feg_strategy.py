@@ -8,7 +8,7 @@ TP/SL neo vào candle2 (giống master_candle): SL = candle2 high/low ± buffer_
 TP = entry ± risk × rr_ratio.
 """
 
-from src.utils import get_pip_value
+from src.utils import get_pip_value, compute_trade_levels
 
 
 def detect_feg_signal(
@@ -48,3 +48,41 @@ def detect_feg_signal(
             return "BUY"
 
     return None
+
+
+def analyze_feg(
+    symbol: str,
+    candle1: dict,
+    candle2: dict,
+    ema2: float,
+    rr_ratio: float = 2.0,
+    buffer_k: float = 5.0,
+    lot_size: float = 0.01,
+    entry_mode: str = "close",
+    entry_percent: float = 0.0,
+    ema_distance_enabled: bool = False,
+    ema_distance_pips: float = 0.0,
+) -> dict | None:
+    """Dựng signal đầy đủ (entry/SL/TP) từ pattern FEG. Trả None nếu không có tín hiệu."""
+    pip_value = get_pip_value(symbol)
+    direction = detect_feg_signal(
+        candle1, candle2, ema2, pip_value, ema_distance_enabled, ema_distance_pips,
+    )
+    if direction is None:
+        return None
+
+    levels = compute_trade_levels(
+        direction, candle2, entry_mode, entry_percent, buffer_k, rr_ratio, pip_value,
+    )
+
+    return {
+        "symbol": symbol,
+        "direction": direction,
+        "entry_price": levels["entry_price"],
+        "stop_loss": levels["stop_loss"],
+        "take_profit": levels["take_profit"],
+        "sl_pips": levels["sl_pips"],
+        "lot_size": lot_size,
+        "candle1": candle1,
+        "candle2": candle2,
+    }
