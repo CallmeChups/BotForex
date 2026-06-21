@@ -196,6 +196,7 @@ def show_create_bot():
 
             # Load strategy parameters as defaults
             params = get_strategy_parameters(selected_strategy)
+            is_pattern = params.get('entry_type', 'time') == 'pattern'
 
             symbol = st.text_input(
                 "Symbol*",
@@ -247,10 +248,27 @@ def show_create_bot():
                 help="How often to check for signals"
             )
 
+        if is_pattern:
+            st.markdown("**EMA Filter (FEG)**")
+            ec1, ec2, ec3 = st.columns(3)
+            with ec1:
+                ema_period = st.number_input("EMA Period", value=int(params.get('ema_period', 21)), min_value=2, max_value=200)
+            with ec2:
+                ema_distance_enabled = st.checkbox("Xét khoảng cách EMA21", value=bool(params.get('ema_distance_enabled', False)))
+            with ec3:
+                ema_distance_pips = st.number_input("Khoảng cách (pips)", value=float(params.get('ema_distance_pips', 0) or 0), min_value=0.0, step=1.0, disabled=not ema_distance_enabled)
+        else:
+            ema_period = None
+            ema_distance_enabled = False
+            ema_distance_pips = 0.0
+
         # Show strategy info
         st.markdown("---")
         st.markdown(f"**Strategy:** {selected_strategy_name}")
-        st.caption(f"Entry: {params.get('entry_time', 'N/A')} ({params.get('timeframe', 'N/A')})")
+        if is_pattern:
+            st.caption(f"Pattern: {params.get('pattern', 'feg')} | EMA{params.get('ema_period', 21)} ({params.get('timeframe', 'M5')})")
+        else:
+            st.caption(f"Entry: {params.get('entry_time', 'N/A')} ({params.get('timeframe', 'N/A')})")
 
         submitted = st.form_submit_button("Start Bot", type="primary", use_container_width=True)
 
@@ -267,7 +285,10 @@ def show_create_bot():
                     sl_pips=sl_pips,
                     rr_ratio=rr_ratio,
                     max_candles=max_candles,
-                    interval=interval
+                    interval=interval,
+                    ema_period=ema_period,
+                    ema_distance_enabled=ema_distance_enabled,
+                    ema_distance_pips=ema_distance_pips,
                 )
 
                 if success:

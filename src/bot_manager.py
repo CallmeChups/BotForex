@@ -67,6 +67,35 @@ def is_process_running(pid: int) -> bool:
             return False
 
 
+def build_bot_command(
+    python_exe, script_path, strategy, symbol, user, test, interval,
+    lot_size=None, sl_pips=None, rr_ratio=None, max_candles=None,
+    ema_period=None, ema_distance_enabled=False, ema_distance_pips=0.0,
+):
+    """Build command list to run bot_runner (separated for testability)."""
+    cmd = [
+        python_exe, script_path,
+        "--strategy", strategy,
+        "--symbol", symbol,
+        "--user", user,
+        "--test", "1" if test else "0",
+        "--interval", str(interval),
+        "--ema_distance_enabled", "1" if ema_distance_enabled else "0",
+        "--ema_distance_pips", str(ema_distance_pips),
+    ]
+    if lot_size:
+        cmd.extend(["--lot_size", str(lot_size)])
+    if sl_pips:
+        cmd.extend(["--sl_pips", str(sl_pips)])
+    if rr_ratio:
+        cmd.extend(["--rr_ratio", str(rr_ratio)])
+    if max_candles:
+        cmd.extend(["--max_candles", str(max_candles)])
+    if ema_period:
+        cmd.extend(["--ema_period", str(ema_period)])
+    return cmd
+
+
 def start_bot(
     strategy: str,
     symbol: str,
@@ -76,7 +105,10 @@ def start_bot(
     sl_pips: float = None,
     rr_ratio: float = None,
     max_candles: int = None,
-    interval: int = 60
+    interval: int = 60,
+    ema_period: int = None,
+    ema_distance_enabled: bool = False,
+    ema_distance_pips: float = 0.0,
 ) -> tuple:
     """
     Start a new bot process
@@ -96,25 +128,11 @@ def start_bot(
     # Build command
     python_exe = sys.executable
     script_path = os.path.abspath(BOT_SCRIPT)
-
-    cmd = [
-        python_exe,
-        script_path,
-        "--strategy", strategy,
-        "--symbol", symbol,
-        "--user", user,
-        "--test", "1" if test else "0",
-        "--interval", str(interval)
-    ]
-
-    if lot_size:
-        cmd.extend(["--lot_size", str(lot_size)])
-    if sl_pips:
-        cmd.extend(["--sl_pips", str(sl_pips)])
-    if rr_ratio:
-        cmd.extend(["--rr_ratio", str(rr_ratio)])
-    if max_candles:
-        cmd.extend(["--max_candles", str(max_candles)])
+    cmd = build_bot_command(
+        python_exe, script_path, strategy, symbol, user, test, interval,
+        lot_size, sl_pips, rr_ratio, max_candles,
+        ema_period, ema_distance_enabled, ema_distance_pips,
+    )
 
     try:
         # Start process
@@ -150,6 +168,9 @@ def start_bot(
             'rr_ratio': rr_ratio,
             'max_candles': max_candles,
             'interval': interval,
+            'ema_period': ema_period,
+            'ema_distance_enabled': ema_distance_enabled,
+            'ema_distance_pips': ema_distance_pips,
             'started_at': datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M:%S'),
             'command': ' '.join(cmd)
         }
@@ -297,7 +318,10 @@ def restart_bot(pid: int) -> tuple:
         sl_pips=bot.get('sl_pips'),
         rr_ratio=bot.get('rr_ratio'),
         max_candles=bot.get('max_candles'),
-        interval=bot.get('interval', 60)
+        interval=bot.get('interval', 60),
+        ema_period=bot.get('ema_period'),
+        ema_distance_enabled=bot.get('ema_distance_enabled', False),
+        ema_distance_pips=bot.get('ema_distance_pips', 0.0),
     )
 
 
