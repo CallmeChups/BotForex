@@ -170,6 +170,9 @@ def history_to_dataframe(history: list) -> pd.DataFrame:
             'Entry %': config.get('entry_percent', ''),
             'Max Candles': config.get('max_candles', '') or 'Off',
             'Buffer K': config.get('buffer_k', ''),
+            'Entry Type': config.get('entry_type', 'time'),
+            'EMA Period': config.get('ema_period', ''),
+            'EMA Dist': (f"{config.get('ema_dist_pips', 0)}p" if config.get('ema_dist_enabled') else 'Off'),
             'TP Type': config.get('tp_type', ''),
             'SL Type': config.get('sl_type', ''),
             'Fixed Lot': config.get('fixed_lot', ''),
@@ -211,7 +214,7 @@ HISTORY_COLUMNS = {
 
     # Config columns (optional)
     'config': [
-        'Timeframe', 'Entry Time', 'Lot Mode', 'RR Ratio', 'Date Range',
+        'Timeframe', 'Entry Time', 'Entry Type', 'EMA Period', 'EMA Dist', 'Lot Mode', 'RR Ratio', 'Date Range',
         'Entry Mode', 'Entry %', 'Max Candles', 'Buffer K',
         'TP Type', 'SL Type', 'Fixed Lot', 'Start Equity',
         'Risk Mode', 'Risk %', 'Risk $'

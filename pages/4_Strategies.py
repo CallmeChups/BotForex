@@ -259,9 +259,17 @@ def show_view_edit():
 
         with col2:
             entry = strategy.get('entry', {})
+            entry_type = entry.get('type', 'time')
             st.markdown(f"**Timeframe:** {entry.get('timeframe')}")
-            st.markdown(f"**Entry Time:** {entry.get('time')}")
-            st.markdown(f"**Timezone:** {entry.get('timezone')}")
+            st.markdown(f"**Entry Type:** {entry_type}")
+            if entry_type == 'pattern':
+                st.markdown(f"**Pattern:** {entry.get('pattern', '')}")
+                st.markdown(f"**EMA Period:** {entry.get('ema_period', 21)}")
+                ema_d = entry.get('ema_distance', {})
+                st.markdown(f"**EMA Distance:** {'On ' + str(ema_d.get('pips', 0)) + ' pips' if ema_d.get('enabled') else 'Off'}")
+            else:
+                st.markdown(f"**Entry Time:** {entry.get('time')}")
+                st.markdown(f"**Timezone:** {entry.get('timezone')}")
 
         st.markdown("---")
         st.markdown("**Description:**")
