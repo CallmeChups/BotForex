@@ -300,7 +300,10 @@ def place_order(
     volume: float,
     sl: float = None,
     tp: float = None,
-    credentials: dict = None
+    credentials: dict = None,
+    test: bool = False,
+    magic: int = 123456,
+    comment: str = "Order",
 ) -> tuple:
     """
     Place a market order
@@ -312,10 +315,16 @@ def place_order(
         sl: Stop loss price (optional)
         tp: Take profit price (optional)
         credentials: MT5 credentials dict
+        test: If True, simulate without touching MT5
+        magic: Magic number for the order
+        comment: Comment for the order
 
     Returns:
         (success, message, ticket)
     """
+    if test:
+        return True, f"[TEST] {direction} {symbol} vol={volume} sl={sl} tp={tp} simulated", None
+
     mt5, error = get_mt5_connection(credentials)
     if error:
         return False, error, None
@@ -356,8 +365,8 @@ def place_order(
             "type": order_type,
             "price": price,
             "deviation": 20,
-            "magic": 123456,
-            "comment": "Manual_Order",
+            "magic": magic,
+            "comment": comment,
             "type_time": mt5_module.ORDER_TIME_GTC,
             "type_filling": mt5_module.ORDER_FILLING_IOC,
         }
