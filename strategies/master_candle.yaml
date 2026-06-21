@@ -12,6 +12,7 @@ enabled: true
 
 # Entry configuration
 entry:
+  type: time
   timeframe: M5
   time: "21:05"
   timezone: Asia/Ho_Chi_Minh
