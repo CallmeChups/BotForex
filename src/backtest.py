@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import pandas as pd
 
-from src.utils import get_pip_value, check_exit
+from src.utils import get_pip_value, check_exit, compute_trade_levels
 
 TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
 
@@ -171,6 +171,83 @@ def fetch_historical_data(symbol: str, start_date: datetime, end_date: datetime,
         return None, str(e)
 
 
+def _compute_lot_size(lot_mode, current_equity, risk_mode, risk_percent, risk_amount, sl_pips, symbol, fixed_lot):
+    """Tính lot theo mode fixed/flex (dùng chung cho mọi entry_type)."""
+    if lot_mode == "flex":
+        if risk_mode == "fixed_amount":
+            return calculate_flex_lot_size(
+                equity=current_equity, risk_percent=0, sl_pips=sl_pips,
+                symbol=symbol, risk_amount=risk_amount,
+            )
+        return calculate_flex_lot_size(
+            equity=current_equity, risk_percent=risk_percent, sl_pips=sl_pips, symbol=symbol,
+        )
+    return fixed_lot
+
+
+def _simulate_exit(df, entry_pos, direction, tp, sl, max_candles, tp_type, sl_type):
+    """
+    Mô phỏng exit từ vị trí entry_pos (integer position). Trả:
+        (exit_type, exit_price, exit_time, candles_held, exit_pos)
+    exit_type None khi hết data mà không có TP/SL và max_candles=0.
+    """
+    if max_candles > 0:
+        next_candles = df.iloc[entry_pos + 1: entry_pos + 1 + max_candles]
+    else:
+        next_candles = df.iloc[entry_pos + 1:]
+
+    exit_type = exit_price = exit_time = None
+    candles_held = 0
+    exit_pos = entry_pos
+
+    for offset, (_, row) in enumerate(next_candles.iterrows(), start=1):
+        candles_held += 1
+        exit_pos = entry_pos + offset
+        candle = {"high": row["high"], "low": row["low"], "close": row["close"]}
+        exit_type, exit_price = check_exit(direction, candle, tp, sl, tp_type, sl_type)
+        if exit_type:
+            exit_time = row["time"]
+            break
+
+    if not exit_type and len(next_candles) > 0 and max_candles > 0:
+        exit_type = "TIME"
+        last = next_candles.iloc[-1]
+        exit_price = last["close"]
+        exit_time = last["time"]
+        candles_held = len(next_candles)
+        exit_pos = entry_pos + len(next_candles)
+
+    return exit_type, exit_price, exit_time, candles_held, exit_pos
+
+
+def _make_trade(entry_time, direction, levels, lot, exit_type, exit_price, exit_time, candles_held, symbol):
+    """Dựng dict trade + tính pnl pips/usd."""
+    pip_value = get_pip_value(symbol)
+    entry = levels["entry_price"]
+    if direction == "BUY":
+        pnl_pips = (exit_price - entry) / pip_value
+    else:
+        pnl_pips = (entry - exit_price) / pip_value
+    pnl_usd = lot * pnl_pips * get_pip_value_per_lot(symbol)
+    trade = {
+        "date": entry_time.strftime("%Y-%m-%d"),
+        "time": entry_time.strftime("%H:%M"),
+        "direction": direction,
+        "entry": entry,
+        "sl": levels["stop_loss"],
+        "tp": levels["take_profit"],
+        "sl_pips": round(levels["sl_pips"], 1),
+        "lot": lot,
+        "exit_type": exit_type,
+        "exit_price": exit_price,
+        "exit_time": exit_time.strftime("%H:%M") if exit_time else "",
+        "candles": candles_held,
+        "pnl_pips": round(pnl_pips, 1),
+        "pnl_usd": round(pnl_usd, 2),
+    }
+    return trade, pnl_pips, pnl_usd
+
+
 def run_backtest(
     df: pd.DataFrame,
     symbol: str,
@@ -242,151 +319,35 @@ def run_backtest(
         entry_time = entry_row['time']
         o, h, l, c = entry_row['open'], entry_row['high'], entry_row['low'], entry_row['close']
 
-        # Determine direction and calculate entry/SL/TP
-        # SL price = Low - buffer_k (BUY) or High + buffer_k (SELL)
-        candle_body = abs(c - o)
-
+        candle = {"open": o, "high": h, "low": l, "close": c}
         if c > o:
             direction = "BUY"
-
-            # Calculate entry price based on entry_mode
-            if entry_mode == "range_percent":
-                # BUY: Close - X% of body (Close - Open)
-                entry_price = c - (entry_percent / 100) * candle_body
-            else:
-                entry_price = c
-
-            # buffer_k * pip_value = price offset
-            buffer_offset = buffer_k * pip_value
-
-            # SL is placed buffer_offset below the Low
-            stop_loss = l - buffer_offset
-
-            # SL pips from entry to SL
-            candle_sl_pips = (entry_price - stop_loss) / pip_value
-
-            risk = entry_price - stop_loss
-            take_profit = entry_price + (risk * rr_ratio)
-
         elif c < o:
             direction = "SELL"
-
-            # Calculate entry price based on entry_mode
-            if entry_mode == "range_percent":
-                # SELL: Close + X% of body (Open - Close)
-                entry_price = c + (entry_percent / 100) * candle_body
-            else:
-                entry_price = c
-
-            # buffer_k * pip_value = price offset
-            buffer_offset = buffer_k * pip_value
-
-            # SL is placed buffer_offset above the High
-            stop_loss = h + buffer_offset
-
-            # SL pips from entry to SL
-            candle_sl_pips = (stop_loss - entry_price) / pip_value
-
-            risk = stop_loss - entry_price
-            take_profit = entry_price - (risk * rr_ratio)
         else:
-            # Doji - skip
-            continue
+            continue  # Doji
 
-        # Calculate lot size
-        if lot_mode == "flex":
-            if risk_mode == "fixed_amount":
-                # Fixed dollar amount risk - constant per trade
-                lot_size = calculate_flex_lot_size(
-                    equity=current_equity,
-                    risk_percent=0,
-                    sl_pips=candle_sl_pips,
-                    symbol=symbol,
-                    risk_amount=risk_amount
-                )
-            else:
-                # Percentage risk - changes with equity
-                lot_size = calculate_flex_lot_size(
-                    equity=current_equity,
-                    risk_percent=risk_percent,
-                    sl_pips=candle_sl_pips,
-                    symbol=symbol
-                )
-        else:
-            lot_size = fixed_lot
+        levels = compute_trade_levels(direction, candle, entry_mode, entry_percent, buffer_k, rr_ratio, pip_value)
 
-        # Get next candles for exit check
-        entry_idx = df.index.get_loc(idx)
+        lot_size = _compute_lot_size(
+            lot_mode, current_equity, risk_mode, risk_percent, risk_amount,
+            levels["sl_pips"], symbol, fixed_lot,
+        )
 
-        # max_candles=0 means no limit - get all remaining candles
-        if max_candles > 0:
-            next_candles = df.iloc[entry_idx + 1: entry_idx + 1 + max_candles]
-        else:
-            next_candles = df.iloc[entry_idx + 1:]
-
-        exit_type = None
-        exit_price = None
-        exit_time = None
-        candles_held = 0
-
-        for candle_idx, candle_row in next_candles.iterrows():
-            candles_held += 1
-            candle = {
-                "high": candle_row['high'],
-                "low": candle_row['low'],
-                "close": candle_row['close']
-            }
-
-            exit_type, exit_price = check_exit(direction, candle, take_profit, stop_loss, tp_type, sl_type)
-
-            if exit_type:
-                exit_time = candle_row['time']
-                break
-
-        # Time exit if no TP/SL hit (only when max_candles is enabled)
-        if not exit_type and len(next_candles) > 0 and max_candles > 0:
-            exit_type = "TIME"
-            last_candle = next_candles.iloc[-1]
-            exit_price = last_candle['close']
-            exit_time = last_candle['time']
-            candles_held = len(next_candles)
-
-        # Skip if no exit data (end of dataset or no TP/SL hit when max_candles disabled)
+        entry_pos = df.index.get_loc(idx)
+        exit_type, exit_price, exit_time, candles_held, _ = _simulate_exit(
+            df, entry_pos, direction, levels["take_profit"], levels["stop_loss"],
+            max_candles, tp_type, sl_type,
+        )
         if not exit_type:
             continue
 
-        # Calculate P&L in pips
-        if direction == "BUY":
-            pnl_pips = (exit_price - entry_price) / pip_value
-        else:
-            pnl_pips = (entry_price - exit_price) / pip_value
-
-        # Calculate P&L in USD
-        # pnl_usd = lot_size * pnl_pips * pip_value_per_lot
-        pip_value_per_lot = get_pip_value_per_lot(symbol)
-        pnl_usd = lot_size * pnl_pips * pip_value_per_lot
-
-        # Update equity
+        trade, pnl_pips, pnl_usd = _make_trade(
+            entry_time, direction, levels, lot_size, exit_type, exit_price,
+            exit_time, candles_held, symbol,
+        )
         current_equity += pnl_usd
-
-        trades.append({
-            "date": entry_time.strftime("%Y-%m-%d"),
-            "time": entry_time.strftime("%H:%M"),
-            "direction": direction,
-            "entry": entry_price,
-            "sl": stop_loss,
-            "tp": take_profit,
-            "sl_pips": round(candle_sl_pips, 1),
-            "lot": lot_size,
-            "exit_type": exit_type,
-            "exit_price": exit_price,
-            "exit_time": exit_time.strftime("%H:%M") if exit_time else "",
-            "candles": candles_held,
-            "pnl_pips": round(pnl_pips, 1),
-            "pnl_usd": round(pnl_usd, 2)
-        })
-
-        # Update equity curves
+        trades.append(trade)
         equity_curve_pips.append(equity_curve_pips[-1] + pnl_pips)
         equity_curve_usd.append(current_equity)
 
