@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 from src.utils import get_pip_value, check_exit, compute_trade_levels
+from src.feg_strategy import detect_feg_signal
 
 TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
 
@@ -266,7 +267,11 @@ def run_backtest(
     tp_type: str = "price_based",
     sl_type: str = "close_based",
     entry_mode: str = "close",
-    entry_percent: float = 0.0
+    entry_percent: float = 0.0,
+    entry_type: str = "time",
+    ema_period: int = 21,
+    ema_distance_enabled: bool = False,
+    ema_distance_pips: float = 0.0,
 ) -> dict:
     """
     Run backtest on historical data
@@ -298,6 +303,16 @@ def run_backtest(
     Returns:
         dict with results
     """
+    if entry_type == "pattern":
+        return _run_feg_backtest(
+            df=df, symbol=symbol, rr_ratio=rr_ratio, max_candles=max_candles,
+            lot_mode=lot_mode, fixed_lot=fixed_lot, risk_percent=risk_percent,
+            risk_amount=risk_amount, risk_mode=risk_mode, buffer_k=buffer_k,
+            starting_equity=starting_equity, tp_type=tp_type, sl_type=sl_type,
+            entry_mode=entry_mode, entry_percent=entry_percent, ema_period=ema_period,
+            ema_distance_enabled=ema_distance_enabled, ema_distance_pips=ema_distance_pips,
+        )
+
     pip_value = get_pip_value(symbol)
 
     trades = []
@@ -361,6 +376,70 @@ def run_backtest(
     stats["starting_equity"] = starting_equity
     stats["ohlc_data"] = df  # Include OHLC data for interactive charts
 
+    return stats
+
+
+def _run_feg_backtest(
+    df, symbol, rr_ratio, max_candles, lot_mode, fixed_lot, risk_percent,
+    risk_amount, risk_mode, buffer_k, starting_equity, tp_type, sl_type,
+    entry_mode, entry_percent, ema_period, ema_distance_enabled, ema_distance_pips,
+):
+    """Backtest FEG: quét tuần tự, 1 lệnh tại 1 thời điểm."""
+    pip_value = get_pip_value(symbol)
+    df = df.reset_index(drop=True)
+    ema = df["close"].ewm(span=ema_period, adjust=False).mean().tolist()
+
+    trades = []
+    equity_curve_pips = [0]
+    equity_curve_usd = [starting_equity]
+    current_equity = starting_equity
+
+    n = len(df)
+    i = max(1, ema_period)  # warmup: bỏ vùng EMA chưa ổn định
+    while i < n:
+        c1 = {"open": df.at[i - 1, "open"], "high": df.at[i - 1, "high"],
+              "low": df.at[i - 1, "low"], "close": df.at[i - 1, "close"]}
+        c2 = {"open": df.at[i, "open"], "high": df.at[i, "high"],
+              "low": df.at[i, "low"], "close": df.at[i, "close"]}
+        direction = detect_feg_signal(
+            c1, c2, ema[i], pip_value, ema_distance_enabled, ema_distance_pips,
+        )
+        if direction:
+            levels = compute_trade_levels(
+                direction, c2, entry_mode, entry_percent, buffer_k, rr_ratio, pip_value,
+            )
+            lot_size = _compute_lot_size(
+                lot_mode, current_equity, risk_mode, risk_percent, risk_amount,
+                levels["sl_pips"], symbol, fixed_lot,
+            )
+            exit_type, exit_price, exit_time, candles_held, exit_pos = _simulate_exit(
+                df, i, direction, levels["take_profit"], levels["stop_loss"],
+                max_candles, tp_type, sl_type,
+            )
+            if not exit_type:
+                break  # hết data, không đóng được lệnh
+
+            trade, pnl_pips, pnl_usd = _make_trade(
+                df.at[i, "time"], direction, levels, lot_size, exit_type,
+                exit_price, exit_time, candles_held, symbol,
+            )
+            current_equity += pnl_usd
+            trades.append(trade)
+            equity_curve_pips.append(equity_curve_pips[-1] + pnl_pips)
+            equity_curve_usd.append(current_equity)
+
+            i = exit_pos + 1  # 1 lệnh/lúc: quét tiếp sau nến exit
+            continue
+        i += 1
+
+    stats = calculate_stats(trades, lot_mode)
+    stats["equity_curve"] = equity_curve_pips
+    stats["equity_curve_usd"] = equity_curve_usd
+    stats["trades"] = trades
+    stats["lot_mode"] = lot_mode
+    stats["final_equity"] = current_equity
+    stats["starting_equity"] = starting_equity
+    stats["ohlc_data"] = df
     return stats
 
 
