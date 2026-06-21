@@ -44,6 +44,12 @@ def get_args():
                         help="Risk:Reward ratio (default: from strategy)")
     parser.add_argument("--max_candles", type=int, default=None,
                         help="Max candles before time exit (default: from strategy)")
+    parser.add_argument("--ema_period", type=int, default=None,
+                        help="EMA period for pattern strategies (default: from strategy)")
+    parser.add_argument("--ema_distance_enabled", type=int, default=0,
+                        help="Enable EMA distance filter: 1=yes, 0=no")
+    parser.add_argument("--ema_distance_pips", type=float, default=0.0,
+                        help="EMA distance in pips when filter enabled")
 
     # Bot control
     parser.add_argument("--test", type=int, default=1,
@@ -173,6 +179,15 @@ def run_bot(args):
 
     params = get_strategy_parameters(args.strategy)
     log(f"Strategy loaded: {strategy.get('name')}")
+
+    # Dispatch theo entry type
+    if params.get('entry_type', 'time') == 'pattern':
+        credentials = get_user_mt5_credentials(args.user)
+        if not credentials.get('login'):
+            log(f"MT5 credentials not configured for user: {args.user}", "ERROR")
+            return
+        run_feg_bot(args, strategy, params, credentials)
+        return
 
     # Override with command line args if provided
     sl_pips = args.sl_pips or params.get('sl_pips', 30)
@@ -336,6 +351,155 @@ def run_bot(args):
     except Exception as e:
         log(f"Bot error: {e}", "ERROR")
         send_telegram(f"Bot Error: {e}", is_error=True)
+        raise
+
+
+def feg_entry_decision(
+    active_trade, candle1, candle2, ema2, symbol,
+    rr_ratio, buffer_k, lot_size, entry_mode, entry_percent,
+    ema_distance_enabled, ema_distance_pips,
+):
+    """Quyết định vào lệnh FEG. None nếu đang có lệnh (1 lệnh/lúc) hoặc không có pattern."""
+    from src.feg_strategy import analyze_feg
+    if active_trade is not None:
+        return None
+    return analyze_feg(
+        symbol, candle1, candle2, ema2,
+        rr_ratio=rr_ratio, buffer_k=buffer_k, lot_size=lot_size,
+        entry_mode=entry_mode, entry_percent=entry_percent,
+        ema_distance_enabled=ema_distance_enabled, ema_distance_pips=ema_distance_pips,
+    )
+
+
+def get_recent_candles(mt5, symbol: str, timeframe_str: str, count: int = 120):
+    """Lấy `count` nến đã đóng gần nhất dưới dạng DataFrame (cũ -> mới)."""
+    import pandas as pd
+    timeframe_map = {
+        'M1': mt5.TIMEFRAME_M1, 'M5': mt5.TIMEFRAME_M5, 'M15': mt5.TIMEFRAME_M15,
+        'M30': mt5.TIMEFRAME_M30, 'H1': mt5.TIMEFRAME_H1, 'H4': mt5.TIMEFRAME_H4,
+        'D1': mt5.TIMEFRAME_D1,
+    }
+    timeframe = timeframe_map.get(timeframe_str, mt5.TIMEFRAME_M5)
+    # +1 vì nến cuối (index 0) đang chạy, ta bỏ nó đi
+    rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, count + 1)
+    if rates is None or len(rates) < 3:
+        return None
+    df = pd.DataFrame(rates)
+    df = df.iloc[:-1]  # bỏ nến đang chạy -> chỉ nến đã đóng
+    return df
+
+
+def run_feg_bot(args, strategy, params, credentials):
+    """Vòng lặp live cho strategy FEG (pattern + EMA21, 1 lệnh/lúc)."""
+    from src.orders import place_order, close_position
+
+    timeframe = params.get('timeframe', 'M5')
+    ema_period = args.ema_period or params.get('ema_period', 21)
+    rr_ratio = args.rr_ratio or params.get('rr_ratio', 2.0)
+    buffer_k = params.get('buffer_k', 5)
+    lot_size = args.lot_size or params.get('lot_size', 0.01)
+    max_candles = args.max_candles or params.get('max_candles', 7)
+    ema_dist_enabled = bool(args.ema_distance_enabled) or params.get('ema_distance_enabled', False)
+    ema_dist_pips = args.ema_distance_pips or params.get('ema_distance_pips', 0)
+    entry_mode = "close"
+    entry_percent = 0.0
+
+    log(f"FEG params: EMA{ema_period}, RR={rr_ratio}, buffer_k={buffer_k}, "
+        f"lot={lot_size}, max_candles={max_candles}, dist={'ON ' + str(ema_dist_pips) + 'p' if ema_dist_enabled else 'OFF'}")
+
+    send_telegram(f"FEG Bot Started\nSymbol: {args.symbol}\nUser: {args.user}\n"
+                  f"Test: {'Yes' if args.test else 'No'}")
+
+    active_trade = None
+    last_candle_time = None
+
+    try:
+        while True:
+            mt5, error = get_mt5_connection(credentials)
+            if error:
+                log(f"MT5 connection failed: {error}", "ERROR")
+                send_telegram(f"MT5 Error: {error}", is_error=True)
+                time.sleep(args.interval)
+                continue
+
+            df = get_recent_candles(mt5, args.symbol, timeframe, count=max(120, ema_period * 4))
+            if df is None or len(df) < ema_period + 2:
+                mt5.shutdown()
+                time.sleep(args.interval)
+                continue
+
+            ema = df["close"].ewm(span=ema_period, adjust=False).mean().tolist()
+            last = df.iloc[-1]
+            prev = df.iloc[-2]
+            candle_time = datetime.fromtimestamp(int(last["time"]), tz=TIMEZONE)
+
+            # chỉ xử lý khi có nến đóng mới
+            is_new_candle = (last_candle_time is None) or (candle_time > last_candle_time)
+
+            if active_trade is None and is_new_candle:
+                c1 = {"open": prev["open"], "high": prev["high"], "low": prev["low"], "close": prev["close"]}
+                c2 = {"open": last["open"], "high": last["high"], "low": last["low"], "close": last["close"]}
+                signal = feg_entry_decision(
+                    None, c1, c2, ema[-1], args.symbol,
+                    rr_ratio, buffer_k, lot_size, entry_mode, entry_percent,
+                    ema_dist_enabled, ema_dist_pips,
+                )
+                if signal:
+                    log(f"FEG Signal: {signal['direction']} @ {signal['entry_price']:.2f}, "
+                        f"SL={signal['stop_loss']:.2f}, TP={signal['take_profit']:.2f}")
+                    send_telegram(f"<b>FEG Signal: {signal['direction']}</b>\n"
+                                  f"Symbol: {args.symbol}\nEntry: {signal['entry_price']:.2f}\n"
+                                  f"SL: {signal['stop_loss']:.2f}\nTP: {signal['take_profit']:.2f}")
+                    ok, msg, ticket = place_order(
+                        args.symbol, signal["direction"], lot_size,
+                        sl=signal["stop_loss"], tp=signal["take_profit"],
+                        credentials=credentials, test=bool(args.test),
+                        magic=212100, comment="FEG",
+                    )
+                    log(f"Order result: {msg}")
+                    active_trade = {
+                        "direction": signal["direction"], "entry": signal["entry_price"],
+                        "sl": signal["stop_loss"], "tp": signal["take_profit"],
+                        "ticket": ticket, "candles": 0,
+                    }
+
+            elif active_trade is not None and is_new_candle:
+                active_trade["candles"] += 1
+                candle = {"high": last["high"], "low": last["low"], "close": last["close"]}
+                from src.utils import check_exit
+                exit_type, exit_price = check_exit(
+                    active_trade["direction"], candle,
+                    active_trade["tp"], active_trade["sl"],
+                    params.get("tp_type", "price_based"),
+                    params.get("sl_type", "close_based"),
+                )
+                if not exit_type and active_trade["candles"] >= max_candles:
+                    exit_type, exit_price = "TIME", last["close"]
+
+                if exit_type:
+                    pip_value = get_pip_value(args.symbol)
+                    if active_trade["direction"] == "BUY":
+                        pnl = (exit_price - active_trade["entry"]) / pip_value
+                    else:
+                        pnl = (active_trade["entry"] - exit_price) / pip_value
+                    log(f"FEG Exit: {exit_type} @ {exit_price:.2f}, P&L: {pnl:.1f} pips")
+                    send_telegram(f"<b>FEG Exit: {exit_type}</b>\nPrice: {exit_price:.2f}\nP&L: {pnl:.1f} pips")
+                    if not args.test and active_trade.get("ticket"):
+                        close_position(active_trade["ticket"], credentials=credentials)
+                    active_trade = None
+
+            if is_new_candle:
+                last_candle_time = candle_time
+
+            mt5.shutdown()
+            time.sleep(args.interval)
+
+    except KeyboardInterrupt:
+        log("FEG Bot stopped by user")
+        send_telegram("FEG Bot Stopped (manual)")
+    except Exception as e:
+        log(f"FEG Bot error: {e}", "ERROR")
+        send_telegram(f"FEG Bot Error: {e}", is_error=True)
         raise
 
 
