@@ -85,6 +85,8 @@ def main():
 
     # Load strategy parameters
     params = get_strategy_parameters(selected_strategy)
+    entry_type = params.get('entry_type', 'time')
+    is_pattern = entry_type == 'pattern'
 
     col1, col2, col3 = st.columns(3)
 
@@ -130,35 +132,56 @@ def main():
             max_value=default_end
         )
 
-        # Entry time - allow custom or use strategy default
-        entry_time_str = params.get('entry_time', '21:05')
-
-        use_custom_time = st.checkbox("Custom entry time", value=False)
-
-        if use_custom_time:
-            # Use text input for better UX (allows backspace/clear)
-            custom_time_str = st.text_input(
-                "Entry Time",
-                value="21:05",
-                max_chars=5,
-                help="Format: HH:MM (e.g., 21:05)",
-                placeholder="HH:MM"
+        if is_pattern:
+            st.markdown("**EMA Filter**")
+            ema_period = st.number_input(
+                "EMA Period",
+                value=int(params.get('ema_period', 21)),
+                min_value=2, max_value=200,
             )
-            # Validate and parse time
-            try:
-                entry_time = datetime.strptime(custom_time_str, "%H:%M").time()
-            except ValueError:
-                st.error("Invalid time format. Use HH:MM (e.g., 21:05)")
-                entry_time = datetime.strptime("21:05", "%H:%M").time()
+            ema_dist_enabled = st.checkbox(
+                "Xét khoảng cách EMA21",
+                value=bool(params.get('ema_distance_enabled', False)),
+                help="Bật để yêu cầu L2/H2 cách EMA21 tối thiểu (pips)",
+            )
+            if ema_dist_enabled:
+                ema_dist_pips = st.number_input(
+                    "Khoảng cách EMA (pips)",
+                    value=float(params.get('ema_distance_pips', 0) or 0),
+                    min_value=0.0, step=1.0,
+                )
+            else:
+                ema_dist_pips = 0.0
+            # entry_time not used for pattern; set placeholder so run_backtest signature is satisfied
+            entry_time = datetime.strptime("00:00", "%H:%M").time()
         else:
-            entry_time = st.time_input(
-                "Entry Time",
-                value=datetime.strptime(entry_time_str, "%H:%M").time(),
-                step=300,  # 5 minutes interval
-                help=f"From strategy: {entry_time_str}",
-                disabled=True
-            )
-            st.caption(f"Strategy default: {entry_time_str}")
+            ema_period = int(params.get('ema_period', 21))
+            ema_dist_enabled = False
+            ema_dist_pips = 0.0
+            entry_time_str = params.get('entry_time', '21:05')
+            use_custom_time = st.checkbox("Custom entry time", value=False)
+            if use_custom_time:
+                custom_time_str = st.text_input(
+                    "Entry Time",
+                    value="21:05",
+                    max_chars=5,
+                    help="Format: HH:MM (e.g., 21:05)",
+                    placeholder="HH:MM",
+                )
+                try:
+                    entry_time = datetime.strptime(custom_time_str, "%H:%M").time()
+                except ValueError:
+                    st.error("Invalid time format. Use HH:MM (e.g., 21:05)")
+                    entry_time = datetime.strptime("21:05", "%H:%M").time()
+            else:
+                entry_time = st.time_input(
+                    "Entry Time",
+                    value=datetime.strptime(entry_time_str, "%H:%M").time(),
+                    step=300,
+                    help=f"From strategy: {entry_time_str}",
+                    disabled=True,
+                )
+                st.caption(f"Strategy default: {entry_time_str}")
 
     with col3:
         # Timeframe - allow custom or use strategy default
@@ -417,7 +440,11 @@ def main():
                 tp_type=tp_type,
                 sl_type=sl_type,
                 entry_mode=entry_mode,
-                entry_percent=entry_percent
+                entry_percent=entry_percent,
+                entry_type=entry_type,
+                ema_period=ema_period,
+                ema_distance_enabled=ema_dist_enabled,
+                ema_distance_pips=ema_dist_pips,
             )
 
         # Build config dict for export/history
@@ -434,6 +461,10 @@ def main():
             'lot_mode': lot_mode,
             'tp_type': tp_type,
             'sl_type': sl_type,
+            'entry_type': entry_type,
+            'ema_period': ema_period,
+            'ema_dist_enabled': ema_dist_enabled,
+            'ema_dist_pips': ema_dist_pips,
         }
 
         if lot_mode == 'fixed':
