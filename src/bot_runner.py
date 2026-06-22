@@ -457,11 +457,14 @@ def run_feg_bot(args, strategy, params, credentials):
                         magic=212100, comment="FEG",
                     )
                     log(f"Order result: {msg}")
-                    active_trade = {
-                        "direction": signal["direction"], "entry": signal["entry_price"],
-                        "sl": signal["stop_loss"], "tp": signal["take_profit"],
-                        "ticket": ticket, "candles": 0,
-                    }
+                    if ok:
+                        active_trade = {
+                            "direction": signal["direction"], "entry": signal["entry_price"],
+                            "sl": signal["stop_loss"], "tp": signal["take_profit"],
+                            "ticket": ticket, "candles": 0,
+                        }
+                    else:
+                        log(f"Order failed — active_trade NOT set, will retry next signal", "WARN")
 
             elif active_trade is not None and is_new_candle:
                 active_trade["candles"] += 1
