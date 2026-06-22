@@ -197,14 +197,23 @@ def run_bot(args):
     entry_time = params.get('entry_time', '21:05')
     timeframe = params.get('timeframe', 'M5')
 
-    log(f"Parameters: SL={sl_pips} pips, RR={rr_ratio}, Lot={lot_size}, MaxCandles={max_candles}")
-    log(f"Entry time: {entry_time}, Timeframe: {timeframe}")
-
     # Get user's MT5 credentials
     credentials = get_user_mt5_credentials(args.user)
     if not credentials.get('login'):
         log(f"MT5 credentials not configured for user: {args.user}", "ERROR")
         return
+
+    # Auto-detect symbol min lot and clamp
+    mt5_tmp, err_tmp = get_mt5_connection(credentials)
+    if not err_tmp:
+        sym_info = mt5_tmp.symbol_info(args.symbol)
+        if sym_info and lot_size < sym_info.volume_min:
+            log(f"lot_size {lot_size} < symbol min {sym_info.volume_min} — using {sym_info.volume_min}", "WARN")
+            lot_size = sym_info.volume_min
+        mt5_tmp.shutdown()
+
+    log(f"Parameters: SL={sl_pips} pips, RR={rr_ratio}, Lot={lot_size}, MaxCandles={max_candles}")
+    log(f"Entry time: {entry_time}, Timeframe: {timeframe}")
 
     # Notify start
     send_telegram(f"Bot Started\n"
@@ -403,6 +412,15 @@ def run_feg_bot(args, strategy, params, credentials):
     ema_dist_pips = args.ema_distance_pips or params.get('ema_distance_pips', 0)
     entry_mode = "close"
     entry_percent = 0.0
+
+    # Auto-detect symbol min lot and clamp
+    mt5_tmp, err_tmp = get_mt5_connection(credentials)
+    if not err_tmp:
+        sym_info = mt5_tmp.symbol_info(args.symbol)
+        if sym_info and lot_size < sym_info.volume_min:
+            log(f"lot_size {lot_size} < symbol min {sym_info.volume_min} — using {sym_info.volume_min}", "WARN")
+            lot_size = sym_info.volume_min
+        mt5_tmp.shutdown()
 
     log(f"FEG params: EMA{ema_period}, RR={rr_ratio}, buffer_k={buffer_k}, "
         f"lot={lot_size}, max_candles={max_candles}, dist={'ON ' + str(ema_dist_pips) + 'p' if ema_dist_enabled else 'OFF'}")
