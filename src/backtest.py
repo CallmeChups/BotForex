@@ -363,6 +363,7 @@ def run_backtest(
         )
         current_equity += pnl_usd
         trades.append(trade)
+        trade["_candle"] = {"open": o, "high": h, "low": l, "close": c}  # trace-only
         equity_curve_pips.append(equity_curve_pips[-1] + pnl_pips)
         equity_curve_usd.append(current_equity)
 
@@ -425,6 +426,10 @@ def _run_feg_backtest(
             )
             current_equity += pnl_usd
             trades.append(trade)
+            trade["_c1"] = {**c1, "time": df.at[i - 1, "time"]}   # trace-only
+            trade["_c2"] = {**c2, "time": df.at[i, "time"]}        # trace-only
+            trade["_ema"] = ema[i]                                   # trace-only
+            trade["_exit_pos"] = exit_pos                            # trace-only
             equity_curve_pips.append(equity_curve_pips[-1] + pnl_pips)
             equity_curve_usd.append(current_equity)
 

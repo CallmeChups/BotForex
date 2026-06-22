@@ -30,3 +30,6 @@ def test_time_backtest_produces_one_bullish_trade():
     assert round(t["entry"], 4) == 100.8
     assert round(t["sl"], 4) == 99.0
     assert round(t["tp"], 4) == 104.4
+    # debug fields (Task 1)
+    assert "_candle" in t
+    assert t["_candle"] == {"open": 100.0, "high": 101.0, "low": 99.5, "close": 100.8}

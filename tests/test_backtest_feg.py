@@ -64,3 +64,14 @@ def test_feg_backtest_sell_when_ema_below_low2():
     assert round(t["entry"], 4) == 98.0
     assert round(t["sl"], 4) == 102.5   # 102 + 5*0.1
     assert round(t["tp"], 4) == 89.0    # risk 4.5 -> 98 - 9
+    # debug fields (Task 1)
+    assert "_c1" in t
+    assert "_c2" in t
+    assert "_ema" in t
+    assert "_exit_pos" in t
+    assert set(t["_c1"].keys()) >= {"open", "high", "low", "close", "time"}
+    assert t["_c1"]["high"] == 101.0    # candle1 high from fixture
+    assert t["_c2"]["close"] == 98.0    # candle2 close from fixture
+    assert t["_ema"] < 98.5             # EMA < L2 (that's why SELL fired)
+    assert isinstance(t["_exit_pos"], int)
+    assert t["_exit_pos"] >= 32         # exit candle is after candle2 at index 31
