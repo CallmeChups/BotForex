@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Backtest verification script — prints per-trade trace for manual inspection.
+"""Backtest verification script - prints per-trade trace for manual inspection.
 
 Usage:
     python scripts/verify_backtest.py --symbol XAUUSD --days 90
@@ -20,7 +20,7 @@ from src.backtest import fetch_historical_data, run_backtest
 from src.strategy_manager import get_strategy_parameters
 from src.utils import get_pip_value
 
-SEP = "═" * 62
+SEP = "=" * 62
 
 
 def _load_credentials(user="admin"):
@@ -55,13 +55,13 @@ def _print_mc_trace(trades, pip_value, buffer_k, rr_ratio):
         print(f"\n[TRADE #{n}]")
         print(f"  Candle  : {t['date']} {t['time']} | O={o:.2f} H={h:.2f} L={l:.2f} C={cl:.2f}")
         if direction == "BUY":
-            print(f"  Signal  : C({cl:.2f}) > O({o:.2f}) → BUY")
-            print(f"  SL calc : L({l:.2f}) - {buffer_k}×{pip_value:.2f} = {l - buffer_k * pip_value:.2f}")
-            print(f"  TP calc : E({entry:.2f}) + SL_dist({sl_dist:.2f}) × {rr_ratio:.1f} = {entry + sl_dist * rr_ratio:.2f}")
+            print(f"  Signal  : C({cl:.2f}) > O({o:.2f}) -> BUY")
+            print(f"  SL calc : L({l:.2f}) - {buffer_k}x{pip_value:.2f} = {l - buffer_k * pip_value:.2f}")
+            print(f"  TP calc : E({entry:.2f}) + SL_dist({sl_dist:.2f}) x {rr_ratio:.1f} = {entry + sl_dist * rr_ratio:.2f}")
         else:
-            print(f"  Signal  : C({cl:.2f}) < O({o:.2f}) → SELL")
-            print(f"  SL calc : H({h:.2f}) + {buffer_k}×{pip_value:.2f} = {h + buffer_k * pip_value:.2f}")
-            print(f"  TP calc : E({entry:.2f}) - SL_dist({sl_dist:.2f}) × {rr_ratio:.1f} = {entry - sl_dist * rr_ratio:.2f}")
+            print(f"  Signal  : C({cl:.2f}) < O({o:.2f}) -> SELL")
+            print(f"  SL calc : H({h:.2f}) + {buffer_k}x{pip_value:.2f} = {h + buffer_k * pip_value:.2f}")
+            print(f"  TP calc : E({entry:.2f}) - SL_dist({sl_dist:.2f}) x {rr_ratio:.1f} = {entry - sl_dist * rr_ratio:.2f}")
         print(f"  Entry   : {entry:.2f}  |  SL={sl:.2f}  |  TP={tp:.2f}")
         print(f"  Exit    : {t['exit_type']} | {t['exit_time']} | price={t['exit_price']:.2f} | {t['candles']} candles")
         equity += t["pnl_usd"]
@@ -92,21 +92,21 @@ def _print_feg_trace(trades, pip_value, buffer_k, rr_ratio, ema_period=21):
         print(f"  EMA{ema_period:<3} : {ema:.2f}")
 
         if direction == "SELL":
-            chk1 = f"H2({h2:.2f})>H1({h1:.2f}){'✓' if h2 > h1 else '✗'}"
-            chk2 = f"C2({c2_close:.2f})<L1({l1:.2f}){'✓' if c2_close < l1 else '✗'}"
-            chk3 = f"L2({l2:.2f})>EMA({ema:.2f}){'✓' if l2 > ema else '✗'}"
+            chk1 = f"H2({h2:.2f})>H1({h1:.2f}){'[ok]' if h2 > h1 else '[!!]'}"
+            chk2 = f"C2({c2_close:.2f})<L1({l1:.2f}){'[ok]' if c2_close < l1 else '[!!]'}"
+            chk3 = f"L2({l2:.2f})>EMA({ema:.2f}){'[ok]' if l2 > ema else '[!!]'}"
             print(f"  Checks  : {chk1}  {chk2}  {chk3}")
             print(f"  Signal  : SELL")
-            print(f"  SL calc : H2({h2:.2f}) + {buffer_k}×{pip_value:.2f} = {h2 + buffer_k * pip_value:.2f}")
-            print(f"  TP calc : E({entry:.2f}) - SL_dist({sl_dist:.2f}) × {rr_ratio:.1f} = {entry - sl_dist * rr_ratio:.2f}")
+            print(f"  SL calc : H2({h2:.2f}) + {buffer_k}x{pip_value:.2f} = {h2 + buffer_k * pip_value:.2f}")
+            print(f"  TP calc : E({entry:.2f}) - SL_dist({sl_dist:.2f}) x {rr_ratio:.1f} = {entry - sl_dist * rr_ratio:.2f}")
         else:
-            chk1 = f"L2({l2:.2f})<L1({l1:.2f}){'✓' if l2 < l1 else '✗'}"
-            chk2 = f"C2({c2_close:.2f})>H1({h1:.2f}){'✓' if c2_close > h1 else '✗'}"
-            chk3 = f"H2({h2:.2f})<EMA({ema:.2f}){'✓' if h2 < ema else '✗'}"
+            chk1 = f"L2({l2:.2f})<L1({l1:.2f}){'[ok]' if l2 < l1 else '[!!]'}"
+            chk2 = f"C2({c2_close:.2f})>H1({h1:.2f}){'[ok]' if c2_close > h1 else '[!!]'}"
+            chk3 = f"H2({h2:.2f})<EMA({ema:.2f}){'[ok]' if h2 < ema else '[!!]'}"
             print(f"  Checks  : {chk1}  {chk2}  {chk3}")
             print(f"  Signal  : BUY")
-            print(f"  SL calc : L2({l2:.2f}) - {buffer_k}×{pip_value:.2f} = {l2 - buffer_k * pip_value:.2f}")
-            print(f"  TP calc : E({entry:.2f}) + SL_dist({sl_dist:.2f}) × {rr_ratio:.1f} = {entry + sl_dist * rr_ratio:.2f}")
+            print(f"  SL calc : L2({l2:.2f}) - {buffer_k}x{pip_value:.2f} = {l2 - buffer_k * pip_value:.2f}")
+            print(f"  TP calc : E({entry:.2f}) + SL_dist({sl_dist:.2f}) x {rr_ratio:.1f} = {entry + sl_dist * rr_ratio:.2f}")
 
         print(f"  Entry   : {entry:.2f}  |  SL={sl:.2f}  |  TP={tp:.2f}")
         print(f"  Exit    : {t['exit_type']} | {t['exit_time']} | price={t['exit_price']:.2f} | {t['candles']} candles")
@@ -142,11 +142,11 @@ def _run_master_candle(df, symbol, days):
     buffer_k = float(p["buffer_k"])
     rr_ratio = float(p["rr_ratio"])
 
-    print(f"\n{'─' * 62}")
+    print(f"\n{'-' * 62}")
     print(f"MASTER CANDLE  |  {symbol}  |  {days}d lookback")
     print(f"params: entry={p['entry_time']} HCM  buffer_k={buffer_k}  rr={rr_ratio}")
     print(f"        max_candles={p['max_candles']}  tp={p['tp_type']}  sl={p['sl_type']}")
-    print(f"{'─' * 62}")
+    print(f"{'-' * 62}")
 
     try:
         res = run_backtest(
@@ -188,12 +188,12 @@ def _run_feg(df, symbol, days):
     ema_dist_enabled = bool(p.get("ema_distance_enabled", False))
     ema_dist_pips = float(p.get("ema_distance_pips", 0.0))
 
-    print(f"\n{'─' * 62}")
+    print(f"\n{'-' * 62}")
     print(f"FEG EMA21  |  {symbol}  |  {days}d lookback")
     print(f"params: ema_period={ema_period}  buffer_k={buffer_k}  rr={rr_ratio}")
     print(f"        ema_distance: enabled={ema_dist_enabled}  pips={ema_dist_pips}")
     print(f"        max_candles={p['max_candles']}  tp={p['tp_type']}  sl={p['sl_type']}")
-    print(f"{'─' * 62}")
+    print(f"{'-' * 62}")
 
     try:
         res = run_backtest(
@@ -226,7 +226,7 @@ def _run_feg(df, symbol, days):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Backtest verification — per-trade trace")
+    parser = argparse.ArgumentParser(description="Backtest verification - per-trade trace")
     parser.add_argument("--symbol", default="XAUUSD", help="MT5 symbol (default: XAUUSD)")
     parser.add_argument("--days", type=int, default=90, help="Lookback days (default: 90)")
     parser.add_argument(
@@ -247,13 +247,13 @@ def main():
     # fetch data
     end_dt = datetime.now(tz=timezone.utc)
     start_dt = end_dt - timedelta(days=args.days)
-    print(f"Fetching M5 data: {args.symbol}  {start_dt.date()} → {end_dt.date()}")
+    print(f"Fetching M5 data: {args.symbol}  {start_dt.date()} -> {end_dt.date()}")
     df, err = fetch_historical_data(args.symbol, start_dt, end_dt, credentials, "M5")
     if err:
         print(f"ERROR fetching data: {err}")
         sys.exit(1)
     if df is None or df.empty:
-        print("ERROR: empty DataFrame returned — is MT5 connected?")
+        print("ERROR: empty DataFrame returned - is MT5 connected?")
         sys.exit(1)
     print(f"Loaded {len(df)} M5 candles")
 
