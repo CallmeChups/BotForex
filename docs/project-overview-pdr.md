@@ -1,310 +1,157 @@
-# MT5 Forex Trading Bot - Tổng Quan & PDR
+# BotForex - Tổng Quan & PDR
 
-**Tên Project**: MT5 Forex Trading Bot - Giao dịch Forex Tự Động
-**Phiên Bản**: 0.1.0 (Early-Stage PoC)
-**Cập Nhật Lần Cuối**: 2026-01-17
-**Trạng Thái**: Phát Triển Sớm
+**Tên Project**: BotForex - Giao dịch MT5 Tự Động Đa Chiến Lược
+**Phiên Bản**: 0.2.0
+**Cập Nhật Lần Cuối**: 2026-06-21
+**Trạng Thái**: Production-ready (multi-strategy)
 **Repository**: E:\Project\BotForex
 
-## Tóm Tắt Điều Hành
+## Tóm Tắt
 
-MT5 Forex Trading Bot là một bot giao dịch tự động kết nối với MetaTrader 5 để thực hiện các giao dịch forex dựa trên chiến lược kỹ thuật đa timeframe. Bot sử dụng Python 3.10+, thực hiện phân tích kỹ thuật (MACD, Stochastic, Moving Average), gửi thông báo qua Telegram, và hiện tại ở giai đoạn proof-of-concept với một triển khai tham chiếu hoạt động tốt.
+BotForex là ứng dụng Streamlit đa trang để quản lý, backtest và vận hành bot giao dịch MT5 tự động. Hỗ trợ hai chiến lược: **Master Candle** (vào lệnh theo giờ cố định) và **FEG EMA21** (quét pattern 2 nến liên tục với bộ lọc EMA21). Kiến trúc YAML-driven: thêm chiến lược mới không cần sửa engine core.
 
 ## Mục Đích Project
 
 ### Tầm Nhìn
-Tự động hóa giao dịch forex với các chiến lược đa timeframe đáng tin cậy, kết hợp các chỉ báo kỹ thuật và quản lý rủi ro.
+Nền tảng giao dịch tự động linh hoạt, hỗ trợ nhiều chiến lược trên MT5, với dashboard quản lý và backtest tích hợp.
 
-### Sứ Mệnh
-Cung cấp bot giao dịch:
-- Kết nối MT5 với khả năng gửi lệnh tự động
-- Phân tích kỹ thuật đa timeframe (H4, M30, M5)
-- Thông báo Telegram thời gian thực
-- Dashboard Streamlit để giám sát và điều khiển
-- Logging và phân tích giao dịch
+### Tính Năng Chính
+- **Dashboard Streamlit** đa trang: Bots, Orders, Signals, Strategies, Backtest, Settings
+- **Backtest engine**: fetch OHLC từ MT5, simulate trades, lưu lịch sử, xuất Excel
+- **Live bot runner**: subprocess tách biệt, gate test/live, Telegram notifications
+- **Multi-strategy**: YAML-driven, discriminator `entry.type` (time / pattern)
+- **Xác thực**: role-based (admin/user) qua streamlit-authenticator
 
-### Giá Trị Đề Xuất
-- **Chiến Lược Đa Timeframe**: MACD (H4) + Stochastic (M30) + MA Crossover (M5)
-- **Quản Lý Rủi Ro**: SL/TP dựa trên ATR (1.5x)
-- **Thông Báo Real-Time**: Telegram cho đầu vào/ra và lỗi
-- **Sẽ Có**: Dashboard để start/stop, chỉnh cấu hình, xem lịch sử
+## Chiến Lược Hiện Có
 
-## Phạm Vi Project
+### Master Candle (`strategies/master_candle.yaml`)
+- **Entry**: Nến M5 lúc 21:05 HCM
+- **Hướng**: Close > Open → BUY; Close < Open → SELL
+- **SL/TP**: Neo vào nến entry (candle body ± buffer_k pips), TP = risk × rr_ratio
+- **Magic**: 210500
 
-### Đã Triển Khai (Hiện Tại)
-- Tính toán chỉ báo: MACD, Stochastic, MA, EMA (src/calculation.py - 70 dòng)
-- Gửi thông báo Telegram với retry logic (src/telegram.py - 58 dòng)
-- Chiến lược tham chiếu đa timeframe hoạt động (test/ref.py - 164 dòng)
-- Kết nối MT5 và thực hiện lệnh (test/ref.py)
-- Công cụ tiện ích: non_zero_range (src/utils.py)
-
-### Sẽ Triển Khai (Phase 1-2)
-- Hoàn thành main.py entry point
-- Hoàn thành app.py dashboard Streamlit
-- Ngoài hóa thông tin xác thực (MT5 & Telegram)
-- Cấu hình YAML chuẩn
-- Logging toàn diện
-- Bộ test chính thức
-
-### Ngoài Phạm Vi
-- Backtesting toàn diện
-- Phân tích tối ưu hóa thông số
-- Triển khai đám mây
-- Xác thực đa người dùng
+### FEG EMA21 (`strategies/feg_ema21.yaml`)
+- **Entry**: Pattern 2 nến (candle1 + candle2) + EMA21 filter, quét liên tục M5
+- **SELL**: H2>H1, C2<L1, L2>EMA21(+dist_pips tùy chọn)
+- **BUY**: L2<L1, C2>H1, H2<EMA21(-dist_pips tùy chọn)
+- **SL/TP**: Neo vào candle2, TP = risk × rr_ratio
+- **1 lệnh tại 1 thời điểm** (backtest + live)
+- **Magic**: 212100
 
 ## Yêu Cầu Chức Năng
 
-**FR1: Kết Nối MT5**
-- Kết nối đến tài khoản MT5 (demo/live)
-- Lấy dữ liệu OHLC real-time
-- Gửi lệnh BUY/SELL với SL/TP
-- Xử lý lỗi kết nối
+**FR1: Strategy Management**
+- Đọc strategy config từ YAML
+- Hiển thị strategy info read-only (4_Strategies.py)
+- Hỗ trợ thêm strategy mới qua YAML (không sửa engine)
 
-**FR2: Phân Tích Kỹ Thuật**
-- Tính toán MACD (12, 26, 9) trên khung H4
-- Tính toán Stochastic(7,5,3) & Stochastic(13,13,5) trên khung M30
-- Tính toán MA10/MA20 trên khung M5
-- Kiểm tra tín hiệu cross giữa các chỉ báo
+**FR2: Backtest**
+- Fetch dữ liệu lịch sử MT5 theo date range và timeframe
+- Simulate trades theo logic strategy (time-based và pattern-based)
+- Tính metrics: win rate, profit factor, equity curve, pnl pips/usd
+- Lưu kết quả vào lịch sử, xuất Excel
 
-**FR3: Chiến Lược Giao Dịch**
-- Entry BUY: MACD cross up (H4) + Stoch < 20 (M30) + Price > MA (M5)
-- Entry SELL: MACD cross down (H4) + Stoch > 80 (M30) + Price < MA (M5)
-- SL/TP: 1.5x ATR từ mức vào
+**FR3: Live Bot**
+- Khởi chạy bot như subprocess riêng biệt
+- Test mode (simulate, no MT5 order) và Live mode (đặt lệnh thật)
+- Tự động gửi Telegram khi vào/ra lệnh
+- Quản lý trạng thái: start/stop/restart từ UI
 
-**FR4: Thông Báo Telegram**
-- Gửi alert khi có lệnh vào/ra
-- Gửi thông báo lỗi kết nối
-- Kênh riêng cho dev và user
-- Retry tối đa 5 lần
+**FR4: Lot & Risk Management**
+- Lot cố định hoặc flex (tính từ equity + risk %)
+- SL tính theo pip value của từng symbol
 
-**FR5: Logging & Phân Tích**
-- Lưu chi tiết mọi lệnh (symbol, loại, volume, giá, lợi nhuận)
-- Xuất dữ liệu cho phân tích
-- Debug logging có thể bật tắt
+**FR5: Exit Management**
+- TP/SL: price_based (wick) hoặc close_based (close)
+- Time exit: sau max_candles nến (configurable)
 
-**FR6: Dashboard (Lập Kế Hoạch)**
-- Start/Stop bot
-- Chỉnh sửa thông số thời gian thực
-- Xem trạng thái tài khoản live
-- Xem lịch sử lệnh
+**FR6: Dashboard & Auth**
+- Login role-based (admin/user)
+- Admin: quản lý users, settings toàn hệ thống
+- User: chạy bot, backtest, xem orders/signals
 
 ## Yêu Cầu Không Chức Năng
 
-**NFR1: Hiệu Suất**
-- Kiểm tra tín hiệu mỗi 1-5 phút (tùy timeframe)
-- Gửi lệnh < 1 giây
-- Thông báo Telegram < 5 giây
-
-**NFR2: Độ Tin Cậy**
-- Xử lý lỗi kết nối gracefully
-- Retry logic cho Telegram
-- Logging lỗi chi tiết
-
-**NFR3: Bảo Mật**
-- Không hardcode thông tin xác thực
-- Sử dụng biến môi trường
-- Không log mật khẩu
-
-**NFR4: Có Thể Bảo Trì**
-- Python files < 500 dòng
-- Cấu trúc modular
-- Tài liệu rõ ràng
-
-## Tiêu Chí Thành Công
-
-### Metric Chức Năng
-- Bot kết nối MT5 thành công
-- Gọi API Telegram thành công
-- Chiến lược phát hiện tín hiệu đúng
-- Lệnh gửi thành công (demo/live)
-
-### Metric Hiệu Suất
-- Thời gian phân tích < 1 giây/vòng lặp
-- Thời gian gửi lệnh < 2 giây
-- Uptime bot > 95%
-
-### Metric Quá Trình
-- Code coverage > 70% (sau phase 1)
-- Tài liệu đầy đủ
-- Xử lý lỗi toàn diện
+| NFR | Yêu Cầu |
+|-----|---------|
+| Bảo Mật | Credentials từ env vars / auth.yaml (không hardcode) |
+| Test | 25 unit tests, pytest, backward-compat cho master_candle |
+| Hiệu Suất | Backtest: < 5s cho 3 tháng M5 (~26k nến) |
+| MT5 | Windows-only, lazy import |
+| Extensibility | Thêm strategy = thêm YAML + (optional) signal file |
 
 ## Kiến Trúc Kỹ Thuật
 
-### Công Nghệ Lõi
+### Tech Stack
 
-**Runtime**:
-- Python 3.10+
-- MetaTrader5 API
-- python-telegram-bot
-- Streamlit (dashboard)
+| Thành phần | Thư viện | Phiên bản |
+|-----------|---------|---------|
+| Dashboard | Streamlit | 1.52.2 |
+| Auth | streamlit-authenticator | 0.4.2 |
+| MT5 API | metatrader5 | 5.0.5430 (Windows) |
+| Telegram | python-telegram-bot | 22.5 |
+| Data | pandas | 2.3.3 |
+| Charting | plotly | 6.5.2 |
+| Config | PyYAML | 6.0.3 |
+| Test | pytest | 8.3.4 |
 
-**Thư Viện**:
-- pandas (xử lý dữ liệu)
-- numpy (tính toán)
-- PyYAML (cấu hình)
-- icecream (debug)
-
-### Thành Phần Hệ Thống
-
-```
-┌─────────────────────────────────────┐
-│   Main Entry Point (main.py)        │
-│   - Load config.yaml                │
-│   - Initialize MT5 connection       │
-│   - Start trading loop              │
-└──────────────┬──────────────────────┘
-               │
-        ┌──────▼──────────────┐
-        │ Strategy Engine     │
-        │ ├─ Multi-timeframe  │
-        │ ├─ Tech indicators  │
-        │ └─ Signal detection │
-        └──────┬──────────────┘
-               │
-        ┌──────▼────────┐
-        │ MT5 Connector │
-        │ ├─ Login      │
-        │ ├─ Get rates  │
-        │ └─ Send order │
-        └──────┬────────┘
-               │
-        ┌──────▼──────────┐
-        │ Notifications   │
-        │ └─ Telegram     │
-        └─────────────────┘
-```
-
-## Dòng Dữ Liệu
+### Cấu Trúc Thư Mục (Chính)
 
 ```
-MT5 Terminal (Real-time rates)
-         ↓
-   [H4 OHLC] [M30 OHLC] [M5 OHLC]
-         ↓         ↓         ↓
-   [MACD]    [Stoch]    [MA Cross]
-         ↓         ↓         ↓
-    ┌────────────────────────────┐
-    │   Signal Detection Engine   │
-    │   (check_cross_2_list...)   │
-    └────────────────────────────┘
-                 ↓
-        ┌─────────────────┐
-        │ Entry Detected? │
-        │ BUY / SELL      │
-        └────────┬────────┘
-                 ↓
-        ┌─────────────────┐
-        │ Send Order      │
-        │ (MT5)           │
-        └────────┬────────┘
-                 ↓
-        ┌─────────────────┐
-        │ Notify User     │
-        │ (Telegram)      │
-        └────────┬────────┘
-                 ↓
-        ┌─────────────────┐
-        │ Log Trade       │
-        │ (File/DB)       │
-        └─────────────────┘
+BotForex/
+├── app.py                   # Streamlit entry (auth + home)
+├── pages/                   # 8 UI pages
+├── src/                     # 12 modules
+│   ├── feg_strategy.py      # FEG pattern detection
+│   ├── backtest.py          # Engine backtest (master + FEG)
+│   ├── bot_runner.py        # Live loop (subprocess)
+│   ├── bot_manager.py       # Subprocess manager
+│   ├── strategy_manager.py  # YAML → params
+│   ├── orders.py            # MT5 order execution
+│   └── utils.py             # Shared helpers
+├── strategies/              # Strategy YAML definitions
+│   ├── master_candle.yaml
+│   └── feg_ema21.yaml
+├── tests/                   # 25 pytest tests
+└── data/                    # Runtime data (JSON)
 ```
 
-## Ràng Buộc & Hạn Chế
-
-### Kỹ Thuật
-- Phụ thuộc vào terminal MT5 đang chạy (Windows)
-- Thông tin xác thực hiện tại hardcoded (cần ngoài hóa)
-- Không hỗ trợ các broker khác (chỉ MT5)
-- Xử lý đơn khóa, không có backtest
-
-### Dữ Liệu
-- Cần dữ liệu tick real-time từ MT5
-- Chỉ hỗ trợ một symbol/bot instance
-- Không có lưu trữ dữ liệu lịch sử (hiện tại)
-
-### Vận Hành
-- Cần cấu hình thủ công (config.yaml)
-- Không tự động khởi động
-- Không có monitoring/alert về downtime
-- Cần Python environment cài đặt
+Chi tiết: xem [Codebase Summary](./codebase-summary.md) và [System Architecture](./system-architecture.md).
 
 ## Trạng Thái Hiện Tại
 
-### Hoàn Thành
-- Core indicators (MACD, Stochastic, MA, EMA) ✅
-- Telegram notification module ✅
-- Reference multi-timeframe strategy (test/ref.py) ✅
-- MT5 connection & order execution ✅
+### Hoàn Thành ✅
+- Streamlit dashboard đa trang với auth
+- Master Candle strategy (backtest + live)
+- FEG EMA21 strategy (backtest + live)
+- Backtest engine với shared helpers
+- Backtest history (JSON, Excel export)
+- Test mode gate (`place_order(test=True)`)
+- 25 unit tests (pytest)
+- Bot manager (subprocess, start/stop/restart)
+- Strategy YAML system (extensible)
+- UI pattern-aware (Backtest, Bots, Strategies pages)
+- Telegram notifications
 
-### Đang Làm
-- (None - ở giai đoạn PoC)
-
-### Chưa Bắt Đầu
-- main.py entry point (stub)
-- app.py Streamlit dashboard (stub)
-- config.yaml (empty)
-- Formal test suite
-- Credential externalization
-- Comprehensive logging
-- Error handling
+### Chưa Thực Hiện
+- REST API endpoint
+- Database persistence (hiện dùng JSON)
+- Multi-symbol parallel bots (hiện 1 bot/symbol)
+- Web deploy (hiện chạy local)
 
 ## Mối Nguy Hiểm & Cảnh Báo
 
-### Bảo Mật
-- ⚠️ Thông tin xác thực MT5 hardcoded trong test/ref.py
-- ⚠️ Telegram token hardcoded trong src/telegram.py
-- ✅ Cần sử dụng biến môi trường/vault
-
-### Rủi Ro Tài Chính
-- ⚠️ Bot có thể gây mất tiền nếu chiến lược sai
-- ✅ Luôn test trên tài khoản demo trước
-- ✅ Bắt đầu với lot nhỏ (0.1)
-
-### Vận Hành
-- ⚠️ Terminal MT5 phải mở 24/7 (hoặc tạo scheduler)
-- ⚠️ Kết nối mạng bị gián đoạn → lệnh không được gửi
-- ✅ Cần giám sát và log toàn diện
-
-## Lộ Trình
-
-### Phase 1 (Hiện Tại)
-- Hoàn thành main.py entry point
-- Hoàn thành app.py dashboard
-- Ngoài hóa thông tin xác thực
-- Viết config.yaml chuẩn
-- Xây dựng logging
-- Bắt đầu test formal
-
-### Phase 2
-- Cải thiện chiến lược (thêm filter)
-- Thêm kỹ thuật quản lý rủi ro
-- Thêm indicator khác
-- Backtest & phân tích hiệu suất
-
-### Phase 3 (Tương Lai)
-- Dashboard web hoàn chỉnh
-- Multiple bot instances
-- Database cho lịch sử trade
-- API REST
+| Mức | Vấn đề |
+|-----|--------|
+| ⚠️ Medium | `config/auth.yaml` track trong git — cần `git rm --cached` + rotate password |
+| ⚠️ Tài chính | Test kỹ trên demo account trước khi `--test 0` (live) |
+| ℹ️ Platform | MT5 Windows-only — bot runner không chạy được trên Linux/Mac |
 
 ## Tài Liệu Liên Quan
 
-### Nội Bộ
-- [Code Standards](./code-standards.md)
-- [System Architecture](./system-architecture.md)
 - [Codebase Summary](./codebase-summary.md)
+- [System Architecture](./system-architecture.md)
 - [Project Roadmap](./project-roadmap.md)
-
-### Ngoài
+- [Code Standards](./code-standards.md)
 - [MetaTrader5 Python Docs](https://www.mql5.com/en/docs/integration/python_metatrader5)
-- [python-telegram-bot Docs](https://python-telegram-bot.readthedocs.io/)
 - [Streamlit Docs](https://docs.streamlit.io/)
-- [PyYAML Docs](https://pyyaml.org/)
-
-## Các Câu Hỏi Chưa Giải Quyết
-
-1. **Chiến lược giao dịch cuối cùng**: Thêm filter nào khác (volume, trend)?
-2. **Quản lý tiền**: Cơ chế sizing lot dựa trên balance?
-3. **Scheduler**: Cách để bot chạy 24/7 tự động?
-4. **Multiple timeframes**: Kỳ vọng chi tiết từ các timeframe khác?
-5. **Backtesting**: Cần công cụ backtesting?

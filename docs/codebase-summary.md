@@ -1,493 +1,215 @@
-# MT5 Forex Trading Bot - Tóm Tắt Codebase
+# BotForex - Tóm Tắt Codebase
 
-**Cập Nhật Lần Cuối**: 2026-01-17
-**Phiên Bản**: 0.1.0
-**Trạng Thái**: Early-Stage PoC
+**Cập Nhật Lần Cuối**: 2026-06-21
+**Phiên Bản**: 0.2.0
+**Trạng Thái**: Production-ready (multi-strategy)
 
 ## Tổng Quan Project
 
-MT5 Forex Trading Bot là một ứng dụng Python thực hiện giao dịch forex tự động sử dụng MetaTrader5 API. Nó triển khai chiến lược đa timeframe kết hợp MACD (H4), Stochastic (M30), và Moving Average Crossover (M5) với hỗ trợ Telegram notifications.
-
-**Kích Thước**: 136 dòng code lõi (src/) + 219 dòng test/reference (test/)
-**Trạng Thái**: Proof-of-Concept hoạt động (test/ref.py là triển khai tham chiếu)
+BotForex là ứng dụng Streamlit đa trang cho phép quản lý, backtest và vận hành nhiều bot giao dịch MT5 tự động. Hỗ trợ hai chiến lược: **Master Candle** (vào lệnh theo giờ cố định) và **FEG EMA21** (quét pattern 2 nến liên tục với bộ lọc EMA21).
 
 ## Cấu Trúc Thư Mục
 
 ```
 E:\Project\BotForex\
-├── src/                          # Core source code (136 dòng)
-│   ├── calculation.py            # Technical indicators (70 dòng)
-│   │   ├── calculate_macd()      # MACD calculation
-│   │   ├── calculate_stoch()     # Stochastic oscillator
-│   │   ├── calculate_ma()        # Simple Moving Average
-│   │   ├── calculate_ema()       # Exponential Moving Average
-│   │   └── check_cross_2_list_updated()  # Signal detection
-│   ├── telegram.py               # Telegram notifications (58 dòng)
-│   │   └── send_message()        # Send alert with retry
-│   └── utils.py                  # Utility functions (8 dòng)
-│       └── non_zero_range()      # Handle zero-value ranges
+├── app.py                        # Streamlit entry point (auth gateway + home)
+├── pages/                        # Multi-page UI
+│   ├── 1_Bots.py                 # Quản lý bot (start/stop/restart)
+│   ├── 2_Orders.py               # Lịch sử lệnh MT5
+│   ├── 3_Signals.py              # Tín hiệu giao dịch
+│   ├── 4_Strategies.py           # Xem cấu hình strategy (read-only)
+│   ├── 5_Backtest.py             # Backtest engine UI
+│   ├── 6_Simulation.py           # Mô phỏng
+│   ├── 7_Users.py                # Quản lý người dùng (admin)
+│   └── 8_Settings.py             # Cài đặt hệ thống
 │
-├── test/                         # Test & reference scripts
-│   ├── test.py                   # MT5 connection test (55 dòng)
-│   │   └── Basic MT5 login & data retrieval
-│   └── ref.py                    # Working reference strategy (164 dòng)
-│       ├── Multi-timeframe logic
-│       ├── Signal detection
-│       └── Order execution
+├── src/                          # Core modules
+│   ├── auth.py                   # Xác thực (streamlit-authenticator)
+│   ├── backtest.py               # Backtest engine (Master Candle + FEG)
+│   ├── backtest_history.py       # Lưu/đọc lịch sử backtest (JSON + Excel)
+│   ├── bot_manager.py            # Quản lý subprocess bot
+│   ├── bot_runner.py             # Live bot runner (MT5 loop, argparse entry)
+│   ├── calculation.py            # Chỉ báo kỹ thuật (MACD, Stoch, MA, EMA)
+│   ├── feg_strategy.py           # FEG pattern detection + signal builder
+│   ├── orders.py                 # Đặt lệnh MT5 (place_order, close_position)
+│   ├── strategy.py               # Hàm strategy chung
+│   ├── strategy_manager.py       # Đọc YAML strategy → params dict
+│   ├── telegram.py               # Gửi thông báo Telegram
+│   └── utils.py                  # Tiện ích: get_pip_value, check_exit, compute_trade_levels
+│
+├── strategies/                   # Strategy YAML definitions
+│   ├── master_candle.yaml        # Master Candle strategy config
+│   └── feg_ema21.yaml            # FEG EMA21 strategy config
+│
+├── tests/                        # Pytest test suite (25 tests)
+│   ├── test_feg_strategy.py      # 9 tests: detect_feg_signal + analyze_feg
+│   ├── test_trade_levels.py      # 3 tests: compute_trade_levels
+│   ├── test_backtest_time_characterization.py  # 1 characterization test
+│   ├── test_backtest_feg.py      # 2 tests: FEG backtest path
+│   ├── test_strategy_manager_feg.py  # 2 tests: strategy params
+│   ├── test_place_order.py       # 2 tests: test/live mode gate
+│   ├── test_feg_runner.py        # 2 tests: live runner entry logic
+│   ├── test_bot_command.py       # 2 tests: bot_manager command builder
+│   ├── test_history_columns.py   # 1 test: EMA columns in history
+│   └── test_smoke.py             # 1 test: import sanity
 │
 ├── config/
-│   └── config.yaml               # Configuration (EMPTY - needs setup)
+│   ├── auth.yaml                 # User accounts (streamlit-authenticator)
+│   └── auth.yaml.example         # Template
 │
-├── main.py                       # Entry point (EMPTY STUB)
-├── app.py                        # Streamlit dashboard (EMPTY STUB)
-├── requirements.txt              # Dependencies
-├── README.md                      # Main documentation (Vietnamese)
-├── strategy.txt                  # Strategy notes (Vietnamese)
-├── note.txt                      # Trading notes (Vietnamese)
-├── CLAUDE.md                     # Claude Code instructions
+├── data/
+│   └── backtest_history.json     # Lịch sử backtest (auto-created)
 │
-├── logs/                         # Log directory (empty)
-├── data/                         # Data directory (empty)
-└── docs/                         # Project documentation
-    ├── project-overview-pdr.md   # This PDR
-    ├── code-standards.md         # Code standards
-    ├── codebase-summary.md       # This file
-    ├── system-architecture.md    # Architecture design
-    └── project-roadmap.md        # Development roadmap
+├── logs/                         # Bot log files (auto-created)
+├── conftest.py                   # Pytest sys.path setup
+├── requirements.txt              # Python dependencies
+└── docs/                         # Tài liệu dự án
 ```
 
-## Thành Phần Lõi
+## Module Chi Tiết
 
-### 1. Module Tính Toán Chỉ Báo (`src/calculation.py` - 70 dòng)
+### `src/auth.py`
+Xác thực người dùng qua `streamlit-authenticator`. Đọc `config/auth.yaml`, expose `get_authenticator()`, `check_auth()`, `get_user_role()`, `is_admin()`.
 
-**Mục đích**: Tính toán các chỉ báo kỹ thuật và phát hiện tín hiệu
+### `src/backtest.py`
+Engine backtest MT5. Entry point: `run_backtest(df, symbol, ..., entry_type)`.
+- `entry_type="time"` → Master Candle (tìm nến theo giờ, loop độc lập).
+- `entry_type="pattern"` → `_run_feg_backtest()` (while loop tuần tự, 1 lệnh/lúc).
+- Helpers dùng chung: `_compute_lot_size`, `_simulate_exit`, `_make_trade`.
+- `fetch_historical_data()`: lấy OHLC từ MT5.
+- `calculate_flex_lot_size()`: tính lot theo risk %.
 
-**Hàm Chính**:
+### `src/backtest_history.py`
+Lưu/đọc kết quả backtest vào `data/backtest_history.json`.
+- `save_backtest_result()`, `get_history()`, `delete_history_record()`.
+- `history_to_dataframe()`: chuyển sang DataFrame với cột EMA (Entry Type, EMA Period, EMA Dist).
+- `create_excel_export()`: xuất Excel 2 sheet (Config+Summary, Trades).
+- `HISTORY_COLUMNS`: dict định nghĩa nhóm cột cho UI.
 
-```python
-def calculate_macd(df, period_fast=12, period_slow=26, signal=9, column='close', adjust=False)
-# Returns: (MACD_line, MACD_signal_line)
-# Tính MACD = EMA_fast - EMA_slow, signal = EMA(MACD)
+### `src/bot_manager.py`
+Quản lý subprocess bot. Bot state lưu trong `data/running_bots.json`.
+- `start_bot()`: build command → subprocess.
+- `stop_bot()`, `restart_bot()`.
+- `build_bot_command()`: tổng hợp args (bao gồm `--ema_period`, `--ema_distance_enabled`, `--ema_distance_pips`).
+
+### `src/bot_runner.py`
+Live runner chạy như subprocess (argparse entry point). Dispatch theo `entry_type`:
+- Master Candle: `run_master_candle_bot()`.
+- FEG: `run_feg_bot()` — vòng lặp liên tục, lấy 2 nến đóng gần nhất + EMA, gọi `analyze_feg`, gate `active_trade`, `place_order(test=...)`.
+- `get_recent_candles()`: lấy N nến từ MT5, bỏ nến đang chạy.
+- `feg_entry_decision()`: trả None nếu đang có lệnh.
+
+### `src/feg_strategy.py`
+Logic phát hiện FEG pattern:
+- `detect_feg_signal(candle1, candle2, ema2, pip_value, ema_distance_enabled, ema_distance_pips) -> "BUY"|"SELL"|None`
+- `analyze_feg(...) -> dict | None`: dựng signal đầy đủ (entry/SL/TP) dùng `compute_trade_levels`.
+
+### `src/orders.py`
+- `place_order(symbol, direction, volume, sl, tp, credentials, test, magic, comment)`:
+  - `test=True` → simulate, không gọi MT5.
+  - `test=False` → gọi `mt5.order_send()` thật.
+- `close_position_by_ticket()`: đóng lệnh mở bằng ticket.
+
+### `src/strategy_manager.py`
+Đọc YAML strategy file → trả dict params đầy đủ:
+- `entry_type`, `ema_period`, `ema_distance_enabled`, `ema_distance_pips`, `pattern`.
+- `entry_time`, `tp_type`, `sl_type`, `max_candles`, `rr_ratio`, `buffer_k`, `lot_size`, `symbols`.
+
+### `src/utils.py`
+- `get_pip_value(symbol)`: pip size (0.01 cho XAU/BTC, 0.0001 cho Forex).
+- `check_exit(direction, candle, tp, sl, tp_type, sl_type) -> (exit_type, exit_price)`.
+- `compute_trade_levels(direction, candle, entry_mode, entry_percent, buffer_k, rr_ratio, pip_value) -> dict`: tính entry/SL/TP/sl_pips.
+
+### `src/calculation.py`
+Chỉ báo kỹ thuật: `calculate_macd()`, `calculate_stoch()`, `calculate_ma()`, `calculate_ema()`, `check_cross_2_list_updated()`.
+
+### `src/telegram.py`
+`send_message(msg, chat_id, ...)` với retry tối đa 5 lần. Token đọc từ env `TELEGRAM_BOT_TOKEN`.
+
+## Strategies YAML
+
+### `strategies/master_candle.yaml`
+```yaml
+entry:
+  type: time         # discriminator
+  timeframe: M5
+  time: "21:05"
+  timezone: "Asia/Ho_Chi_Minh"
 ```
 
-```python
-def calculate_stoch(df, k_length=14, k_smooth=1, d_smooth=3)
-# Returns: {'k': smooth_k_percentage, 'd': smooth_d_percentage}
-# Tính Stochastic oscillator: %K = (Close - Low) / (High - Low) * 100
+### `strategies/feg_ema21.yaml`
+```yaml
+entry:
+  type: pattern      # discriminator
+  timeframe: M5
+  pattern: feg_ema21
+  ema_period: 21
+  ema_distance: {enabled: false, pips: 0}
+exit:
+  tp: {type: price_based}
+  sl: {type: close_based}
+  time_limit: {enabled: true, max_candles: 7}
+parameters:
+  rr_ratio: 2.0
+  buffer_k: 5
+  lot_size: 0.01
+symbols: [XAUUSD, BTCUSD, ETHUSD, XAUUSDm, BTCUSDm, ETHUSDm]
 ```
 
-```python
-def calculate_ma(df, period)
-# Returns: Moving Average list
-# Tính SMA đơn giản
-```
+## Magic Numbers
 
-```python
-def calculate_ema(df, period=100)
-# Returns: EMA values list
-# Tính Exponential Moving Average với multiplier = 2/(period+1)
-```
-
-```python
-def check_cross_2_list_updated(list_1, list_2, period=3, confirm=2)
-# Returns: {'up': bool, 'down': bool}
-# Phát hiện crossover giữa hai line (MACD cross signal, Price cross MA, etc)
-# Logic: Kiểm tra nếu đã có 1 crossover trong period cuối cùng và confirm từ cuối
-```
-
-**Phụ Thuộc**:
-- numpy: Tính toán số học
-- src.utils.non_zero_range: Xử lý trường hợp high == low (crypto)
-
-**Lưu Ý Bảo Mật**:
-- Không có xác thực, không có I/O
-- Hoàn toàn stateless
-
-### 2. Module Telegram Notification (`src/telegram.py` - 58 dòng)
-
-**Mục đích**: Gửi thông báo cảnh báo giao dịch qua Telegram
-
-**Hàm Chính**:
-
-```python
-def send_message(msg, chat_id, max_retries=5, token=TOKEN, disable_notification=True, debug=False)
-# Gửi tin nhắn đến một hoặc nhiều chat_id
-# - Retry tối đa 5 lần nếu fail (sleep 5s giữa các lần)
-# - Support multiple chat_ids (string hoặc list)
-# - Tùy chọn disable notification sound (disable_notification=True)
-# - Debug mode: in console thay vì gửi thực tế
-```
-
-**Hardcoded Constants**:
-```python
-TOKEN = "7363572293:AAHd595bWg7liBafg8qEmasPh8Zx1I2crWo"  # ⚠️ SECURITY ISSUE
-```
-
-**Phụ Thuộc**:
-- telebot: Kết nối Telegram
-- requests: POST HTTP
-- time: Sleep giữa retries
-
-**⚠️ Bảo Mật**:
-- Token hardcoded (cần ngoài hóa)
-- Không có xác thực API key
-- Test code ở dòng 40-41 gửi tin nhắn thực tế
-
-### 3. Module Tiện Ích (`src/utils.py` - 8 dòng)
-
-**Mục đích**: Hàm tiện ích dùng chung
-
-```python
-def non_zero_range(high: Series, low: Series) -> Series
-# Trả về high - low, nhưng thêm epsilon nếu kết quả = 0
-# Dùng để tránh division by zero trong Stochastic calculation
-```
-
-**Phụ Thuộc**:
-- pandas.Series: Xử lý data frame
-- sys.float_info: Lấy epsilon
-
-### 4. Test MT5 Connection (`test/test.py` - 55 dòng)
-
-**Mục đích**: Kiểm tra kết nối MT5 và lấy dữ liệu
-
-**Nội Dung**:
-- Kết nối đến tài khoản MT5: `account = 415016785`
-- Lấy dữ liệu 1 tuần với khung M1
-- Chuyển đổi timestamp sang múi giờ Việt Nam
-- In dữ liệu lên console
-
-**Hardcoded Credentials**:
-```python
-account = 415016785
-password = "Taptrade211225@"
-server = "Exness-MT5Trial14"
-```
-
-**⚠️ Bảo Mật**: Thông tin xác thực bị expose
-
-### 5. Reference Strategy (`test/ref.py` - 164 dòng)
-
-**Mục đích**: Triển khai tham chiếu hoạt động của chiến lược giao dịch
-
-**Hardcoded Credentials**:
-```python
-account = 243254313
-password = "Test2312025@"
-server = "Exness-MT5Trial14"
-```
-
-**Chiến Lược**:
-- **Timeframe Long (H4)**: MACD cross up/down
-- **Timeframe Mid (M30)**: Stochastic(7,5,3) < 20 (buy) hoặc > 80 (sell)
-                          Stochastic(13,13,5) < 50 (buy) hoặc > 50 (sell)
-- **Timeframe Short (M5)**: Price > MA10 & MA20 (buy) hoặc < (sell)
-
-**Entry Logic**:
-```
-BUY: MACD cross up (H4)
-     AND Stoch(7,5,3) < 20 (M30)
-     AND Stoch(13,13,5) < 50 (M30)
-     AND Close > MA10 (M5)
-     AND Close > MA20 (M5)
-
-SELL: MACD cross down (H4)
-      AND Stoch(7,5,3) > 80 (M30)
-      AND Stoch(13,13,5) > 50 (M30)
-      AND Close < MA10 (M5)
-      AND Close < MA20 (M5)
-```
-
-**Order Execution**:
-- Loại lệnh: TRADE_ACTION_DEAL (lệnh thị trường)
-- Volume: 0.1 lot
-- SL/TP: 1.5x lot (tương đương ATR)
-- Deviation: 20 pips
-- Type: BUY hoặc SELL
-
-**Vòng Lặp**:
-- Loop vô tận
-- Lấy dữ liệu 1 tuần
-- Tính toán tất cả chỉ báo
-- Kiểm tra tín hiệu
-- Gửi lệnh nếu match
-- Break sau khi gửi thành công
-
-**Lưu Ý**:
-- Phụ thuộc vào test.py để setup (commented out import)
-- Ghi log + print cho debug
-- Break sau đó không có exit logic (chỉ test 1 giao dịch)
+| Magic | Strategy |
+|-------|----------|
+| 210500 | Master Candle |
+| 212100 | FEG EMA21 |
 
 ## Công Nghệ Stack
 
-| Thành Phần | Thư Viện | Phiên Bản | Mục Đích |
-|-----------|---------|---------|---------|
-| API Giao Dịch | MetaTrader5 | Latest | Kết nối MT5, lấy dữ liệu, gửi lệnh |
-| Thông Báo | python-telegram-bot | Latest | Gửi cảnh báo Telegram |
-| Xử Lý Dữ Liệu | pandas | Latest | DataFrame, time-series |
-| Tính Toán | numpy | Latest | Mảng, tính toán số học |
-| Cấu Hình | PyYAML | Latest | Đọc config.yaml |
-| Debug | icecream | Latest | Logging debug |
-| Dashboard (Sắp) | Streamlit | Latest | Web UI |
+| Thành phần | Thư viện | Phiên bản |
+|-----------|---------|---------|
+| Dashboard | Streamlit | 1.52.2 |
+| Auth | streamlit-authenticator | 0.4.2 |
+| MT5 API | metatrader5 | 5.0.5430 |
+| Telegram | python-telegram-bot | 22.5 |
+| Data | pandas | 2.3.3 |
+| Charting | plotly | 6.5.2 |
+| Excel | openpyxl | 3.1.2 |
+| Config | PyYAML | 6.0.3 |
+| Test | pytest | 8.3.4 |
+| Env | python-dotenv | 1.2.1 |
 
-## Mô Hình Dữ Liệu
+## Test Suite
 
-### Input từ MT5
-```
-Symbol: BTCUSDm (hoặc EURUSD, etc)
-Timeframes: H4, M30, M5
-Data per timeframe:
-  - time: Unix timestamp
-  - open: Giá mở
-  - high: Giá cao nhất
-  - low: Giá thấp nhất
-  - close: Giá đóng
-  - tick_volume: Volume tick
-```
-
-### DataFrame sau xử lý
-```
-Columns:
-  - time: Unix timestamp
-  - open, high, low, close: OHLC prices
-  - tick_volume: Volume
-  - real_time: Human-readable timestamp
-```
-
-### Indicator Outputs
-```
-MACD: (macd_line list, signal_line list)
-Stochastic: {'k': Series, 'd': Series}
-MA: List of moving averages
-EMA: List of exponential moving averages
-Signal: {'up': bool, 'down': bool}
-```
-
-### Order Structure
-```python
-{
-  'action': mt5.TRADE_ACTION_DEAL,
-  'symbol': 'BTCUSDm',
-  'price': entry_price,
-  'sl': stop_loss_price,
-  'tp': take_profit_price,
-  'deviation': 20,
-  'type': mt5.ORDER_TYPE_BUY/SELL,
-  'volume': 0.1,  # Lot size
-  'type_time': mt5.ORDER_TIME_GTC,
-  'type_filling': mt5.ORDER_FILLING_IOC,
-  'comment': 'Py Buy/Sell Position'
-}
-```
-
-## Luồng Xử Lý
+Chạy: `pytest tests/ -v`
 
 ```
-1. Initialize MT5 Connection
-   ├─ mt5.initialize()
-   └─ mt5.login(account, password, server)
-
-2. Data Retrieval (mỗi vòng lặp)
-   ├─ mt5.copy_rates_range(symbol, timeframe, date_from, date_to)
-   └─ Tạo DataFrame từ kết quả
-
-3. Indicator Calculation
-   ├─ calculate_macd(long_data)
-   ├─ calculate_stoch(mid_data)
-   ├─ calculate_ma(short_data)
-   └─ check_cross_2_list_updated() cho tất cả
-
-4. Signal Detection
-   ├─ Kiểm tra tất cả conditions (BUY/SELL)
-   └─ Nếu match → tiếp tới bước 5
-
-5. Order Execution
-   ├─ mt5.symbol_info_tick(symbol) → lấy bid/ask
-   ├─ Tính SL/TP dựa trên 1.5x lot
-   ├─ mt5.order_send(request)
-   └─ Log result
-
-6. Notification (sắp có)
-   ├─ send_message() → Telegram
-   └─ Log trade details
+25 passed in ~2.2s
 ```
 
-## Tệp Cấu Hình (Chưa Triển Khai)
+| File test | Nội dung |
+|-----------|---------|
+| test_feg_strategy.py | detect_feg_signal (7 cases), analyze_feg (2 cases) |
+| test_trade_levels.py | compute_trade_levels BUY/SELL/range_percent |
+| test_backtest_feg.py | EMA blocks SELL; EMA below L2 → SELL fires |
+| test_backtest_time_characterization.py | Master Candle backward-compat lock |
+| test_strategy_manager_feg.py | FEG params + master_candle defaults |
+| test_place_order.py | test mode short-circuit; live mode mock |
+| test_feg_runner.py | entry when flat+pattern; no entry when active_trade |
+| test_bot_command.py | EMA flags in command; disabled EMA = 0 |
+| test_history_columns.py | EMA columns in history_to_dataframe |
+| test_smoke.py | import sanity |
 
-**config/config.yaml** (expected format):
-```yaml
-mt5:
-  login: 243254313
-  password: "password_here"
-  server: "Exness-MT5Trial14"
+## Vấn Đề Bảo Mật
 
-telegram:
-  token: "bot_token_here"
-  dev_chat_id: 123456789
-  user_chat_id: 987654321
-
-strategy:
-  symbol: "BTCUSDm"
-  lot: 0.1
-
-timeframes:
-  long: H4
-  mid: M30
-  short: M5
-
-indicators:
-  macd: [12, 26, 9]
-  stoch_1: [7, 5, 3]
-  stoch_2: [13, 13, 5]
-  ma: [10, 20]
-
-risk:
-  sl_atr_multiplier: 1.5
-  tp_atr_multiplier: 1.5
-```
-
-## Tỷ Lệ Code Coverage
-
-| File | LOC | Type | Status |
-|------|-----|------|--------|
-| src/calculation.py | 70 | Core | ✅ Working |
-| src/telegram.py | 58 | Core | ✅ Working (hardcoded) |
-| src/utils.py | 8 | Utility | ✅ Working |
-| test/ref.py | 164 | Reference | ✅ Working |
-| test/test.py | 55 | Test | ✅ Connection test |
-| main.py | 0 | Entry point | ❌ Stub |
-| app.py | 0 | Dashboard | ❌ Stub |
-| **Total** | **355** | | |
-
-## Các Vấn Đề & Cảnh Báo
-
-### 🔴 Critical (Bảo Mật)
-1. **Hardcoded Credentials**
-   - MT5 account/password: test/test.py:24-26, test/ref.py:19-21
-   - Telegram token: src/telegram.py:5
-   - **Fix**: Dùng environment variables hoặc .env file
-
-2. **No Encryption**
-   - Credentials in plaintext trong source code
-   - **Fix**: Sử dụng secrets management (vault, AWS Secrets, etc)
-
-### 🟠 High Priority
-1. **Empty Entry Points**
-   - main.py: Stub, không có logic chính
-   - app.py: Stub, không có dashboard
-   - **Fix**: Implement entry points + config loading
-
-2. **No Error Handling**
-   - Không try-catch cho MT5 calls
-   - Không fallback nếu Telegram fail
-   - **Fix**: Thêm comprehensive error handling
-
-3. **No Logging**
-   - Chỉ có print statements
-   - Không có file logs
-   - **Fix**: Setup logging module
-
-### 🟡 Medium Priority
-1. **No Configuration Management**
-   - config.yaml là empty
-   - Hardcoded values trong code
-   - **Fix**: Implement config loading
-
-2. **No Test Suite**
-   - Chỉ có test/test.py & test/ref.py
-   - Không có unit tests
-   - **Fix**: Viết test suite
-
-3. **Single Trade Only**
-   - test/ref.py break sau khi trade 1 lệnh
-   - **Fix**: Implement continuous loop
-
-### 🔵 Low Priority
-1. **No Backtesting**
-   - Không có backtesting module
-   - Chỉ live/paper trading
-
-2. **No Database**
-   - Không lưu lịch sử trade
-   - Không có analytics
-
-3. **No Documentation Code**
-   - Docstrings thiếu
-   - Comments ít
-
-## Quy Trình Phát Triển Tiếp Theo
-
-1. **Phase 1 - Cleanup & Config**
-   - [ ] Ngoài hóa credentials
-   - [ ] Implement main.py
-   - [ ] Setup config.yaml
-   - [ ] Thêm logging
-
-2. **Phase 2 - Dashboard & UI**
-   - [ ] Implement app.py Streamlit
-   - [ ] Start/Stop controls
-   - [ ] Real-time monitoring
-
-3. **Phase 3 - Enhancement**
-   - [ ] Improve strategy (thêm filter)
-   - [ ] Backtesting module
-   - [ ] Database storage
-
-## Hướng Dẫn Cài Đặt Môi Trường
-
-```bash
-# 1. Create virtual environment
-python -m venv venv
-
-# 2. Activate (Windows)
-venv\Scripts\activate
-
-# 3. Install dependencies
-pip install -r requirements.txt
-
-# 4. Setup environment variables
-# Tạo .env file hoặc set system variables:
-set MT5_LOGIN=243254313
-set MT5_PASSWORD=...
-set MT5_SERVER=...
-set TELEGRAM_TOKEN=...
-
-# 5. Run tests
-python test/test.py
-
-# 6. Run reference strategy (sau khi ngoài hóa credentials)
-python test/ref.py
-```
-
-## Phụ Thuộc & Thư Viện
-
-Xem `requirements.txt`:
-- MetaTrader5: MT5 API
-- python-telegram-bot: Telegram integration
-- streamlit: Web dashboard (sắp)
-- pyyaml: Config parsing
-- pandas: Data manipulation
-- icecream: Debug printing
+| Mức | Vấn đề | Trạng thái |
+|-----|--------|-----------|
+| ⚠️ Medium | `config/auth.yaml` (MT5 credentials) được track trong git | Cần `git rm --cached` + rotate password |
+| ✅ | Telegram token đọc từ env `TELEGRAM_BOT_TOKEN` | OK |
+| ✅ | MT5 credentials đọc từ `config/auth.yaml` (không hardcode) | OK |
 
 ## Tài Liệu Liên Quan
 
 - [Project Overview & PDR](./project-overview-pdr.md)
-- [Code Standards](./code-standards.md)
 - [System Architecture](./system-architecture.md)
 - [Project Roadmap](./project-roadmap.md)
-
-## Ghi Chú Bảo Trì
-
-- Kiểm tra credentials định kỳ (quarterly security audit)
-- Monitor bot uptime
-- Review trade logs hàng tuần
-- Update strategy parameters theo market conditions
-- Backup config & credentials an toàn
-
-## Các Câu Hỏi Chưa Giải Quyết
-
-1. **Credential Management**: Nên sử dụng giải pháp nào?
-2. **Backtesting**: Có cần framework backtesting?
-3. **Multiple Strategies**: Có support nhiều strategy cùng lúc?
-4. **Paper Trading vs Live**: Cơ chế switch?
-5. **Monitoring**: Cần monitoring tool ngoài Telegram?
+- [Code Standards](./code-standards.md)
