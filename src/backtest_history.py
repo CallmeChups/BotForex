@@ -41,6 +41,11 @@ def _save_history(history: list):
         json.dump(history, f, indent=2, ensure_ascii=False)
 
 
+def _strip_debug_fields(trade: dict) -> dict:
+    """Remove underscore-prefixed debug keys that are not JSON-serializable."""
+    return {k: v for k, v in trade.items() if not k.startswith("_")}
+
+
 def save_backtest_result(
     config: dict,
     results: dict,
@@ -89,7 +94,7 @@ def save_backtest_result(
             'starting_equity': results.get('starting_equity', 0),
             'final_equity': results.get('final_equity', 0),
         },
-        'trades': results.get('trades', [])
+        'trades': [_strip_debug_fields(t) for t in results.get('trades', [])]
     }
 
     history.append(record)

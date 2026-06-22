@@ -645,6 +645,9 @@ def show_trade_table(trades: list, lot_mode: str, strategy_name: str, symbol: st
     results = results or {}
     trades_df = pd.DataFrame(trades)
 
+    # Drop internal debug columns (underscore-prefixed) before display/export
+    trades_df = trades_df[[c for c in trades_df.columns if not c.startswith("_")]]
+
     # Rename columns for display
     rename_cols = {
         'date': 'Date',
