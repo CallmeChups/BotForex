@@ -68,7 +68,7 @@ def _print_mc_trace(trades, pip_value, buffer_k, rr_ratio):
         print(f"  PnL     : {t['pnl_pips']:+.1f} pips | equity ${equity:.2f}")
 
 
-def _print_feg_trace(trades, pip_value, buffer_k, rr_ratio):
+def _print_feg_trace(trades, pip_value, buffer_k, rr_ratio, ema_period=21):
     equity = 1000.0
     for n, t in enumerate(trades, 1):
         c1 = t.get("_c1", {})
@@ -89,7 +89,7 @@ def _print_feg_trace(trades, pip_value, buffer_k, rr_ratio):
         print(f"\n[TRADE #{n}]")
         print(f"  C1      : {c1_time} | H={h1:.2f} L={l1:.2f}")
         print(f"  C2      : {c2_time} | H={h2:.2f} L={l2:.2f} C={c2_close:.2f}")
-        print(f"  EMA21   : {ema:.2f}")
+        print(f"  EMA{ema_period:<3} : {ema:.2f}")
 
         if direction == "SELL":
             chk1 = f"H2({h2:.2f})>H1({h1:.2f}){'✓' if h2 > h1 else '✗'}"
@@ -220,7 +220,7 @@ def _run_feg(df, symbol, days):
     if res["total_trades"] == 0:
         print("  [no trades found in this period]")
     else:
-        _print_feg_trace(res["trades"], pip_value, buffer_k, rr_ratio)
+        _print_feg_trace(res["trades"], pip_value, buffer_k, rr_ratio, ema_period)
     _print_summary("FEG EMA21", res)
     return res
 
