@@ -1,0 +1,44 @@
+id: feg_ema21
+name: FEG EMA21 Strategy
+version: "1.0"
+description: |
+  FEG 2-candle pattern + EMA21 filter. Quet lien tuc moi nen.
+  SELL: H2>H1, C2<L1, L2>EMA21(+dist). BUY: L2<L1, C2>H1, H2<EMA21(-dist).
+  TP/SL neo vao candle2: SL = candle2 high/low +/- buffer_k, TP = entry +/- risk*rr_ratio.
+  1 lenh tai 1 thoi diem.
+author: admin
+created: "2026-06-21"
+enabled: true
+
+entry:
+  type: pattern
+  timeframe: M1
+  pattern: feg_ema21
+  ema_period: 21
+  ema_distance:
+    enabled: false
+    pips: 0
+
+exit:
+  tp:
+    type: price_based
+  sl:
+    type: close_based
+  time_limit:
+    enabled: true
+    max_candles: 7
+
+parameters:
+  rr_ratio: 2.0
+  buffer_k: 50
+  lot_size: 0.01
+  entry_mode: close      # "close" = market at C2 close | "range_percent" = limit at X% of body
+  entry_percent: 10      # used when entry_mode=range_percent: 10% of |close-open| pullback
+
+symbols:
+  - XAUUSD
+  - BTCUSD
+  - ETHUSD
+  - XAUUSDm
+  - BTCUSDm
+  - ETHUSDm

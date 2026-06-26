@@ -1,0 +1,64 @@
+name: Deploy to Home Server
+
+on:
+  workflow_dispatch:
+    inputs:
+      restart_streamlit:
+        description: 'Restart Streamlit after deploy?'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H 100.110.182.114 >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Deploy - git pull + install deps
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            hyperion@100.110.182.114 \
+            "powershell -NonInteractive -Command \"\
+              Set-Location D:\\BotForex; \
+              Write-Host 'CWD:' (Get-Location); \
+              Write-Host 'Remote:' (git remote -v); \
+              Write-Host 'Pulling latest code...'; \
+              git stash --include-untracked 2>&1; \
+              \$result = git pull https://github.com/CallmeChups/BotForex.git main 2>&1; \
+              Write-Host \$result; \
+              if (\$LASTEXITCODE -ne 0) { Write-Error 'git pull failed'; exit 1 }; \
+              git stash pop 2>&1; \
+              Write-Host 'Installing dependencies...'; \
+              .venv\\Scripts\\pip.exe install -r requirements.txt --quiet; \
+              Write-Host 'Deploy complete.' \
+            \""
+
+      - name: Restart Streamlit
+        if: ${{ github.event.inputs.restart_streamlit == 'true' }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            hyperion@100.110.182.114 \
+            "powershell -NonInteractive -Command \"\
+              Get-Process -Name 'streamlit' -ErrorAction SilentlyContinue | Stop-Process -Force; \
+              Start-Sleep -Seconds 2; \
+              schtasks /Delete /TN 'StreamlitRestart' /F 2>null; \
+              schtasks /Create /TN 'StreamlitRestart' /TR 'powershell -NonInteractive -WindowStyle Hidden -Command \"Set-Location D:\\BotForex; D:\\BotForex\\.venv\\Scripts\\streamlit.exe run app.py --server.port 8501 >> D:\\BotForex\\logs\\streamlit.log 2>&1\"' /SC ONCE /ST 00:00 /RL HIGHEST /F; \
+              schtasks /Run /TN 'StreamlitRestart'; \
+              Write-Host 'Streamlit restarted via Task Scheduler.' \
+            \""

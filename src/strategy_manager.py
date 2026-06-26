@@ -199,21 +199,27 @@ def get_strategy_parameters(strategy_id: str) -> dict:
     exit_config = strategy.get('exit', {})
     params = strategy.get('parameters', {})
 
+    ema_distance = entry.get('ema_distance', {})
+
     return {
         'timeframe': entry.get('timeframe', 'M5'),
-        'entry_time': entry.get('time', None),  # None for window-based strategies
+        'entry_type': entry.get('type', 'time'),
+        'entry_time': entry.get('time', '21:05'),
         'timezone': entry.get('timezone', 'Asia/Ho_Chi_Minh'),
+        'pattern': entry.get('pattern', ''),
+        'ema_period': entry.get('ema_period', 21),
+        'ema_distance_enabled': ema_distance.get('enabled', False),
+        'ema_distance_pips': ema_distance.get('pips', 0),
         'sl_pips': params.get('sl_pips', 30),
         'rr_ratio': params.get('rr_ratio', 2.0),
+        'buffer_k': params.get('buffer_k', 5),
         'lot_size': params.get('lot_size', 0.01),
+        'entry_mode': params.get('entry_mode', 'close'),
+        'entry_percent': params.get('entry_percent', 0.0),
         'max_candles': exit_config.get('time_limit', {}).get('max_candles', 7),
         'tp_type': exit_config.get('tp', {}).get('type', 'price_based'),
         'sl_type': exit_config.get('sl', {}).get('type', 'close_based'),
-        'symbols': strategy.get('symbols', []),
-        # Multiple Master Candle params (None for single-entry strategies)
-        'window_start': entry.get('window_start', None),
-        'window_end': entry.get('window_end', None),
-        'priority_direction': entry.get('priority_direction', None)
+        'symbols': strategy.get('symbols', [])
     }
 
 

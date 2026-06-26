@@ -217,3 +217,46 @@ def check_exit(
             return ("SL", sl) if sl_type == "price_based" else ("SL", c)
 
     return (None, None)
+
+
+def compute_trade_levels(
+    direction: str,
+    candle: dict,
+    entry_mode: str,
+    entry_percent: float,
+    buffer_k: float,
+    rr_ratio: float,
+    pip_value: float,
+) -> dict:
+    """
+    Tính entry / SL / TP / sl_pips neo vào 1 nến (anchor candle).
+
+    BUY:  SL = low  - buffer_k*pip ; TP = entry + risk*rr
+    SELL: SL = high + buffer_k*pip ; TP = entry - risk*rr
+    entry_mode "close": entry = close
+    entry_mode "range_percent": BUY entry = close - X%*body ; SELL entry = close + X%*body
+        (body = |close - open|)
+    """
+    o, h, l, c = candle["open"], candle["high"], candle["low"], candle["close"]
+    body = abs(c - o)
+    buffer_offset = buffer_k * pip_value
+
+    if direction == "BUY":
+        entry = c - (entry_percent / 100) * body if entry_mode == "range_percent" else c
+        stop_loss = l - buffer_offset
+        sl_pips = (entry - stop_loss) / pip_value
+        risk = entry - stop_loss
+        take_profit = entry + risk * rr_ratio
+    else:  # SELL
+        entry = c + (entry_percent / 100) * body if entry_mode == "range_percent" else c
+        stop_loss = h + buffer_offset
+        sl_pips = (stop_loss - entry) / pip_value
+        risk = stop_loss - entry
+        take_profit = entry - risk * rr_ratio
+
+    return {
+        "entry_price": entry,
+        "stop_loss": stop_loss,
+        "take_profit": take_profit,
+        "sl_pips": sl_pips,
+    }

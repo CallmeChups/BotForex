@@ -1,469 +1,294 @@
-# BotForex - System Architecture
+# BotForex - Kiến Trúc Hệ Thống
 
-**Last Updated**: 2026-02-26
-**Version**: 2.0.0
-**Status**: Production Ready
+**Cập Nhật Lần Cuối**: 2026-06-21
+**Phiên Bản**: 0.2.0
 
----
+## Tổng Quan
 
-## Overview
+BotForex là ứng dụng giao dịch tự động đa chiến lược trên MT5, gồm hai thành phần chính:
 
-BotForex is an automated Forex trading bot that executes the Master Candle strategy using MetaTrader5 (MT5) API. It runs multiple independent bot processes, each monitoring a specific trading symbol and executing trades based on configurable parameters.
+1. **Dashboard (Streamlit)** — UI đa trang cho quản lý bot, backtest, cài đặt.
+2. **Bot Runner (subprocess)** — Live trading loop chạy tách biệt với MT5.
 
-### Architecture Pattern: Process-Based Multi-Bot System
+Hai thành phần giao tiếp qua: `data/running_bots.json` (state), file log, và Telegram.
+
+## Kiến Trúc Tổng Quát
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Streamlit UI (app.py)                        │
-│  Dashboard for starting/stopping bots, config, monitoring       │
-└────────────────────┬────────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│              Bot Manager (src/bot_manager.py)                    │
-│  Start/Stop/List bot processes, track running instances         │
-└────────────────────┬────────────────────────────────────────────┘
-                     │ (spawns subprocess)
-                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│           Bot Runner (src/bot_runner.py) - Per Bot Process      │
-│                                                                  │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │ 1. INIT: Load strategy, credentials, validate config    │   │
-│  └──────────────────────────────────────────────────────────┘   │
-│                     │                                            │
-│  ┌──────────────────▼──────────────────────────────────────┐   │
-│  │ 2. MAIN LOOP: Wait for entry time (checks every 1s)    │   │
-│  └──────────────────┬──────────────────────────────────────┘   │
-│                     │                                            │
-│  ┌──────────────────▼──────────────────────────────────────┐   │
-│  │ 3. ENTRY: Connect to MT5 at entry time, fetch candle   │   │
-│  │    Analyze candle (bullish=BUY, bearish=SELL)          │   │
-│  │    Calculate SL, TP, Lot size                          │   │
-│  └──────────────────┬──────────────────────────────────────┘   │
-│                     │                                            │
-│  ┌──────────────────▼──────────────────────────────────────┐   │
-│  │ 4. ORDER: Place order (MARKET or LIMIT pending)        │   │
-│  │    Retry LIMIT order for N candles if rejected        │   │
-│  │    Cancel LIMIT if not filled after N candles         │   │
-│  └──────────────────┬──────────────────────────────────────┘   │
-│                     │                                            │
-│  ┌──────────────────▼──────────────────────────────────────┐   │
-│  │ 5. MANAGEMENT: Move SL to breakeven at N% profit       │   │
-│  │    Check exit conditions (TP/SL/Time limit)            │   │
-│  │    Close position on exit                              │   │
-│  └──────────────────┬──────────────────────────────────────┘   │
-│                     │                                            │
-│  ┌──────────────────▼──────────────────────────────────────┐   │
-│  │ 6. NOTIFICATIONS: Send Telegram alerts                 │   │
-│  │    Logging to file (logs/bot_*.log)                    │   │
-│  └──────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
-                     │ (calls)
-                     ▼
-        ┌────────────────────────────────┐
-        │   MetaTrader5 Terminal (MT5)   │
-        │   - Order execution            │
-        │   - Real-time price feeds      │
-        │   - Position/tick info         │
-        └────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│                   Streamlit Dashboard                   │
+│   app.py (auth) → pages/ (Bots, Backtest, Strategies…) │
+│                                                         │
+│  ┌────────────┐  ┌──────────────┐  ┌─────────────────┐ │
+│  │ 1_Bots.py  │  │ 5_Backtest  │  │ 4_Strategies.py │ │
+│  │ Start/Stop │  │ Run + View  │  │ Read-only YAML  │ │
+│  └─────┬──────┘  └──────┬──────┘  └─────────────────┘ │
+└────────┼────────────────┼─────────────────────────────┘
+         │ subprocess     │ MT5 historical data
+         ▼                ▼
+┌──────────────┐   ┌──────────────────┐
+│ bot_runner.py│   │ backtest.py      │
+│ (live loop)  │   │ _run_feg_backtest│
+│              │   │ run_backtest     │
+│ ┌──────────┐ │   └──────────────────┘
+│ │feg_bot   │ │
+│ │master_bot│ │
+│ └────┬─────┘ │
+└──────┼────────┘
+       │ MT5 order_send / copy_rates
+       ▼
+┌──────────────────┐
+│ MetaTrader5      │
+│ (Windows API)    │
+└──────────────────┘
+       │ trade confirmation
+       ▼
+┌──────────────────┐
+│ Telegram         │
+│ (notifications)  │
+└──────────────────┘
 ```
 
----
+## Layer Chi Tiết
 
-## Core Components
+### 1. Authentication Layer (`src/auth.py` + `app.py`)
 
-### 1. Application Layer (app.py)
+- `streamlit-authenticator` với `config/auth.yaml`.
+- Role-based: `admin` / `user`.
+- `check_auth()` → gate toàn bộ app.
+- Admin-only pages: 7_Users, 8_Settings.
 
-**Purpose**: Streamlit web dashboard for user interaction
+### 2. Strategy Definition Layer (`strategies/*.yaml`)
 
-**Responsibilities**:
-- Display bot status and controls
-- Allow users to start/stop bots with parameters
-- Configure MT5 credentials and strategy settings
-- View order history and backtest results
-- Pages: 1_Bots.py through 8_Settings.py
+Strategy được định nghĩa hoàn toàn bằng YAML. Discriminator: `entry.type`.
 
-**Key Features**:
-- Real-time bot status monitoring
-- Configuration UI with validation
-- Historical data export
-- Backtest engine integration
+| `entry.type` | Strategy | Entry Trigger |
+|---|---|---|
+| `time` | Master Candle | Nến M5 lúc 21:05 HCM |
+| `pattern` | FEG EMA21 | Pattern 2 nến + EMA21 filter |
 
----
+`src/strategy_manager.py::get_strategy_parameters()` đọc YAML → trả unified dict params.
 
-### 2. Bot Manager (src/bot_manager.py)
+### 3. Backtest Engine (`src/backtest.py`)
 
-**Purpose**: Process lifecycle management
+```
+run_backtest(df, symbol, ..., entry_type)
+    │
+    ├─ entry_type="time"  → Master Candle path
+    │    find entry candles by hour:minute
+    │    for each candle: compute levels → simulate exit → record trade
+    │
+    └─ entry_type="pattern" → _run_feg_backtest()
+         EMA series = df['close'].ewm(span=ema_period).mean()
+         i = max(1, ema_period)  # EMA warmup
+         while i < n:
+             detect_feg_signal(c1, c2, ema[i]) → direction
+             if direction: open trade → simulate exit → i = exit_pos + 1
+             else: i += 1
+```
 
-**Key Functions**:
+Shared helpers:
+- `_compute_lot_size()` — fixed / flex (risk %)
+- `_simulate_exit()` — check_exit per candle, TIME exit fallback
+- `_make_trade()` — build trade dict + pnl
 
-| Function | Purpose |
-|----------|---------|
-| `start_bot()` | Launch bot_runner.py as subprocess with parameters |
-| `stop_bot()` | Terminate bot process gracefully |
-| `list_bots()` | Retrieve all running bot processes |
-| `is_process_running()` | Check if bot process is alive |
-| `load_bots()` / `save_bots()` | Persist bot state to `data/running_bots.json` |
+Data fetched via `fetch_historical_data(symbol, start, end, credentials, timeframe)` từ MT5.
 
-**Bot State Storage**:
+### 4. FEG Signal Layer (`src/feg_strategy.py`)
+
+```
+detect_feg_signal(candle1, candle2, ema2, pip_value, ema_distance_enabled, ema_distance_pips)
+    SELL: H2>H1, C2<L1, L2 > ema2 + dist
+    BUY:  L2<L1, C2>H1, H2 < ema2 - dist
+    → "SELL" | "BUY" | None
+
+analyze_feg(...) → dict | None
+    compute_trade_levels(direction, candle2, ...) → entry/SL/TP
+    return full signal dict
+```
+
+### 5. Exit Engine (`src/utils.py::check_exit`)
+
+```
+check_exit(direction, candle, tp, sl, tp_type, sl_type)
+    tp_type="price_based" → check wick immediately (high/low)
+    tp_type="close_based" → check close only
+    sl_type="close_based" → check close only
+    sl_type="price_based" → check wick immediately
+    → ("TP"|"SL"|None, exit_price)
+```
+
+### 6. Trade Level Computation (`src/utils.py::compute_trade_levels`)
+
+```
+compute_trade_levels(direction, candle, entry_mode, entry_percent, buffer_k, rr_ratio, pip_value)
+    BUY:
+        entry = close (hoặc close - entry_percent% × body nếu range_percent)
+        SL = low - buffer_k × pip
+        risk = entry - SL
+        TP = entry + risk × rr_ratio
+    SELL:
+        entry = close (hoặc close + entry_percent% × body)
+        SL = high + buffer_k × pip
+        risk = SL - entry
+        TP = entry - risk × rr_ratio
+    → {entry_price, stop_loss, take_profit, sl_pips}
+```
+
+### 7. Live Bot Layer (`src/bot_runner.py`)
+
+Entry point: `python src/bot_runner.py --strategy <id> --symbol <sym> --test 1 ...`
+
+```
+run_bot(args)
+    params = get_strategy_parameters(strategy)
+    if params['entry_type'] == 'pattern':
+        run_feg_bot(args, strategy, params, credentials)
+        return
+    run_master_candle_bot(...)
+
+run_feg_bot():
+    active_trade = None
+    while True:
+        df = get_recent_candles(mt5, symbol, timeframe)
+        ema = df['close'].ewm(span=ema_period).mean()
+        c1, c2 = df.iloc[-2], df.iloc[-1]
+        ema2 = ema.iloc[-1]
+        if active_trade:
+            check_exit → close if hit TP/SL/TIME
+        else:
+            signal = feg_entry_decision(active_trade, c1, c2, ema2, ...)
+            if signal:
+                place_order(..., test=test, magic=212100, comment="FEG")
+                active_trade = signal
+        sleep(interval)
+```
+
+### 8. Order Execution (`src/orders.py`)
+
+```
+place_order(symbol, direction, volume, sl, tp, credentials, test, magic, comment)
+    if test:
+        return True, "[TEST] simulated", None
+    mt5 = get_mt5_connection(credentials)
+    request = {action, symbol, type, volume, price, sl, tp, magic, comment}
+    result = mt5.order_send(request)
+    return success, message, ticket
+```
+
+### 9. Bot Manager (`src/bot_manager.py`)
+
+UI → `start_bot()` → `build_bot_command()` → `subprocess.Popen()`.
+
+State lưu: `data/running_bots.json`
+
 ```json
 {
-  "bot_id": "master_candle_ETHUSDm_admin_12345",
-  "strategy": "master_candle",
-  "symbol": "ETHUSDm",
-  "user": "admin",
-  "pid": 12345,
-  "status": "running",
-  "started_at": "2026-02-26T10:30:00",
-  "params": { ... }
+  "bot_id": {
+    "strategy": "feg_ema21",
+    "symbol": "XAUUSD",
+    "test": true,
+    "ema_period": 21,
+    "ema_distance_enabled": false,
+    "ema_distance_pips": 0.0,
+    "pid": 12345,
+    ...
+  }
 }
 ```
 
----
+### 10. Backtest History (`src/backtest_history.py`)
 
-### 3. Bot Runner (src/bot_runner.py) - Main Trading Loop
+```
+save_backtest_result(config, results, strategy_name, symbol)
+    → data/backtest_history.json (append)
 
-**Purpose**: Core bot logic - monitors entry conditions, executes trades, manages positions
+history_to_dataframe(history)
+    → pd.DataFrame with columns:
+       core: Date, Strategy, Symbol, Trades, Win Rate%, P/F, Total Pips
+       config: Timeframe, Entry Type, EMA Period, EMA Dist, ...
+       summary: Wins, Losses, Avg Pips, Total USD, ...
 
-**Entry Point**:
-```bash
-python src/bot_runner.py \
-  --strategy master_candle \
-  --symbol ETHUSDm \
-  --user admin \
-  --timeframe M5 \
-  --entry_time 21:05 \
-  --entry_mode close \
-  --rr_ratio 2.0 \
-  --max_candles 7 \
-  [... more parameters]
+create_excel_export(config, results, trades_df)
+    → BytesIO (Sheet1: Config+Summary, Sheet2: Trades)
 ```
 
-**Main Loop Stages**:
+## Data Flow: Backtest
 
-#### Stage 1: Initialization
-- Load strategy config from `strategies/master_candle.yaml`
-- Fetch MT5 credentials for user from `config/auth.yaml`
-- Validate all parameters
-- Setup logging to `logs/bot_{id}_{timestamp}.log`
-- Send startup notification to Telegram
-
-#### Stage 2: Entry Detection Loop
-- Sleep for `--interval` seconds (default: 1s)
-- Check if current time matches candle close time
-  - Entry time: "21:05" (candle OPEN)
-  - Trigger: 21:05 + timeframe (e.g., M5 → 21:10, H1 → 22:05)
-- Verify not already traded today (`last_entry_date != today`)
-
-#### Stage 3: Candle Analysis
-- Connect to MT5 with credentials
-- Fetch last CLOSED candle (not current open)
-- Analyze direction:
-  - **Bullish** (close > open): BUY signal
-  - **Bearish** (close < open): SELL signal
-  - **Doji** (close == open): No trade
-- Calculate trade parameters:
-  - Entry price (from candle close)
-  - Stop Loss: Low - (SL_PIPS × pip_value) for BUY
-  - Take Profit: Entry ± (Risk × RR_Ratio)
-  - Lot size: Fixed or risk-based calculation
-
-#### Stage 4: Order Placement
-- **Entry Mode: "close"** (Market Order)
-  - Place market order at candle close price
-- **Entry Mode: "range_percent"** (Pending LIMIT Order)
-  - Calculate LIMIT entry price at X% of candle range
-  - Place pending LIMIT order
-  - If rejected: Retry for `--pending_order_max_candles` (default: 3)
-  - If not filled after `--pending_order_expire_candles`: Cancel
-
-**Pending Order Retry Logic**:
-- Saves signal data when LIMIT fails
-- Retries same LIMIT price on next candles
-- Converts to MARKET if price moves to/past entry
-- Cancels if max candles exceeded
-- Skips if price moved past SL (trade invalidated)
-
-#### Stage 5: Position Management
-- **Move SL to Breakeven** (if enabled):
-  - When trade reaches `--breakeven_trigger_percent` of TP
-  - Move SL to: Entry price OR latest candle close price
-  - Prevents further losses on winning trades
-- **Exit Conditions**:
-  - TP hit: Price-based (immediate exit)
-  - SL hit: Close-based (candle closes beyond SL)
-  - Time limit: Close after `--max_candles` candles
-
-#### Stage 6: Notifications & Logging
-- Send Telegram alerts:
-  - Startup confirmation
-  - Order placed
-  - SL/TP moved
-  - Exit executed
-  - Errors
-- Log all events to file for debugging
-
----
-
-### 4. Strategy Module (src/strategy.py)
-
-**Purpose**: Master Candle strategy logic
-
-**Key Function**: `analyze_master_candle()`
-- Input: OHLC candle data
-- Output: Trade signal (direction, entry, SL, TP) or None
-
-**Strategy Rules**:
 ```
-Time: 21:05 HCM (Asia/Ho_Chi_Minh timezone)
-- Bullish (Close > Open): BUY, SL = Low - 30 pips
-- Bearish (Close < Open): SELL, SL = High + 30 pips
-- Doji (Close == Open): Skip (no trade)
-
-Risk/Reward: RR 1:2
-- Risk = Entry - SL
-- Reward = Risk × 2
-- TP = Entry + Reward
-
-Time Limit: 7 candles (~35 min for M5)
+User chọn Strategy + Symbol + Date Range + Params
+    ↓ (5_Backtest.py)
+fetch_historical_data(MT5)
+    ↓
+run_backtest(df, ..., entry_type)
+    ↓ [pattern]
+_run_feg_backtest → trades list + equity curve
+    ↓
+calculate_stats → win_rate, profit_factor, ...
+    ↓
+Hiển thị UI (metrics, chart, trades table)
+    ↓ (optional)
+save_backtest_result → data/backtest_history.json
 ```
 
----
+## Data Flow: Live Bot
 
-### 5. Order Management (src/orders.py)
-
-**Purpose**: Execute MT5 orders and fetch position data
-
-**Key Functions**:
-
-| Function | Purpose |
-|----------|---------|
-| `get_mt5_connection()` | Initialize MT5 and login |
-| `fetch_open_positions()` | Get all open positions |
-| `close_position()` | Close position by ticket |
-| `place_order()` | Market order |
-| `place_pending_order()` | Pending LIMIT order |
-
----
-
-### 6. Backtest Engine (src/backtest.py)
-
-**Purpose**: Simulate strategy on historical data
-
-**Key Components**:
-- Historical data fetching from MT5
-- Trade simulation with OHLC data
-- Lot size calculation (fixed or risk-based)
-- P&L tracking
-- Statistics generation
-
-**Backtesting Features**:
-- Entry mode: Market or LIMIT with retry logic
-- Exit types: Price-based (TP), Close-based (SL), Time limit
-- Move SL to breakeven feature
-- Risk compounding option
-
----
-
-### 7. Data Storage
-
-| File | Purpose |
-|------|---------|
-| `data/running_bots.json` | Active bot processes |
-| `data/orders.csv` | Trade history (symbol, direction, lot, entry, exit, P&L) |
-| `data/bot_config_history.json` | Config snapshots for each bot run |
-| `data/backtest_history.json` | Backtest result history |
-| `config/auth.yaml` | MT5 credentials per user |
-| `logs/bot_*.log` | Per-bot execution logs |
-
----
-
-### 8. Supporting Modules
-
-#### src/utils.py
-- `get_pip_value()`: Symbol-specific pip size (0.0001 for forex, 0.01 for metals, 1.0 for crypto)
-- `get_point_value()`: Point size for broker (usually 1/10 of pip for 5-digit brokers)
-- `get_pip_value_per_lot()`: Value per pip per lot (for risk calculation)
-- `check_exit()`: Verify if position should exit (TP/SL/Time limit)
-- `non_zero_range()`: Handle zero-value ranges in crypto data
-
-#### src/calculation.py
-- Technical indicator calculations (MACD, Stochastic, MA, EMA)
-- Crossover detection
-
-#### src/telegram.py
-- Send Telegram notifications asynchronously
-- Separate channels for dev (errors) and user (trades)
-
-#### src/auth.py
-- Load/save MT5 credentials per user
-- Credential validation
-
-#### src/strategy_manager.py
-- Load strategy config from YAML files
-- Get strategy parameters
-
-#### src/symbol_validator.py
-- Validate trading symbols against broker's available symbols
-- Check symbol properties (min lot, step, etc.)
-
-#### src/backtest_history.py & bot_config_history.py
-- Persist historical backtest results
-- Track configuration changes for debugging
-
----
-
-## Data Flow
-
-### Order Entry Flow
 ```
-User clicks "Start Bot" in UI
+User click "Start Bot" (1_Bots.py)
     ↓
-Bot Manager spawns bot_runner.py subprocess
+build_bot_command → ["python", "src/bot_runner.py", "--strategy", ...]
     ↓
-Bot Runner waits for entry_time
+subprocess.Popen → pid lưu vào running_bots.json
+    ↓ (subprocess vòng lặp)
+get_recent_candles(MT5) → c1, c2, EMA
+feg_entry_decision → signal dict | None
+    ↓ (có signal)
+place_order(test=True/False)
     ↓
-Entry time arrives → Connect to MT5
-    ↓
-Fetch candle data
-    ↓
-Analyze direction (bullish/bearish)
-    ↓
-Calculate SL, TP, Lot size
-    ↓
-Place order (Market or LIMIT)
-    ↓
-Send Telegram alert
-    ↓
-Log to file
+Telegram notify
+    ↓ (có active_trade)
+check_exit → close_position_by_ticket
 ```
 
-### Position Management Flow
+## Module Dependency
+
 ```
-Position opened
-    ↓
-Loop: Check every N seconds
-    ├─ TP hit? → Market close order
-    ├─ SL hit? → Market close order
-    ├─ Time limit? → Market close order
-    ├─ Move SL to BE? (if enabled at N% profit)
-    │   └─ Modify SL to entry or candle close price
-    └─ Repeat
-    ↓
-Position closed
-    ↓
-Log exit details + P&L
-    ↓
-Send Telegram alert
-    ↓
-Save to orders.csv
-```
+app.py
+└── src/auth.py
 
----
+pages/5_Backtest.py
+├── src/backtest.py
+│   ├── src/utils.py (get_pip_value, check_exit, compute_trade_levels)
+│   └── src/feg_strategy.py (detect_feg_signal)
+├── src/strategy_manager.py (get_strategy_parameters)
+└── src/backtest_history.py
 
-## Key Parameters & Features
+pages/1_Bots.py
+├── src/bot_manager.py (start/stop/restart)
+└── src/strategy_manager.py
 
-### Entry Configuration
-- **entry_time**: Candle open time (e.g., "21:05") - bot triggers at close
-- **timeframe**: M5, M15, H1, H4, D1
-- **entry_mode**: "close" (market), "range_percent" (LIMIT)
-- **entry_percent**: Entry price % of candle range (for range_percent mode)
-
-### Order Management
-- **pending_order_max_candles**: Retry LIMIT order for N candles (default: 3)
-- **pending_order_expire_candles**: Cancel LIMIT if not filled after N candles (default: 0 = wait)
-
-### Risk Management
-- **rr_ratio**: Risk:Reward ratio (default: 2.0)
-- **sl_pips**: Stop loss distance in pips
-- **lot_size**: Fixed lot (fixed mode)
-- **risk_percent**: Risk % per trade (flex mode)
-- **risk_amount**: Fixed USD risk per trade
-- **risk_compounding**: Use current equity (1) or starting equity (0)
-
-### Exit Configuration
-- **tp_type**: "price_based" (immediate exit) or "close_based" (wait for candle close)
-- **sl_type**: "price_based" or "close_based"
-- **max_candles**: Close position after N candles if not exited
-- **move_sl_to_breakeven**: Enable SL movement to entry price
-- **breakeven_trigger_percent**: TP % to trigger breakeven move
-- **breakeven_target**: Move SL to "entry" price or latest "close" price
-
-### Control Parameters
-- **test**: 1 (test mode, no real trades), 0 (live trading)
-- **interval**: Check frequency in seconds (default: 1)
-
----
-
-## Error Handling & Resilience
-
-### Connection Errors
-- MT5 login fails → Retry on next loop iteration
-- Symbol not found → Log error, skip trade
-- Broker rejected order → Retry LIMIT for pending_order_max_candles
-
-### Data Errors
-- Invalid candle data → Skip and wait for next candle
-- Missing credentials → Stop bot immediately with error alert
-
-### Telegram Failures
-- Non-blocking async sends (doesn't block trading loop)
-- Timeout after 3 seconds
-
-### Logging
-- UTF-8 encoded file logs with line buffering
-- Timestamped console output
-- Separate error, warning, and info levels
-
----
-
-## Security Considerations
-
-- MT5 credentials stored in `config/auth.yaml` (not in code)
-- Passwords logged as asterisks
-- Telegram errors sent to dev channel only
-- Trade alerts sent to user channel only
-- Bot runs in test mode by default
-
----
-
-## Performance
-
-- Bot loop interval: 1 second (configurable)
-- MT5 connection: ~100-200ms per call
-- Entry detection latency: <1 second (precise minute matching)
-- Candle fetch latency: 100-200ms
-- Max concurrent bots: Limited only by system resources
-- Each bot process: ~50-100 MB RAM
-
----
-
-## Deployment
-
-**Single Bot Example**:
-```bash
-python src/bot_runner.py \
-  --strategy master_candle \
-  --symbol ETHUSDm \
-  --user admin \
-  --test 0 \
-  --entry_mode close
+src/bot_runner.py
+├── src/feg_strategy.py (analyze_feg)
+├── src/orders.py (place_order)
+├── src/utils.py (check_exit)
+├── src/strategy_manager.py
+└── src/telegram.py
 ```
 
-**Multi-Bot Deployment**:
-- Use Streamlit UI to start multiple bots
-- Each bot runs in separate subprocess
-- Independent MT5 connections per bot
-- Shared data directory for history tracking
+## Quy Tắc Entry Type
 
----
+Mỗi file YAML phải có `entry.type`. Backward-compat: thiếu `entry.type` → mặc định `"time"`.
 
-## Future Enhancements
+| Field YAML | Python kwarg | Default |
+|---|---|---|
+| `entry.type` | `entry_type` | `"time"` |
+| `entry.ema_period` | `ema_period` | `21` |
+| `entry.ema_distance.enabled` | `ema_distance_enabled` | `False` |
+| `entry.ema_distance.pips` | `ema_distance_pips` | `0.0` |
 
-- Multiple strategy support (templates)
-- Advanced order types (Trailing SL, OCO)
-- Position scaling (pyramid entries)
-- Correlation-based multi-symbol management
-- ML-based entry signal validation
-- Mobile app integration
+## Tài Liệu Liên Quan
+
+- [Project Overview & PDR](./project-overview-pdr.md)
+- [Codebase Summary](./codebase-summary.md)
+- [Project Roadmap](./project-roadmap.md)
+- [Code Standards](./code-standards.md)

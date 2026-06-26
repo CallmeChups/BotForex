@@ -24,10 +24,8 @@ from src.auth import require_auth, get_user_mt5_credentials, has_mt5_credentials
 username, name = require_auth()
 
 from src.backtest import fetch_historical_data, run_backtest
-from src.backtest_multi import run_backtest_multi
 from src.utils import is_mt5_available
 from src.strategy_manager import list_strategies, get_strategy_parameters
-from src.i18n import t, lang_toggle_button
 from src.backtest_history import (
     save_backtest_result,
     get_history,
@@ -40,76 +38,463 @@ from src.backtest_history import (
 TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
 
 
-# ── Cached data loaders ──
-@st.cache_data(ttl=30)
-def _cached_strategies():
-    return list_strategies()
-
-@st.cache_data(ttl=30)
-def _cached_strategy_params(strategy_id):
-    return get_strategy_parameters(strategy_id)
-
-
 def main():
-    lang_toggle_button(st.sidebar)
-    st.title(t("page_title"))
+    st.title("Backtest Strategy")
 
     now = datetime.now(TIMEZONE)
-    st.markdown(f"**{t('current_time')}:** {now.strftime('%H:%M:%S %d/%m/%Y')} (HCM)")
+    st.markdown(f"**Current Time:** {now.strftime('%H:%M:%S %d/%m/%Y')} (HCM)")
 
     st.divider()
 
     # Check MT5 availability
     if not is_mt5_available():
-        st.error(t("no_mt5"))
+        st.error("MT5 not available (Windows only). Backtest requires MT5 for historical data.")
         show_demo_results()
         return
 
     # Check if user has MT5 credentials
     if not has_mt5_credentials(username):
-        st.warning(t("no_credentials"))
-        st.page_link("pages/8_Settings.py", label=t("go_settings"), icon="⚙️")
+        st.warning("MT5 account not configured. Please go to Settings to add your MT5 credentials.")
+        st.page_link("pages/8_Settings.py", label="Go to Settings", icon="⚙️")
         show_demo_results()
         return
 
     # Get user credentials
     user_creds = get_user_mt5_credentials(username)
 
-    # Get available strategies (cached)
-    strategies = _cached_strategies()
+    # Get available strategies
+    strategies = list_strategies()
     enabled_strategies = [s for s in strategies if s.get('enabled', True)]
 
     if not enabled_strategies:
-        st.warning(t("no_strategies"))
-        st.page_link("pages/4_Strategies.py", label=t("go_strategies"), icon="📖")
+        st.warning("No strategies available. Create one in the Strategies page.")
+        st.page_link("pages/4_Strategies.py", label="Go to Strategies", icon="📖")
         show_demo_results()
         return
+
+    # Parameters
+    st.subheader("Backtest Parameters")
 
     # Strategy selection
     strategy_options = {s['name']: s['id'] for s in enabled_strategies}
     selected_strategy_name = st.selectbox(
-        t("strategy"),
+        "Select Strategy",
         options=list(strategy_options.keys())
     )
     selected_strategy = strategy_options[selected_strategy_name]
-    params = _cached_strategy_params(selected_strategy)
-    is_multi_strategy = params.get('window_start') is not None
+
+    # Load strategy parameters
+    params = get_strategy_parameters(selected_strategy)
+    entry_type = params.get('entry_type', 'time')
+    is_pattern = entry_type == 'pattern'
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        # Symbol - allow selection from strategy list OR custom input
+        strategy_symbols = params.get('symbols', [])
+
+        use_custom_symbol = st.checkbox("Custom symbol", value=False)
+
+        if use_custom_symbol:
+            symbol = st.text_input(
+                "Symbol",
+                value=os.getenv("SYMBOL", "XAUUSD"),
+                help="Enter any symbol"
+            )
+        elif strategy_symbols:
+            symbol = st.selectbox(
+                "Symbol",
+                options=strategy_symbols,
+                help="From strategy's supported symbols"
+            )
+        else:
+            symbol = st.text_input(
+                "Symbol",
+                value=os.getenv("SYMBOL", "XAUUSD"),
+                help="Trading symbol"
+            )
+
+        # Date range
+        default_end = now.date()
+        default_start = default_end - timedelta(days=30)
+
+        start_date = st.date_input(
+            "Start Date",
+            value=default_start,
+            max_value=default_end
+        )
+
+    with col2:
+        end_date = st.date_input(
+            "End Date",
+            value=default_end,
+            max_value=default_end
+        )
+
+        if is_pattern:
+            st.markdown("**EMA Filter**")
+            ema_period = st.number_input(
+                "EMA Period",
+                value=int(params.get('ema_period', 21)),
+                min_value=2, max_value=200,
+            )
+            ema_dist_enabled = st.checkbox(
+                "Xét khoảng cách EMA21",
+                value=bool(params.get('ema_distance_enabled', False)),
+                help="Bật để yêu cầu L2/H2 cách EMA21 tối thiểu (pips)",
+            )
+            if ema_dist_enabled:
+                ema_dist_pips = st.number_input(
+                    "Khoảng cách EMA (pips)",
+                    value=float(params.get('ema_distance_pips', 0) or 0),
+                    min_value=0.0, step=1.0,
+                )
+            else:
+                ema_dist_pips = 0.0
+            # entry_time not used for pattern; set placeholder so run_backtest signature is satisfied
+            entry_time = datetime.strptime("00:00", "%H:%M").time()
+        else:
+            ema_period = int(params.get('ema_period', 21))
+            ema_dist_enabled = False
+            ema_dist_pips = 0.0
+            entry_time_str = params.get('entry_time', '21:05')
+            use_custom_time = st.checkbox("Custom entry time", value=False)
+            if use_custom_time:
+                custom_time_str = st.text_input(
+                    "Entry Time",
+                    value="21:05",
+                    max_chars=5,
+                    help="Format: HH:MM (e.g., 21:05)",
+                    placeholder="HH:MM",
+                )
+                try:
+                    entry_time = datetime.strptime(custom_time_str, "%H:%M").time()
+                except ValueError:
+                    st.error("Invalid time format. Use HH:MM (e.g., 21:05)")
+                    entry_time = datetime.strptime("21:05", "%H:%M").time()
+            else:
+                entry_time = st.time_input(
+                    "Entry Time",
+                    value=datetime.strptime(entry_time_str, "%H:%M").time(),
+                    step=300,
+                    help=f"From strategy: {entry_time_str}",
+                    disabled=True,
+                )
+                st.caption(f"Strategy default: {entry_time_str}")
+
+    with col3:
+        # Timeframe - allow custom or use strategy default
+        strategy_timeframe = params.get('timeframe', 'M5')
+        timeframe_options = ["M1", "M5", "M15", "M30", "H1", "H4", "D1"]
+
+        use_custom_timeframe = st.checkbox("Custom timeframe", value=False)
+
+        if use_custom_timeframe:
+            timeframe = st.selectbox(
+                "Timeframe",
+                options=timeframe_options,
+                index=timeframe_options.index("M5"),
+                help="Select timeframe for candles"
+            )
+        else:
+            timeframe = strategy_timeframe
+            st.selectbox(
+                "Timeframe",
+                options=[strategy_timeframe],
+                help=f"From strategy: {strategy_timeframe}",
+                disabled=True
+            )
+            st.caption(f"Strategy default: {strategy_timeframe}")
+
+        rr_ratio = st.number_input(
+            "RR Ratio",
+            value=float(params.get('rr_ratio', 2.0)),
+            min_value=0.5,
+            max_value=10.0,
+            step=0.5,
+            help=f"Default: {params.get('rr_ratio', 2.0)}"
+        )
+
+        use_max_candles = st.checkbox(
+            "Enable Max Candles",
+            value=True,
+            help="Uncheck to disable time-based exit (only TP/SL)"
+        )
+
+        if use_max_candles:
+            max_candles = st.number_input(
+                "Max Candles",
+                value=int(params.get('max_candles', 7)),
+                min_value=1,
+                max_value=50,
+                help=f"Default: {params.get('max_candles', 7)} candles"
+            )
+        else:
+            max_candles = 0  # 0 means no limit
+            st.caption("Time exit disabled - trades exit only on TP or SL")
+
+    # Show strategy info
+    st.caption(f"Strategy: **{selected_strategy_name}** | Timeframe: {timeframe}")
 
     st.divider()
 
-    # Config fragment (isolated reruns)
-    show_backtest_config(params, selected_strategy_name, user_creds, now, is_multi_strategy)
+    # Entry Configuration
+    st.subheader("Entry")
 
-    # Display batch summary if multiple entry times were run
-    if 'backtest_batch_results' in st.session_state and len(st.session_state['backtest_batch_results']) > 1:
-        show_batch_summary(
-            st.session_state['backtest_batch_results'],
-            st.session_state.get('backtest_strategy', ''),
-            st.session_state.get('backtest_symbol', ''),
-            st.session_state.get('backtest_lot_mode', 'fixed')
+    col1, col2 = st.columns(2)
+
+    with col1:
+        entry_mode = st.radio(
+            "Entry Mode",
+            options=["close", "range_percent"],
+            format_func=lambda x: "Close Price" if x == "close" else "Body Percent (%)",
+            horizontal=True,
+            help="Close: Enter at candle close | Body %: Enter at % of candle body (Close-Open)"
         )
 
-    # Display detailed results for selected timeframe
+    with col2:
+        if entry_mode == "range_percent":
+            entry_percent = st.number_input(
+                "Entry Percent (%)",
+                value=30.0,
+                min_value=0.0,
+                max_value=100.0,
+                step=5.0,
+                help="BUY: Close - X%(C-O) | SELL: Close + X%(O-C)"
+            )
+            st.caption(f"BUY: Close - {entry_percent}%(body) | SELL: Close + {entry_percent}%(body)")
+        else:
+            entry_percent = 0.0
+            st.caption("Entry at candle Close price")
+
+    st.divider()
+
+    # Exit Type Configuration
+    st.subheader("Exit Types")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        tp_type = st.radio(
+            "Take Profit (TP) Exit",
+            options=["price_based", "close_based"],
+            format_func=lambda x: "Price-based (Immediate)" if x == "price_based" else "Close-based (Delayed)",
+            horizontal=True,
+            help="Price-based: Exit when wick touches TP | Close-based: Exit when candle closes beyond TP"
+        )
+        if tp_type == "price_based":
+            st.caption("TP triggers when High/Low touches TP level (exits at TP price)")
+        else:
+            st.caption("TP triggers when candle CLOSES beyond TP (exits at close price)")
+
+    with col2:
+        sl_type = st.radio(
+            "Stop Loss (SL) Exit",
+            options=["close_based", "price_based"],
+            format_func=lambda x: "Close-based (Delayed)" if x == "close_based" else "Price-based (Immediate)",
+            horizontal=True,
+            help="Close-based: Exit when candle closes beyond SL | Price-based: Exit when wick touches SL"
+        )
+        if sl_type == "close_based":
+            st.caption("SL triggers when candle CLOSES beyond SL (exits at close price)")
+        else:
+            st.caption("SL triggers when High/Low touches SL level (exits at SL price)")
+
+    st.divider()
+
+    # Lot Size Configuration
+    st.subheader("Lot Size")
+
+    lot_mode = st.radio(
+        "Lot Size Mode",
+        options=["fixed", "flex"],
+        format_func=lambda x: "Fixed" if x == "fixed" else "Flex (Risk-based)",
+        horizontal=True,
+        help="Fixed: manual lot size | Flex: calculated from risk % and SL distance"
+    )
+
+    # Buffer K - used for both modes (SL = candle body + k)
+    col1, col2 = st.columns(2)
+
+    with col1:
+        buffer_k = st.number_input(
+            "Buffer K (pips)",
+            value=float(params.get('buffer_k', 5)),
+            min_value=0.0,
+            max_value=200.0,
+            step=1.0,
+            help="SL = candle body + k pips"
+        )
+
+    st.caption("SL pips = (Close - Low) + k for BUY, (High - Close) + k for SELL")
+
+    if lot_mode == "fixed":
+        with col2:
+            fixed_lot = st.number_input(
+                "Lot Size",
+                value=float(params.get('lot_size', 0.01)),
+                min_value=0.01,
+                max_value=10.0,
+                step=0.01,
+                format="%.2f"
+            )
+        # Placeholders for flex params
+        risk_percent = 0.5
+        risk_amount = 0.0
+        risk_mode = "percent"
+        starting_equity = 1000.0
+    else:
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            starting_equity = st.number_input(
+                "Starting Equity (USD)",
+                value=1000.0,
+                min_value=100.0,
+                max_value=1000000.0,
+                step=100.0,
+                help="Initial account equity"
+            )
+
+        with col2:
+            risk_mode = st.radio(
+                "Risk Mode",
+                options=["percent", "fixed_amount"],
+                format_func=lambda x: "Percentage (%)" if x == "percent" else "Fixed Amount ($)",
+                horizontal=True,
+                help="Percent: risk changes with equity | Fixed: constant risk per trade"
+            )
+
+        with col3:
+            if risk_mode == "percent":
+                risk_percent = st.number_input(
+                    "Risk per Trade (%)",
+                    value=0.5,
+                    min_value=0.1,
+                    max_value=5.0,
+                    step=0.1,
+                    format="%.1f",
+                    help="Percentage of current equity to risk"
+                )
+                risk_amount = 0.0
+                # Calculate example
+                example_r = starting_equity * (risk_percent / 100)
+                st.caption(f"Initial: ${starting_equity:.0f} × {risk_percent}% = ${example_r:.2f}/trade")
+            else:
+                risk_amount = st.number_input(
+                    "Risk per Trade ($)",
+                    value=5.0,
+                    min_value=1.0,
+                    max_value=1000.0,
+                    step=1.0,
+                    format="%.2f",
+                    help="Fixed dollar amount to risk per trade"
+                )
+                risk_percent = 0.0
+                st.caption(f"Constant ${risk_amount:.2f} risk per trade")
+
+        fixed_lot = 0.01  # Not used in flex mode
+
+    sl_pips = 0  # Not used - always calculated from candle + buffer k
+
+    st.divider()
+
+    # Run backtest button
+    if st.button("Run Backtest", type="primary", use_container_width=True):
+        with st.spinner("Fetching historical data..."):
+            # Convert dates to datetime
+            start_dt = datetime.combine(start_date, datetime.min.time()).replace(tzinfo=TIMEZONE)
+            end_dt = datetime.combine(end_date, datetime.max.time()).replace(tzinfo=TIMEZONE)
+
+            # Fetch data
+            df, error = fetch_historical_data(symbol, start_dt, end_dt, user_creds, timeframe)
+
+            if error:
+                st.error(f"Failed to fetch data: {error}")
+                return
+
+            if df is None or df.empty:
+                st.warning("No data found for the selected period")
+                return
+
+            st.success(f"Fetched {len(df)} candles")
+
+        with st.spinner("Running backtest..."):
+            # Run backtest
+            results = run_backtest(
+                df=df,
+                symbol=symbol,
+                entry_hour=entry_time.hour,
+                entry_minute=entry_time.minute,
+                sl_pips=sl_pips,
+                rr_ratio=rr_ratio,
+                max_candles=max_candles,
+                lot_mode=lot_mode,
+                fixed_lot=fixed_lot,
+                risk_percent=risk_percent,
+                risk_amount=risk_amount,
+                risk_mode=risk_mode,
+                buffer_k=buffer_k,
+                starting_equity=starting_equity,
+                tp_type=tp_type,
+                sl_type=sl_type,
+                entry_mode=entry_mode,
+                entry_percent=entry_percent,
+                entry_type=entry_type,
+                ema_period=ema_period,
+                ema_distance_enabled=ema_dist_enabled,
+                ema_distance_pips=ema_dist_pips,
+            )
+
+        # Build config dict for export/history
+        backtest_config = {
+            'timeframe': timeframe,
+            'start_date': str(start_date),
+            'end_date': str(end_date),
+            'entry_time': entry_time.strftime('%H:%M'),
+            'entry_mode': entry_mode,
+            'entry_percent': entry_percent,
+            'rr_ratio': rr_ratio,
+            'max_candles': max_candles,
+            'buffer_k': buffer_k,
+            'lot_mode': lot_mode,
+            'tp_type': tp_type,
+            'sl_type': sl_type,
+            'entry_type': entry_type,
+            'ema_period': ema_period,
+            'ema_dist_enabled': ema_dist_enabled,
+            'ema_dist_pips': ema_dist_pips,
+        }
+
+        if lot_mode == 'fixed':
+            backtest_config['fixed_lot'] = fixed_lot
+        else:
+            backtest_config['starting_equity'] = starting_equity
+            backtest_config['risk_mode'] = risk_mode
+            backtest_config['risk_percent'] = risk_percent
+            backtest_config['risk_amount'] = risk_amount
+
+        # Store results in session state
+        st.session_state['backtest_results'] = results
+        st.session_state['backtest_symbol'] = symbol
+        st.session_state['backtest_strategy'] = selected_strategy_name
+        st.session_state['backtest_lot_mode'] = lot_mode
+        st.session_state['backtest_timeframe'] = timeframe
+        st.session_state['backtest_tp_type'] = tp_type
+        st.session_state['backtest_sl_type'] = sl_type
+        st.session_state['backtest_config'] = backtest_config
+
+        # Auto-save to history
+        if results.get('total_trades', 0) > 0:
+            save_backtest_result(
+                config=backtest_config,
+                results=results,
+                strategy_name=selected_strategy_name,
+                symbol=symbol
+            )
+
+    # Display results if available
     if 'backtest_results' in st.session_state:
         display_results(
             st.session_state['backtest_results'],
@@ -123,602 +508,7 @@ def main():
         )
 
     # Show history section
-    show_history_section(username)
-
-
-def _apply_bt_preset(config: dict):
-    """Queue a preset to be applied on next rerun (before widgets render).
-
-    Cannot write to widget keys after widgets are instantiated in the same
-    script run. Instead, store the config as 'pending' and st.rerun().
-    The show_backtest_config fragment picks it up before creating widgets.
-    """
-    st.session_state['bt_preset_pending'] = config
-
-
-def _flush_pending_preset():
-    """Apply pending preset into widget keys. Call BEFORE any widget is created.
-
-    Streamlit allows writing to session_state keys before the widget with that
-    key is instantiated — so this must run at the top of the fragment.
-    """
-    config = st.session_state.pop('bt_preset_pending', None)
-    if config is None:
-        return
-
-    # Also store raw config for any non-widget reads (first-render defaults)
-    st.session_state['bt_preset'] = config
-
-    widget_map = {
-        'timeframe':                    'bt_w_timeframe',
-        'entry_time':                   'bt_w_entry_time',
-        'window_start':                 'bt_w_window_start',
-        'window_end':                   'bt_w_window_end',
-        'priority_direction':           'bt_w_priority_dir',
-        'entry_mode':                   'bt_w_entry_mode',
-        'rr_ratio':                     'bt_w_rr_ratio',
-        'buffer_k':                     'bt_w_buffer_k',
-        'entry_percent':                'bt_w_entry_pct',
-        'pending_order_expire_candles': 'bt_w_expire_candles',
-        'tp_type':                      'bt_w_tp_type',
-        'sl_type':                      'bt_w_sl_type',
-        'max_candles':                  'bt_w_max_candles_val',
-        'move_sl_to_breakeven':         'bt_be',
-        'breakeven_trigger_percent':    'bt_w_be_trigger',
-        'breakeven_target':             'bt_be_target',
-        'lot_mode':                     'bt_w_lot_mode',
-        'fixed_lot':                    'bt_w_fixed_lot',
-        'starting_equity':              'bt_w_equity',
-        'risk_mode':                    'bt_w_risk_mode',
-        'risk_percent':                 'bt_w_risk_pct',
-        'risk_amount':                  'bt_w_risk_amt',
-        'risk_compounding':             'bt_w_compounding',
-    }
-
-    for cfg_key, widget_key in widget_map.items():
-        if cfg_key in config and config[cfg_key] is not None:
-            st.session_state[widget_key] = config[cfg_key]
-
-    # Special handling: max_candles checkbox
-    mc = config.get('max_candles')
-    if mc is not None:
-        st.session_state['bt_max_c'] = (mc > 0)
-        if mc > 0:
-            st.session_state['bt_w_max_candles_val'] = int(mc)
-
-
-@st.fragment
-def show_backtest_config(params, selected_strategy_name, user_creds, now, is_multi_strategy=False):
-    """Backtest config widgets — no dynamic computation, stable widget tree"""
-
-    # Flush any pending preset into widget keys BEFORE widgets are created
-    _flush_pending_preset()
-
-    symbol_help = (
-        "Pip info per symbol:\n"
-        "XAUUSD: pip=0.01, $10/pip/lot | BTCUSDm: pip=1, $1/pip/lot\n"
-        "ETHUSD: pip=0.01, $0.01/pip/lot | EURUSD: pip=0.0001, $10/pip/lot\n"
-        "USDJPY: pip=0.01, ~$6.67/pip/lot | AUDUSD: pip=0.0001, $10/pip/lot"
-    )
-    buffer_help = (
-        "Extra points beyond candle wick for SL.\n"
-        "XAUUSD: 1pt=0.01 (5pts=$0.05) | BTCUSD: 1pt=1 (50pts=$50)\n"
-        "EURUSD: 1pt=0.00001 (50pts=$0.0005)"
-    )
-
-    # Read preset (if any was loaded from history)
-    preset = st.session_state.get('bt_preset', {})
-
-    # ── SECTION 1: Market ──
-    st.markdown(f"**{t('section_market')}**")
-    col1, col2, col3 = st.columns([2, 1, 1])
-
-    with col1:
-        strategy_symbols = params.get('symbols', [])
-        if strategy_symbols:
-            symbol = st.selectbox(t("symbol") + "*", options=strategy_symbols, help=symbol_help)
-        else:
-            symbol = st.text_input(t("symbol") + "*", value="XAUUSD", help=symbol_help)
-
-    with col2:
-        strategy_timeframe = params.get('timeframe', 'M5')
-        tf_options = ["M1", "M5", "M15", "M30", "H1", "H4", "D1"]
-        preset_tf = preset.get('timeframe', strategy_timeframe)
-        tf_idx = tf_options.index(preset_tf) if preset_tf in tf_options else (tf_options.index(strategy_timeframe) if strategy_timeframe in tf_options else 1)
-        timeframe = st.selectbox(t("timeframe"), options=tf_options, index=tf_idx, key="bt_w_timeframe")
-
-    with col3:
-        if is_multi_strategy:
-            ws_str = preset.get('window_start', params.get('window_start', '09:00'))
-            window_start_input = st.text_input("Window Start", value=ws_str, max_chars=5, help="HH:MM - scan window start", key="bt_w_window_start")
-            try:
-                ws_time = datetime.strptime(window_start_input, "%H:%M").time()
-            except ValueError:
-                ws_time = datetime.strptime("09:00", "%H:%M").time()
-            entry_times = []  # not used for multi strategy
-        else:
-            entry_time_str = preset.get('entry_time', params.get('entry_time', '21:05'))
-            entry_time_input = st.text_input(t("entry_time"), value=entry_time_str, max_chars=5, help="HH:MM format", key="bt_w_entry_time")
-            try:
-                entry_times = [datetime.strptime(entry_time_input, "%H:%M").time()]
-            except ValueError:
-                entry_times = [datetime.strptime("21:05", "%H:%M").time()]
-
-    # Date range
-    col1, col2 = st.columns(2)
-    default_end = now.date()
-    default_start = default_end - timedelta(days=30)
-
-    with col1:
-        start_date = st.date_input(t("start_date"), value=default_start, max_value=default_end)
-    with col2:
-        end_date = st.date_input(t("end_date"), value=default_end, max_value=default_end)
-
-    if is_multi_strategy:
-        # Window end + priority direction fields
-        col1, col2 = st.columns(2)
-        with col1:
-            we_str = preset.get('window_end', params.get('window_end', '11:00'))
-            window_end_input = st.text_input("Window End", value=we_str, max_chars=5, help="HH:MM - scan window end", key="bt_w_window_end")
-            try:
-                we_time = datetime.strptime(window_end_input, "%H:%M").time()
-            except ValueError:
-                we_time = datetime.strptime("11:00", "%H:%M").time()
-        with col2:
-            pd_options = ["auto", "BUY", "SELL"]
-            pd_default = preset.get('priority_direction', params.get('priority_direction', 'auto'))
-            pd_idx = pd_options.index(pd_default) if pd_default in pd_options else 0
-            priority_direction = st.selectbox("Priority Direction", options=pd_options, index=pd_idx,
-                                              help="Force BUY/SELL or auto-detect from master candle", key="bt_w_priority_dir")
-    else:
-        # Batch entry times
-        with st.expander(t("batch_entry_times")):
-            batch_str = st.text_input(t("batch_comma_times"), value="21:05, 22:00, 23:00",
-                                      help="Creates one backtest per time")
-            use_batch = st.checkbox(t("batch_enable"), value=False, key="bt_batch")
-            if use_batch:
-                entry_times = []
-                for _t in batch_str.split(','):
-                    _t = _t.strip()
-                    try:
-                        entry_times.append(datetime.strptime(_t, "%H:%M").time())
-                    except ValueError:
-                        pass
-                if not entry_times:
-                    entry_times = [datetime.strptime("21:05", "%H:%M").time()]
-
-    st.divider()
-
-    # ── SECTION 2: Trade Setup ──
-    st.markdown(f"**{t('section_trade_setup')}**")
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        entry_mode_options = ["close", "range_percent"]
-        preset_entry_mode = preset.get('entry_mode', 'close')
-        entry_mode_idx = entry_mode_options.index(preset_entry_mode) if preset_entry_mode in entry_mode_options else 0
-        entry_mode = st.radio(
-            t("entry_mode"), options=entry_mode_options,
-            format_func=lambda x: t("entry_mode_close") if x == "close" else t("entry_mode_range"),
-            horizontal=True,
-            index=entry_mode_idx,
-            help="Close: enter at candle close | Range %: LIMIT at % retracement",
-            key="bt_w_entry_mode"
-        )
-    with col2:
-        rr_ratio = st.number_input(
-            t("rr_ratio"), value=float(preset.get('rr_ratio', params.get('rr_ratio', 2.0))),
-            min_value=0.5, max_value=10.0, step=0.5, key="bt_w_rr_ratio"
-        )
-    with col3:
-        buffer_k = st.number_input(
-            t("buffer_k"), value=float(preset.get('buffer_k', 5.0)),
-            min_value=0.0, max_value=1000.0, step=1.0, help=buffer_help, key="bt_w_buffer_k"
-        )
-
-    # Range percent fields (always shown — ignored when entry_mode is "close")
-    col1, col2 = st.columns(2)
-    with col1:
-        entry_percent = st.number_input(
-            t("entry_percent"), value=float(preset.get('entry_percent', 30.0)),
-            min_value=0.0, max_value=100.0, step=5.0,
-            help=t("tip_entry_percent"),
-            key="bt_w_entry_pct"
-        )
-    with col2:
-        pending_order_expire_candles = st.number_input(
-            t("expire_candles"), value=int(preset.get('pending_order_expire_candles', 0)),
-            min_value=0, max_value=50, step=1,
-            help=t("tip_expire_candles"),
-            key="bt_w_expire_candles"
-        )
-
-    # ── SECTION 3: Exit Rules ──
-    with st.expander(t("section_exit_rules"), expanded=True):
-        col1, col2, col3, col4 = st.columns(4)
-
-        with col1:
-            tp_type_options = ["price_based", "close_based"]
-            preset_tp = preset.get('tp_type', 'price_based')
-            tp_type_idx = tp_type_options.index(preset_tp) if preset_tp in tp_type_options else 0
-            tp_type = st.radio(
-                t("tp_type"), options=tp_type_options,
-                format_func=lambda x: t("tp_price") if x == "price_based" else t("tp_close"),
-                index=tp_type_idx,
-                help=t("tip_tp_price"),
-                key="bt_w_tp_type"
-            )
-
-        with col2:
-            sl_type_options = ["close_based", "price_based"]
-            preset_sl = preset.get('sl_type', 'close_based')
-            sl_type_idx = sl_type_options.index(preset_sl) if preset_sl in sl_type_options else 0
-            sl_type = st.radio(
-                t("sl_type"), options=sl_type_options,
-                format_func=lambda x: t("sl_close") if x == "close_based" else t("sl_price"),
-                index=sl_type_idx,
-                help=t("tip_sl_close"),
-                key="bt_w_sl_type"
-            )
-
-        with col3:
-            preset_max_c = preset.get('max_candles', None)
-            use_max_candles = st.checkbox(t("max_candles"), value=True if preset_max_c is None or preset_max_c > 0 else False, key="bt_max_c")
-            max_candles = st.number_input(
-                t("max_candles_limit"), value=int(preset_max_c) if preset_max_c and preset_max_c > 0 else int(params.get('max_candles', 7)),
-                min_value=1, max_value=50,
-                help=t("tip_max_candles"),
-                key="bt_w_max_candles_val"
-            )
-            if not use_max_candles:
-                max_candles = 0
-
-        with col4:
-            preset_be = preset.get('move_sl_to_breakeven', False)
-            move_sl_to_breakeven = st.checkbox(t("breakeven"), value=bool(preset_be), key="bt_be",
-                                               help=t("tip_breakeven"))
-            breakeven_trigger_percent = st.number_input(
-                t("breakeven_trigger"), value=float(preset.get('breakeven_trigger_percent') or 50.0),
-                min_value=10.0, max_value=90.0, step=5.0,
-                help=t("tip_breakeven"),
-                key="bt_w_be_trigger"
-            )
-            be_target_options = ["entry", "close"]
-            preset_be_target = preset.get('breakeven_target', 'entry') or 'entry'
-            be_target_idx = be_target_options.index(preset_be_target) if preset_be_target in be_target_options else 0
-            breakeven_target = st.radio(
-                t("breakeven_sl_target"), options=be_target_options,
-                format_func=lambda x: t("breakeven_entry") if x == "entry" else t("breakeven_close"),
-                horizontal=True, key="bt_be_target", index=be_target_idx,
-                help=t("tip_breakeven")
-            )
-
-    # ── SECTION 4: Position Sizing ──
-    with st.expander(t("section_position"), expanded=True):
-        lot_mode_options = ["fixed", "flex"]
-        preset_lot_mode = preset.get('lot_mode', 'fixed')
-        lot_mode_idx = lot_mode_options.index(preset_lot_mode) if preset_lot_mode in lot_mode_options else 0
-        lot_mode = st.radio(
-            t("lot_mode"), options=lot_mode_options,
-            format_func=lambda x: t("lot_fixed") if x == "fixed" else t("lot_flex"),
-            horizontal=True, index=lot_mode_idx, key="bt_w_lot_mode",
-            help=t("tip_lot_fixed") if lot_mode_idx == 0 else t("tip_lot_flex")
-        )
-
-        # Fixed mode
-        fixed_lot = st.number_input(
-            t("lot_size"), value=float(preset.get('fixed_lot') or params.get('lot_size', 0.01)),
-            min_value=0.01, max_value=10.0, step=0.01, format="%.2f",
-            help=t("tip_lot_fixed"), key="bt_w_fixed_lot"
-        )
-
-        # Flex mode fields (always shown)
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            starting_equity = st.number_input(
-                t("starting_equity"), value=float(preset.get('starting_equity') or 1000.0),
-                min_value=100.0, max_value=1000000.0, step=100.0,
-                help=t("tip_starting_equity"), key="bt_w_equity"
-            )
-        with col2:
-            risk_mode_options = ["percent", "fixed_amount"]
-            preset_risk_mode = preset.get('risk_mode', 'percent') or 'percent'
-            risk_mode_idx = risk_mode_options.index(preset_risk_mode) if preset_risk_mode in risk_mode_options else 0
-            risk_mode = st.radio(
-                t("risk_mode"), options=risk_mode_options,
-                format_func=lambda x: t("risk_percent_label") if x == "percent" else t("risk_fixed_label"),
-                horizontal=True, help=t("tip_lot_flex"), index=risk_mode_idx, key="bt_w_risk_mode"
-            )
-        with col3:
-            risk_percent = st.number_input(
-                t("risk_per_trade_pct"), value=float(preset.get('risk_percent') or 0.5),
-                min_value=0.1, max_value=5.0, step=0.1, format="%.1f",
-                help=t("tip_risk_percent"), key="bt_w_risk_pct"
-            )
-            risk_amount = st.number_input(
-                t("risk_per_trade_usd"), value=float(preset.get('risk_amount') or 5.0),
-                min_value=1.0, max_value=1000.0, step=1.0, format="%.2f",
-                help=t("tip_risk_amount"), key="bt_w_risk_amt"
-            )
-
-        risk_compounding = st.checkbox(t("compounding"), value=bool(preset.get('risk_compounding', True)),
-                                       help=t("tip_compounding"),
-                                       key="bt_w_compounding")
-
-    sl_pips = 0
-
-    # ── RUN BACKTEST ──
-    st.divider()
-    is_batch = len(entry_times) > 1
-    button_label = t("run_batch", n=len(entry_times)) if is_batch else t("run_backtest")
-
-    if st.button(button_label, type="primary", use_container_width=True):
-        # Convert dates to datetime
-        start_dt = datetime.combine(start_date, datetime.min.time()).replace(tzinfo=TIMEZONE)
-        end_dt = datetime.combine(end_date, datetime.max.time()).replace(tzinfo=TIMEZONE)
-
-        # Fetch data once (same timeframe for all entry times)
-        with st.spinner(t("fetching_data")):
-            df, error = fetch_historical_data(symbol, start_dt, end_dt, user_creds, timeframe)
-
-            if error:
-                st.error(t("failed_fetch", err=error))
-                st.stop()
-
-            if df is None or df.empty:
-                st.warning(t("no_data"))
-                st.stop()
-
-            st.success(t("fetched_candles", n=len(df)))
-
-        batch_results = []
-        progress_bar = st.progress(0, text=t("starting_backtest"))
-
-        if is_multi_strategy:
-            progress_bar.progress(0.5, text="Running Multi Master Candle backtest...")
-            results = run_backtest_multi(
-                df=df,
-                symbol=symbol,
-                window_start_hour=ws_time.hour,
-                window_start_minute=ws_time.minute,
-                window_end_hour=we_time.hour,
-                window_end_minute=we_time.minute,
-                priority_direction=priority_direction,
-                rr_ratio=rr_ratio,
-                max_candles=max_candles,
-                lot_mode=lot_mode,
-                fixed_lot=fixed_lot if lot_mode == "fixed" else 0.01,
-                risk_percent=risk_percent if lot_mode == "flex" else 0.5,
-                risk_amount=risk_amount if lot_mode == "flex" else 0.0,
-                risk_mode=risk_mode if lot_mode == "flex" else "percent",
-                risk_compounding=risk_compounding if lot_mode == "flex" else True,
-                buffer_k=buffer_k,
-                starting_equity=starting_equity if lot_mode == "flex" else 1000.0,
-                tp_type=tp_type,
-                sl_type=sl_type,
-                entry_mode=entry_mode,
-                entry_percent=entry_percent if entry_mode == "range_percent" else 0.0,
-                move_sl_to_breakeven=move_sl_to_breakeven,
-                breakeven_trigger_percent=breakeven_trigger_percent if move_sl_to_breakeven else 50.0,
-                breakeven_target=breakeven_target if move_sl_to_breakeven else "entry",
-                pending_order_expire_candles=pending_order_expire_candles if entry_mode == "range_percent" else 0,
-            )
-            time_label = f"{window_start_input}-{window_end_input}"
-            backtest_config = {
-                'timeframe': timeframe,
-                'start_date': str(start_date),
-                'end_date': str(end_date),
-                'window_start': window_start_input,
-                'window_end': window_end_input,
-                'priority_direction': priority_direction,
-                'entry_mode': entry_mode,
-                'entry_percent': entry_percent if entry_mode == "range_percent" else 0.0,
-                'rr_ratio': rr_ratio,
-                'max_candles': max_candles,
-                'buffer_k': buffer_k,
-                'lot_mode': lot_mode,
-                'tp_type': tp_type,
-                'sl_type': sl_type,
-                'move_sl_to_breakeven': move_sl_to_breakeven,
-                'breakeven_trigger_percent': breakeven_trigger_percent if move_sl_to_breakeven else None,
-                'breakeven_target': breakeven_target if move_sl_to_breakeven else None,
-                'pending_order_expire_candles': pending_order_expire_candles if entry_mode == "range_percent" else 0,
-                'fixed_lot': fixed_lot if lot_mode == 'fixed' else None,
-                'starting_equity': starting_equity if lot_mode == 'flex' else None,
-                'risk_mode': risk_mode if lot_mode == 'flex' else None,
-                'risk_percent': risk_percent if lot_mode == 'flex' else None,
-                'risk_amount': risk_amount if lot_mode == 'flex' else None,
-                'risk_compounding': risk_compounding if lot_mode == 'flex' else None,
-            }
-            if results.get('total_trades', 0) > 0:
-                save_backtest_result(
-                    config=backtest_config,
-                    results=results,
-                    strategy_name=selected_strategy_name,
-                    symbol=symbol,
-                    username=username,
-                )
-            batch_results.append({
-                'entry_time': time_label,
-                'results': results,
-                'config': backtest_config,
-            })
-
-        for idx, entry_time in enumerate(entry_times):
-            time_str = entry_time.strftime('%H:%M')
-            progress_text = t("running_time", t=time_str, i=idx + 1, n=len(entry_times))
-            progress_bar.progress((idx) / len(entry_times), text=progress_text)
-
-            # Run backtest for this entry time
-            results = run_backtest(
-                df=df,
-                symbol=symbol,
-                entry_hour=entry_time.hour,
-                entry_minute=entry_time.minute,
-                sl_pips=sl_pips,
-                rr_ratio=rr_ratio,
-                max_candles=max_candles,
-                lot_mode=lot_mode,
-                fixed_lot=fixed_lot if lot_mode == "fixed" else 0.01,
-                risk_percent=risk_percent if lot_mode == "flex" else 0.5,
-                risk_amount=risk_amount if lot_mode == "flex" else 0.0,
-                risk_mode=risk_mode if lot_mode == "flex" else "percent",
-                risk_compounding=risk_compounding if lot_mode == "flex" else True,
-                buffer_k=buffer_k,
-                starting_equity=starting_equity if lot_mode == "flex" else 1000.0,
-                tp_type=tp_type,
-                sl_type=sl_type,
-                entry_mode=entry_mode,
-                entry_percent=entry_percent if entry_mode == "range_percent" else 0.0,
-                move_sl_to_breakeven=move_sl_to_breakeven,
-                breakeven_trigger_percent=breakeven_trigger_percent if move_sl_to_breakeven else 50.0,
-                breakeven_target=breakeven_target if move_sl_to_breakeven else "entry",
-                pending_order_expire_candles=pending_order_expire_candles if entry_mode == "range_percent" else 0
-            )
-
-            # Build config dict for export/history
-            backtest_config = {
-                'timeframe': timeframe,
-                'start_date': str(start_date),
-                'end_date': str(end_date),
-                'entry_time': time_str,
-                'entry_mode': entry_mode,
-                'entry_percent': entry_percent if entry_mode == "range_percent" else 0.0,
-                'rr_ratio': rr_ratio,
-                'max_candles': max_candles,
-                'buffer_k': buffer_k,
-                'lot_mode': lot_mode,
-                'tp_type': tp_type,
-                'sl_type': sl_type,
-                'move_sl_to_breakeven': move_sl_to_breakeven,
-                'breakeven_trigger_percent': breakeven_trigger_percent if move_sl_to_breakeven else None,
-                'breakeven_target': breakeven_target if move_sl_to_breakeven else None,
-                'pending_order_expire_candles': pending_order_expire_candles if entry_mode == "range_percent" else 0,
-                'fixed_lot': fixed_lot if lot_mode == 'fixed' else None,
-                'starting_equity': starting_equity if lot_mode == 'flex' else None,
-                'risk_mode': risk_mode if lot_mode == 'flex' else None,
-                'risk_percent': risk_percent if lot_mode == 'flex' else None,
-                'risk_amount': risk_amount if lot_mode == 'flex' else None,
-                'risk_compounding': risk_compounding if lot_mode == 'flex' else None,
-            }
-
-            # Auto-save to history
-            if results.get('total_trades', 0) > 0:
-                save_backtest_result(
-                    config=backtest_config,
-                    results=results,
-                    strategy_name=selected_strategy_name,
-                    symbol=symbol,
-                    username=username
-                )
-
-            batch_results.append({
-                'entry_time': time_str,
-                'results': results,
-                'config': backtest_config
-            })
-
-        progress_bar.progress(1.0, text=t("complete"))
-
-        # Store results in session state
-        if batch_results:
-            # Use the last result for detailed display
-            last_result = batch_results[-1]
-            st.session_state['backtest_results'] = last_result['results']
-            st.session_state['backtest_symbol'] = symbol
-            st.session_state['backtest_strategy'] = selected_strategy_name
-            st.session_state['backtest_lot_mode'] = lot_mode
-            st.session_state['backtest_timeframe'] = timeframe
-            st.session_state['backtest_entry_time'] = last_result['entry_time']
-            st.session_state['backtest_tp_type'] = tp_type
-            st.session_state['backtest_sl_type'] = sl_type
-            st.session_state['backtest_config'] = last_result['config']
-            st.session_state['backtest_batch_results'] = batch_results
-
-            if is_batch:
-                st.success(t("batch_done", n=len(batch_results)))
-            st.rerun(scope="app")
-
-
-def show_batch_summary(batch_results: list, strategy_name: str, symbol: str, lot_mode: str):
-    """Show summary comparison of batch backtest results"""
-
-    st.divider()
-    st.subheader(f"Batch Results: {strategy_name}" if strategy_name else "Batch Results")
-    st.caption(f"Comparing {len(batch_results)} entry times for {symbol}")
-
-    # Build comparison table
-    rows = []
-    for br in batch_results:
-        et = br['entry_time']
-        r = br['results']
-        rows.append({
-            'Entry Time': et,
-            'Trades': r.get('total_trades', 0),
-            'Wins': r.get('wins', 0),
-            'Losses': r.get('losses', 0),
-            'Win Rate %': r.get('win_rate', 0),
-            'P/F': r.get('profit_factor', 0),
-            'Total Pips': r.get('total_pnl', 0),
-            'Avg Pips': r.get('avg_pnl', 0),
-            'Best': r.get('best_trade', 0),
-            'Worst': r.get('worst_trade', 0),
-        })
-
-        if lot_mode == 'flex':
-            rows[-1]['Total USD'] = r.get('total_pnl_usd', 0)
-            rows[-1]['Final Equity'] = r.get('final_equity', 0)
-
-    batch_df = pd.DataFrame(rows)
-
-    # Color functions
-    def color_positive(val):
-        if isinstance(val, (int, float)):
-            if val > 0:
-                return 'color: green'
-            elif val < 0:
-                return 'color: red'
-        return ''
-
-    def color_win_rate(val):
-        if isinstance(val, (int, float)):
-            if val >= 60:
-                return 'color: green; font-weight: bold'
-            elif val < 50:
-                return 'color: red'
-        return ''
-
-    styled_batch = batch_df.style
-    styled_batch = styled_batch.map(color_win_rate, subset=['Win Rate %'])
-    styled_batch = styled_batch.map(color_positive, subset=['Total Pips', 'Avg Pips'])
-    if 'Total USD' in batch_df.columns:
-        styled_batch = styled_batch.map(color_positive, subset=['Total USD'])
-
-    st.dataframe(styled_batch, width='stretch', hide_index=True)
-
-    # Find best performer
-    if not batch_df.empty:
-        best_idx = batch_df['Win Rate %'].idxmax()
-        best_et = batch_df.loc[best_idx, 'Entry Time']
-        best_wr = batch_df.loc[best_idx, 'Win Rate %']
-        best_pips = batch_df.loc[best_idx, 'Total Pips']
-        st.info(f"Best performer: **{best_et}** with {best_wr}% win rate and {best_pips} pips")
-
-    # Selector for detailed view
-    st.markdown("---")
-    selected_et = st.selectbox(
-        "View detailed results for:",
-        options=[br['entry_time'] for br in batch_results],
-        key="batch_detail_select"
-    )
-
-    # Update session state with selected entry time's results
-    for br in batch_results:
-        if br['entry_time'] == selected_et:
-            st.session_state['backtest_results'] = br['results']
-            st.session_state['backtest_entry_time'] = br['entry_time']
-            st.session_state['backtest_config'] = br['config']
-            break
+    show_history_section()
 
 
 def display_results(results: dict, symbol: str, strategy_name: str = "", lot_mode: str = "fixed", timeframe: str = "M5", tp_type: str = "price_based", sl_type: str = "close_based", config: dict = None):
@@ -726,7 +516,7 @@ def display_results(results: dict, symbol: str, strategy_name: str = "", lot_mod
     config = config or {}
 
     st.divider()
-    st.subheader(f"Results: {strategy_name} ({timeframe})" if strategy_name else f"Results ({timeframe})")
+    st.subheader(f"Results: {strategy_name}" if strategy_name else "Results")
 
     if results['total_trades'] == 0:
         st.warning("No trades found in the selected period")
@@ -749,30 +539,18 @@ def display_results(results: dict, symbol: str, strategy_name: str = "", lot_mod
     with col2:
         st.metric("Win Rate", f"{results['win_rate']}%")
         st.metric("Profit Factor", results['profit_factor'])
-        # Show SL Moved count if feature was enabled
-        if config.get('move_sl_to_breakeven', False):
-            sl_moved_count = sum(1 for t in results.get('trades', []) if t.get('sl_moved_to_breakeven', False))
-            st.metric("SL Moved to BE", f"{sl_moved_count}/{results['total_trades']}")
-
-        # Show MISSED trades count if pending order mode
-        if config.get('entry_mode') == 'range_percent' and config.get('pending_order_expire_candles', 0) > 0:
-            missed_count = sum(1 for t in results.get('trades', []) if t.get('status') == 'MISSED')
-            total_signals = len(results.get('trades', []))
-            filled_count = total_signals - missed_count
-            st.metric("Trades Filled", f"{filled_count}/{total_signals}")
-            if missed_count > 0:
-                st.caption(f"⚠️ {missed_count} trades MISSED (pending order not filled)")
 
     with col3:
         pnl_delta = "profit" if results['total_pnl'] > 0 else "loss" if results['total_pnl'] < 0 else None
         st.metric("Total P&L", f"{results['total_pnl']} pips", delta=pnl_delta)
-        usd_delta = "profit" if results.get('total_pnl_usd', 0) > 0 else "loss" if results.get('total_pnl_usd', 0) < 0 else None
-        st.metric("Total P&L (USD)", f"${results.get('total_pnl_usd', 0):.2f}", delta=usd_delta)
+        if lot_mode == "flex":
+            st.metric("Total P&L (USD)", f"${results.get('total_pnl_usd', 0):.2f}")
+        else:
+            st.metric("Avg P&L", f"{results['avg_pnl']} pips")
 
     with col4:
         st.metric("Best Trade", f"{results['best_trade']} pips")
         st.metric("Worst Trade", f"{results['worst_trade']} pips")
-        st.metric("Avg P&L", f"{results['avg_pnl']} pips")
         if lot_mode == "flex":
             final_eq = results.get('final_equity', 0)
             start_eq = results.get('starting_equity', 1000)
@@ -804,42 +582,39 @@ def display_results(results: dict, symbol: str, strategy_name: str = "", lot_mod
 
     st.divider()
 
-    # Equity curve (optional, default hidden)
-    show_equity_curve = st.checkbox("Show Equity Curve", value=False, key="show_equity_curve")
+    # Equity curve
+    st.subheader("Equity Curve")
 
-    if show_equity_curve:
-        st.subheader("Equity Curve")
+    if lot_mode == "flex":
+        # Show USD equity curve for flex mode
+        equity_data = results.get('equity_curve_usd', [])
+        if equity_data:
+            chart_df = pd.DataFrame({
+                'Trade': range(len(equity_data)),
+                'Equity (USD)': equity_data
+            })
 
-        if lot_mode == "flex":
-            # Show USD equity curve for flex mode
-            equity_data = results.get('equity_curve_usd', [])
-            if equity_data:
-                chart_df = pd.DataFrame({
-                    'Trade': range(len(equity_data)),
-                    'Equity (USD)': equity_data
-                })
+            st.line_chart(
+                chart_df,
+                x='Trade',
+                y='Equity (USD)',
+                width='stretch'
+            )
+    else:
+        # Show pips curve for fixed mode
+        equity_data = results.get('equity_curve', [])
+        if equity_data:
+            chart_df = pd.DataFrame({
+                'Trade': range(len(equity_data)),
+                'Cumulative P&L (pips)': equity_data
+            })
 
-                st.line_chart(
-                    chart_df,
-                    x='Trade',
-                    y='Equity (USD)',
-                    width='stretch'
-                )
-        else:
-            # Show pips curve for fixed mode
-            equity_data = results.get('equity_curve', [])
-            if equity_data:
-                chart_df = pd.DataFrame({
-                    'Trade': range(len(equity_data)),
-                    'Cumulative P&L (pips)': equity_data
-                })
-
-                st.line_chart(
-                    chart_df,
-                    x='Trade',
-                    y='Cumulative P&L (pips)',
-                    width='stretch'
-                )
+            st.line_chart(
+                chart_df,
+                x='Trade',
+                y='Cumulative P&L (pips)',
+                width='stretch'
+            )
 
     st.divider()
 
@@ -870,22 +645,13 @@ def show_trade_table(trades: list, lot_mode: str, strategy_name: str, symbol: st
     results = results or {}
     trades_df = pd.DataFrame(trades)
 
-    # Add SL Moved indicator column
-    if 'sl_moved_to_breakeven' in trades_df.columns:
-        trades_df['SL Moved'] = trades_df['sl_moved_to_breakeven'].apply(lambda x: '✓ BE' if x else '')
-
-    # Add Status indicator column for missed trades
-    if 'status' in trades_df.columns:
-        trades_df['Status'] = trades_df.apply(
-            lambda row: f"⚠️ MISSED ({row.get('miss_reason', 'N/A')})" if row.get('status') == 'MISSED' else '',
-            axis=1
-        )
+    # Drop internal debug columns (underscore-prefixed) before display/export
+    trades_df = trades_df[[c for c in trades_df.columns if not c.startswith("_")]]
 
     # Rename columns for display
     rename_cols = {
         'date': 'Date',
-        'setup_time': 'Signal',    # Master candle time (the configured entry time)
-        'time': 'Fill Time',       # Actual candle when LIMIT was filled
+        'time': 'Time',
         'direction': 'Direction',
         'entry': 'Entry',
         'sl': 'SL',
@@ -896,26 +662,23 @@ def show_trade_table(trades: list, lot_mode: str, strategy_name: str, symbol: st
         'exit_price': 'Exit Price',
         'candles': 'Candles',
         'pnl_pips': 'P&L (pips)',
-        'pnl_usd': 'P&L (USD)',
-        'priority': 'Priority',
+        'pnl_usd': 'P&L (USD)'
     }
     trades_df = trades_df.rename(columns=rename_cols)
 
-    # Drop internal columns
-    internal_cols = ['exit_time', 'sl_moved_to_breakeven', 'final_sl', 'status', 'miss_reason']
-    for col in internal_cols:
-        if col in trades_df.columns:
-            trades_df = trades_df.drop(columns=[col])
+    # Drop exit_time column if exists
+    if 'exit_time' in trades_df.columns:
+        trades_df = trades_df.drop(columns=['exit_time'])
 
     # Select columns based on lot mode
     if lot_mode == "fixed":
-        # Hide flex-specific columns (keep P&L USD for all modes)
-        cols_to_drop = ['SL Pips', 'Lot']
+        # Hide flex-specific columns
+        cols_to_drop = ['SL Pips', 'Lot', 'P&L (USD)']
         for col in cols_to_drop:
             if col in trades_df.columns:
                 trades_df = trades_df.drop(columns=[col])
 
-    # Color P&L columns
+    # Color P&L
     def color_pnl(val):
         if val > 0:
             return 'color: green'
@@ -923,14 +686,11 @@ def show_trade_table(trades: list, lot_mode: str, strategy_name: str, symbol: st
             return 'color: red'
         return ''
 
-    pnl_cols = ['P&L (pips)']
-    if 'P&L (USD)' in trades_df.columns:
-        pnl_cols.append('P&L (USD)')
-    styled_df = trades_df.style.map(color_pnl, subset=pnl_cols)
+    styled_df = trades_df.style.map(color_pnl, subset=['P&L (pips)'])
     st.dataframe(styled_df, width='stretch', hide_index=True)
 
-    # Download buttons (include username to avoid conflicts)
-    filename_parts = [username, strategy_name.replace(' ', '_')] if strategy_name else [username]
+    # Download buttons
+    filename_parts = [strategy_name.replace(' ', '_')] if strategy_name else []
     filename_parts.extend([symbol, datetime.now().strftime('%Y%m%d')])
     base_filename = f"backtest_{'_'.join(filename_parts)}"
 
@@ -970,11 +730,8 @@ def show_interactive_chart(trades: list, ohlc_data: pd.DataFrame, symbol: str):
         st.warning("No OHLC data available for chart")
         return
 
-    # Trade selector — show setup_time (signal candle) in label for clarity
-    trade_options = [
-        f"Trade {i+1}: {t['date']} {t.get('setup_time', t['time'])} - {t['direction']} ({t['exit_type']})"
-        for i, t in enumerate(trades)
-    ]
+    # Trade selector
+    trade_options = [f"Trade {i+1}: {t['date']} {t['time']} - {t['direction']} ({t['exit_type']})" for i, t in enumerate(trades)]
     selected_idx = st.selectbox(
         "Select Trade to View",
         options=range(len(trades)),
@@ -983,39 +740,25 @@ def show_interactive_chart(trades: list, ohlc_data: pd.DataFrame, symbol: str):
 
     trade = trades[selected_idx]
 
-    # Parse master candle time (setup_time) — used as chart anchor to load OHLC window
-    setup_time_str = trade.get('setup_time', trade['time'])
-    trade_datetime_str = f"{trade['date']} {setup_time_str}"
+    # Parse trade datetime
+    trade_datetime_str = f"{trade['date']} {trade['time']}"
     trade_dt = datetime.strptime(trade_datetime_str, "%Y-%m-%d %H:%M")
-
-    # Parse fill candle time (time field) — where entry marker is drawn
-    fill_time_str = trade.get('time', setup_time_str)
-    fill_datetime_str = f"{trade['date']} {fill_time_str}"
-    fill_dt = datetime.strptime(fill_datetime_str, "%Y-%m-%d %H:%M")
 
     # Filter OHLC data around the trade (30 candles before and after)
     ohlc_data['time_naive'] = ohlc_data['time'].dt.tz_localize(None) if ohlc_data['time'].dt.tz is not None else ohlc_data['time']
 
-    # Find the master candle index (for chart window centering)
+    # Find the entry candle index
     entry_mask = ohlc_data['time_naive'] == trade_dt
     if not entry_mask.any():
+        # Try to find closest candle
         time_diffs = abs(ohlc_data['time_naive'] - trade_dt)
         entry_idx = time_diffs.idxmin()
     else:
         entry_idx = ohlc_data[entry_mask].index[0]
 
-    # Find the fill candle index (for entry marker position)
-    fill_mask = ohlc_data['time_naive'] == fill_dt
-    if not fill_mask.any():
-        time_diffs = abs(ohlc_data['time_naive'] - fill_dt)
-        fill_idx = time_diffs.idxmin()
-    else:
-        fill_idx = ohlc_data[fill_mask].index[0]
-
     # Get data range (30 candles before, candles + 10 after)
-    start_idx = max(0, entry_idx - 30)                              # 30 candles before master candle
-    candles_count = trade.get('candles', 10)
-    end_idx = min(len(ohlc_data), fill_idx + candles_count + 15)   # extend past last exit candle
+    start_idx = max(0, entry_idx - 30)
+    end_idx = min(len(ohlc_data), entry_idx + trade['candles'] + 15)
     chart_data = ohlc_data.iloc[start_idx:end_idx].copy()
 
     # Create candlestick chart
@@ -1039,8 +782,8 @@ def show_interactive_chart(trades: list, ohlc_data: pd.DataFrame, symbol: str):
     x_min = chart_data['time'].iloc[0]
     x_max = chart_data['time'].iloc[-1]
 
-    # Entry marker — placed at the fill candle (not master/signal candle)
-    entry_time = ohlc_data.iloc[fill_idx]['time']
+    # Entry marker
+    entry_time = ohlc_data.iloc[entry_idx]['time']
     entry_price = trade['entry']
 
     fig.add_trace(
@@ -1058,24 +801,6 @@ def show_interactive_chart(trades: list, ohlc_data: pd.DataFrame, symbol: str):
             legendgroup="entry"
         )
     )
-
-    # Signal candle marker — master candle that triggered the setup (shown only if different from fill candle)
-    if setup_time_str != fill_time_str:
-        signal_candle_time = ohlc_data.iloc[entry_idx]['time']
-        signal_candle_high = ohlc_data.iloc[entry_idx]['high']
-        fig.add_trace(
-            go.Scatter(
-                x=[signal_candle_time],
-                y=[signal_candle_high * 1.001],  # slightly above candle high
-                mode='markers+text',
-                marker=dict(symbol='star', size=12, color='orange'),
-                text=['Signal'],
-                textposition='top center',
-                textfont=dict(size=10, color='orange'),
-                name=f"Signal Candle ({setup_time_str})",
-                legendgroup="signal"
-            )
-        )
 
     # Entry price line (toggleable)
     fig.add_trace(
@@ -1115,33 +840,31 @@ def show_interactive_chart(trades: list, ohlc_data: pd.DataFrame, symbol: str):
         )
     )
 
-    # Exit marker (skip for MISSED trades with no exit_price)
-    exit_price = trade.get('exit_price')
-    if exit_price is not None:
-        # candles_count is counted from fill candle, so exit is fill_idx + candles_count
-        exit_candle_idx = fill_idx + candles_count
-        if exit_candle_idx < len(ohlc_data):
-            exit_time = ohlc_data.iloc[exit_candle_idx]['time']
-        else:
-            exit_time = chart_data['time'].iloc[-1]
+    # Exit marker
+    exit_candle_idx = entry_idx + trade['candles']
+    if exit_candle_idx < len(ohlc_data):
+        exit_time = ohlc_data.iloc[exit_candle_idx]['time']
+    else:
+        exit_time = chart_data['time'].iloc[-1]
 
-        exit_color = 'green' if trade['exit_type'] == 'TP' else 'red' if trade['exit_type'] == 'SL' else 'orange'
+    exit_price = trade['exit_price']
+    exit_color = 'green' if trade['exit_type'] == 'TP' else 'red' if trade['exit_type'] == 'SL' else 'orange'
 
-        fig.add_trace(
-            go.Scatter(
-                x=[exit_time],
-                y=[exit_price],
-                mode='markers',
-                marker=dict(
-                    symbol='x',
-                    size=15,
-                    color=exit_color,
-                    line=dict(width=2, color='black')
-                ),
-                name=f"Exit ({trade['exit_type']})",
-                legendgroup="exit"
-            )
+    fig.add_trace(
+        go.Scatter(
+            x=[exit_time],
+            y=[exit_price],
+            mode='markers',
+            marker=dict(
+                symbol='x',
+                size=15,
+                color=exit_color,
+                line=dict(width=2, color='black')
+            ),
+            name=f"Exit ({trade['exit_type']})",
+            legendgroup="exit"
         )
+    )
 
     # Layout
     fig.update_layout(
@@ -1161,17 +884,6 @@ def show_interactive_chart(trades: list, ohlc_data: pd.DataFrame, symbol: str):
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # Download button for interactive chart
-    chart_html = fig.to_html(include_plotlyjs='cdn', full_html=True)
-    chart_filename = f"trade_{selected_idx + 1}_{trade['date']}_{symbol}_{trade['direction']}.html"
-    st.download_button(
-        label="Download Interactive Chart (HTML)",
-        data=chart_html,
-        file_name=chart_filename,
-        mime="text/html",
-        help="Download as HTML file - opens in browser with full interactivity"
-    )
-
     # Trade details
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -1182,12 +894,11 @@ def show_interactive_chart(trades: list, ohlc_data: pd.DataFrame, symbol: str):
         st.metric("TP", f"{trade['tp']:.2f}")
     with col3:
         st.metric("Exit Type", trade['exit_type'])
-        exit_price_display = f"{trade['exit_price']:.2f}" if trade.get('exit_price') else "N/A"
-        st.metric("Exit Price", exit_price_display)
+        st.metric("Exit Price", f"{trade['exit_price']:.2f}")
     with col4:
         pnl_color = "green" if trade['pnl_pips'] > 0 else "red"
         st.metric("P&L", f"{trade['pnl_pips']:+.1f} pips")
-        st.metric("Candles Held", trade.get('candles', 'N/A'))
+        st.metric("Candles Held", trade['candles'])
 
 
 def show_demo_results():
@@ -1237,23 +948,13 @@ def show_demo_results():
     )
 
 
-def show_history_section(username: str):
+def show_history_section():
     """Show backtest history for comparison"""
 
     st.divider()
     st.subheader("Backtest History")
 
-    # User filter toggle
-    col1, col2 = st.columns([3, 1])
-
-    with col1:
-        st.caption(f"Viewing backtest history for: **{username}**")
-
-    with col2:
-        show_all_users = st.checkbox("Show all users", value=False, key="show_all_users_history")
-
-    # Get history (filtered by user or all)
-    history = get_history(username=None if show_all_users else username)
+    history = get_history()
 
     if not history:
         st.info("No backtest history yet. Run a backtest to start building your comparison history.")
@@ -1291,17 +992,29 @@ def show_history_section(username: str):
 
     # Optional columns selector
     with st.expander("Customize Columns"):
-        st.caption("Select columns to display (in order)")
+        st.caption("Select additional columns to display")
 
-        # All available optional columns
-        all_optional = HISTORY_COLUMNS['config'] + HISTORY_COLUMNS['summary']
+        col1, col2 = st.columns(2)
 
-        selected_optional = st.multiselect(
-            "Optional Columns",
-            options=all_optional,
-            default=HISTORY_COLUMNS['default_optional'],
-            key="history_optional_cols"
-        )
+        with col1:
+            st.markdown("**Config Columns**")
+            selected_config = st.multiselect(
+                "Config",
+                options=HISTORY_COLUMNS['config'],
+                default=HISTORY_COLUMNS['default_optional'],
+                key="history_config_cols",
+                label_visibility="collapsed"
+            )
+
+        with col2:
+            st.markdown("**Summary Columns**")
+            selected_summary = st.multiselect(
+                "Summary",
+                options=HISTORY_COLUMNS['summary'],
+                default=[],
+                key="history_summary_cols",
+                label_visibility="collapsed"
+            )
 
     # Apply filters
     filtered_df = history_df.copy()
@@ -1316,11 +1029,16 @@ def show_history_section(username: str):
     else:
         filtered_df = filtered_df.sort_values(sort_by, ascending=False)
 
-    # Build display columns: core + selected optional (in order)
+    # Build display columns: core + selected optional
     display_cols = HISTORY_COLUMNS['core'].copy()
 
-    # Add optional columns in the order they were selected
-    for col in selected_optional:
+    # Insert config columns after Symbol
+    for col in selected_config:
+        if col not in display_cols:
+            display_cols.append(col)
+
+    # Add summary columns at the end
+    for col in selected_summary:
         if col not in display_cols:
             display_cols.append(col)
 
@@ -1359,43 +1077,9 @@ def show_history_section(username: str):
     for col, func in style_subsets:
         styled_history = styled_history.map(func, subset=[col])
 
-    st.dataframe(styled_history, width='stretch', hide_index=True)
+    st.dataframe(styled_history, use_container_width=True, hide_index=True)
 
     st.caption(f"Showing {len(filtered_df)} of {len(history_df)} records | {len(display_cols)} columns")
-
-    # ── Load Config from History ──
-    st.markdown("---")
-
-    with st.expander(t("load_from_history"), expanded=False):
-        st.caption(t("load_from_history_caption"))
-
-        # Build ID → config lookup from raw history
-        id_to_config = {r['id']: r['config'] for r in history}
-
-        # Build display options from filtered records
-        load_options = {
-            f"{r['Date']} - {r['Strategy']} - {r['Symbol']} ({r['Win Rate %']}% WR | {r.get('Entry Mode', '')} {r.get('Entry %', '')}%)": r['ID']
-            for _, r in filtered_df.iterrows()
-        }
-
-        if load_options:
-            selected_load = st.selectbox(
-                t("select_history_record"),
-                options=list(load_options.keys()),
-                key="load_config_select"
-            )
-
-            col1, col2 = st.columns([1, 3])
-            with col1:
-                if st.button(t("load_config_btn"), type="primary"):
-                    record_id = load_options[selected_load]
-                    config_to_load = id_to_config.get(record_id)
-                    if config_to_load:
-                        _apply_bt_preset(config_to_load)
-                        st.success(t("config_loaded"))
-                        st.rerun()
-                    else:
-                        st.error(t("config_load_failed"))
 
     # Delete functionality
     st.markdown("---")

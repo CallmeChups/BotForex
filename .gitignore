@@ -2,25 +2,19 @@
 .env
 .env.*
 
-# Python cache
-__pycache__/
-**/__pycache__/
-*.pyc
-*.pyo
-*.pyd
-*py.tmp*
-
-# Logs
-logs/
-*.log
-
-# OS junk
-nul
-.DS_Store
-Thumbs.db
-
-# Virtual environment
-.venv/
-
-# Data files (runtime state — not for version control)
+# Server-local files — never overwrite on deploy
+config/auth.yaml
+data/orders.csv
 data/running_bots.json
+logs/
+
+*.txt
+!requirements.txt
+
+# Ensure Python compiled caches are included in the repo
+!*.pyc
+!**/*.pyc
+!__pycache__/
+!**/__pycache__/
+*py.tmp*
+*.pyc

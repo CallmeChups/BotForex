@@ -1,5 +1,5 @@
 """
-BotForex - MT5 Master Candle Trading Bot Dashboard
+BotForex - Multi-Strategy MT5 Trading Dashboard
 """
 
 import streamlit as st
@@ -73,7 +73,7 @@ def show_dashboard():
 
     # Main content
     st.title("📈 BotForex Dashboard")
-    st.caption(f"Master Candle Strategy | {SYMBOL} | M5")
+    st.caption(f"Multi-Strategy Trading | {SYMBOL}")
 
     # Current time
     now = datetime.now(TIMEZONE)
@@ -114,9 +114,9 @@ def show_dashboard():
     st.divider()
 
     # Strategy summary
-    st.subheader("📋 Strategy Rules")
+    st.subheader("📋 Active Strategies")
 
-    with st.expander("Master Candle Strategy", expanded=True):
+    with st.expander("Master Candle Strategy", expanded=False):
         st.markdown("""
         **Entry Time:** 21:05 HCM (M5 candle close)
 
@@ -125,14 +125,31 @@ def show_dashboard():
         - Bearish candle (Close < Open) → **SELL**
 
         **Risk Management:**
-        - **SL:** Low - 30 pips (BUY) / High + 30 pips (SELL)
-        - **TP:** Risk × 2 (RR 1:2)
-        - **Lot Size:** 0.01
+        - **SL:** Candle Low/High ± buffer pips
+        - **TP:** Risk × RR ratio (default 2.0)
+        - **Lot:** Fixed or flex (risk-based)
 
         **Exit Rules:**
-        - TP: Price-based (immediate)
-        - SL: Close-based (candle must CLOSE beyond)
-        - Time: Max 7 candles (~35 min)
+        - TP: Price-based or Close-based
+        - SL: Close-based or Price-based
+        - Time: Max N candles (configurable)
+        """)
+
+    with st.expander("FEG EMA21 Strategy", expanded=False):
+        st.markdown("""
+        **Entry Trigger:** 2-candle FEG pattern (continuous scan, M5)
+
+        **SELL Pattern:** H2>H1, C2<L1, L2>EMA21
+        **BUY Pattern:** L2<L1, C2>H1, H2<EMA21
+
+        **Risk Management:**
+        - **SL:** Candle2 High/Low ± buffer pips
+        - **TP:** Risk × RR ratio (default 2.0)
+        - 1 trade at a time (no stacking)
+
+        **Exit Rules:**
+        - Same engine as Master Candle
+        - Magic number: 212100
         """)
 
     st.divider()
@@ -192,7 +209,7 @@ def show_dashboard():
 
     # Footer
     st.divider()
-    st.caption("BotForex v0.1.0 | Master Candle Strategy")
+    st.caption("BotForex v0.2.0 | Master Candle + FEG EMA21")
 
 
 def main():

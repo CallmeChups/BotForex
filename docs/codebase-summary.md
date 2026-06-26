@@ -1,648 +1,215 @@
-# BotForex - Codebase Summary
+# BotForex - Tóm Tắt Codebase
 
-**Last Updated**: 2026-02-26
-**Version**: 2.0.0
-**Status**: Production Ready
+**Cập Nhật Lần Cuối**: 2026-06-21
+**Phiên Bản**: 0.2.0
+**Trạng Thái**: Production-ready (multi-strategy)
 
----
+## Tổng Quan Project
 
-## Project Overview
+BotForex là ứng dụng Streamlit đa trang cho phép quản lý, backtest và vận hành nhiều bot giao dịch MT5 tự động. Hỗ trợ hai chiến lược: **Master Candle** (vào lệnh theo giờ cố định) và **FEG EMA21** (quét pattern 2 nến liên tục với bộ lọc EMA21).
 
-BotForex is an automated Forex trading bot that executes the Master Candle strategy using MetaTrader5 (MT5) API. It provides a Streamlit dashboard for configuration and monitoring, supports multiple concurrent trading bots, and includes backtesting capabilities.
-
-**Key Stats**:
-- 13 core Python modules (~2000+ LOC)
-- 8 Streamlit dashboard pages
-- Multi-bot process management
-- Real-time Telegram notifications
-- Historical data tracking
-
----
-
-## Directory Structure
+## Cấu Trúc Thư Mục
 
 ```
-BotForex/
-├── src/                              # Core business logic
-│   ├── bot_runner.py                 # Main trading loop (1850+ lines)
-│   ├── bot_manager.py                # Process management
-│   ├── orders.py                     # MT5 order operations
-│   ├── backtest.py                   # Backtesting engine
-│   ├── strategy.py                   # Master Candle strategy logic
-│   ├── strategy_manager.py           # Strategy loading from YAML
-│   ├── auth.py                       # Credential management
-│   ├── utils.py                      # Utility functions (pip/point values)
-│   ├── calculation.py                # Technical indicators
-│   ├── telegram.py                   # Telegram notifications
-│   ├── symbol_validator.py           # Symbol validation
-│   ├── backtest_history.py           # Backtest persistence
-│   └── bot_config_history.py         # Bot config snapshots
+E:\Project\BotForex\
+├── app.py                        # Streamlit entry point (auth gateway + home)
+├── pages/                        # Multi-page UI
+│   ├── 1_Bots.py                 # Quản lý bot (start/stop/restart)
+│   ├── 2_Orders.py               # Lịch sử lệnh MT5
+│   ├── 3_Signals.py              # Tín hiệu giao dịch
+│   ├── 4_Strategies.py           # Xem cấu hình strategy (read-only)
+│   ├── 5_Backtest.py             # Backtest engine UI
+│   ├── 6_Simulation.py           # Mô phỏng
+│   ├── 7_Users.py                # Quản lý người dùng (admin)
+│   └── 8_Settings.py             # Cài đặt hệ thống
 │
-├── pages/                            # Streamlit dashboard
-│   ├── 1_Bots.py                     # Bot management UI
-│   ├── 2_Orders.py                   # Order history viewer
-│   ├── 3_Signals.py                  # Signal monitoring
-│   ├── 4_Strategies.py               # Strategy editor
-│   ├── 5_Backtest.py                 # Backtest executor
-│   ├── 6_Simulation.py               # Simulation tools
-│   ├── 7_Users.py                    # User management
-│   └── 8_Settings.py                 # Configuration settings
+├── src/                          # Core modules
+│   ├── auth.py                   # Xác thực (streamlit-authenticator)
+│   ├── backtest.py               # Backtest engine (Master Candle + FEG)
+│   ├── backtest_history.py       # Lưu/đọc lịch sử backtest (JSON + Excel)
+│   ├── bot_manager.py            # Quản lý subprocess bot
+│   ├── bot_runner.py             # Live bot runner (MT5 loop, argparse entry)
+│   ├── calculation.py            # Chỉ báo kỹ thuật (MACD, Stoch, MA, EMA)
+│   ├── feg_strategy.py           # FEG pattern detection + signal builder
+│   ├── orders.py                 # Đặt lệnh MT5 (place_order, close_position)
+│   ├── strategy.py               # Hàm strategy chung
+│   ├── strategy_manager.py       # Đọc YAML strategy → params dict
+│   ├── telegram.py               # Gửi thông báo Telegram
+│   └── utils.py                  # Tiện ích: get_pip_value, check_exit, compute_trade_levels
 │
-├── strategies/                       # Strategy configs
-│   └── master_candle.yaml            # Master Candle strategy definition
+├── strategies/                   # Strategy YAML definitions
+│   ├── master_candle.yaml        # Master Candle strategy config
+│   └── feg_ema21.yaml            # FEG EMA21 strategy config
 │
-├── config/                           # Application configuration
-│   └── auth.yaml                     # MT5 credentials per user
+├── tests/                        # Pytest test suite (25 tests)
+│   ├── test_feg_strategy.py      # 9 tests: detect_feg_signal + analyze_feg
+│   ├── test_trade_levels.py      # 3 tests: compute_trade_levels
+│   ├── test_backtest_time_characterization.py  # 1 characterization test
+│   ├── test_backtest_feg.py      # 2 tests: FEG backtest path
+│   ├── test_strategy_manager_feg.py  # 2 tests: strategy params
+│   ├── test_place_order.py       # 2 tests: test/live mode gate
+│   ├── test_feg_runner.py        # 2 tests: live runner entry logic
+│   ├── test_bot_command.py       # 2 tests: bot_manager command builder
+│   ├── test_history_columns.py   # 1 test: EMA columns in history
+│   └── test_smoke.py             # 1 test: import sanity
 │
-├── data/                             # Runtime data storage
-│   ├── running_bots.json             # Active bot processes
-│   ├── orders.csv                    # Trade history
-│   ├── bot_config_history.json       # Config snapshots
-│   └── backtest_history.json         # Backtest results
+├── config/
+│   ├── auth.yaml                 # User accounts (streamlit-authenticator)
+│   └── auth.yaml.example         # Template
 │
-├── logs/                             # Bot execution logs
-│   └── bot_*.log                     # Per-bot logs with timestamps
+├── data/
+│   └── backtest_history.json     # Lịch sử backtest (auto-created)
 │
-├── app.py                            # Streamlit entry point
-├── requirements.txt                  # Python dependencies
-├── README.md                         # Project overview (Vietnamese)
-├── CLAUDE.md                         # Claude Code instructions
-└── docs/                             # Project documentation
-    ├── codebase-summary.md           # This file
-    ├── system-architecture.md        # Architecture design
-    ├── bot-parameters.md             # Parameter reference
-    ├── developer-guide.md            # Developer onboarding
-    ├── code-standards.md             # Code standards
-    ├── project-overview-pdr.md       # PDR document
-    └── project-roadmap.md            # Future roadmap
+├── logs/                         # Bot log files (auto-created)
+├── conftest.py                   # Pytest sys.path setup
+├── requirements.txt              # Python dependencies
+└── docs/                         # Tài liệu dự án
 ```
 
----
+## Module Chi Tiết
 
-## Core Modules
+### `src/auth.py`
+Xác thực người dùng qua `streamlit-authenticator`. Đọc `config/auth.yaml`, expose `get_authenticator()`, `check_auth()`, `get_user_role()`, `is_admin()`.
 
-### 1. bot_runner.py (Main Trading Loop)
+### `src/backtest.py`
+Engine backtest MT5. Entry point: `run_backtest(df, symbol, ..., entry_type)`.
+- `entry_type="time"` → Master Candle (tìm nến theo giờ, loop độc lập).
+- `entry_type="pattern"` → `_run_feg_backtest()` (while loop tuần tự, 1 lệnh/lúc).
+- Helpers dùng chung: `_compute_lot_size`, `_simulate_exit`, `_make_trade`.
+- `fetch_historical_data()`: lấy OHLC từ MT5.
+- `calculate_flex_lot_size()`: tính lot theo risk %.
 
-**Lines**: ~1850+
-**Purpose**: Core bot logic - monitors entry conditions, executes trades, manages positions
+### `src/backtest_history.py`
+Lưu/đọc kết quả backtest vào `data/backtest_history.json`.
+- `save_backtest_result()`, `get_history()`, `delete_history_record()`.
+- `history_to_dataframe()`: chuyển sang DataFrame với cột EMA (Entry Type, EMA Period, EMA Dist).
+- `create_excel_export()`: xuất Excel 2 sheet (Config+Summary, Trades).
+- `HISTORY_COLUMNS`: dict định nghĩa nhóm cột cho UI.
 
-**Key Functions**:
+### `src/bot_manager.py`
+Quản lý subprocess bot. Bot state lưu trong `data/running_bots.json`.
+- `start_bot()`: build command → subprocess.
+- `stop_bot()`, `restart_bot()`.
+- `build_bot_command()`: tổng hợp args (bao gồm `--ema_period`, `--ema_distance_enabled`, `--ema_distance_pips`).
 
-| Function | Lines | Purpose |
-|----------|-------|---------|
-| `get_args()` | 51-126 | Parse command-line parameters (45 parameters total) |
-| `setup_logging()` | 29-48 | Initialize file logging with UTF-8 encoding |
-| `log()` | 129-149 | Timestamp logging to console and file |
-| `get_mt5_connection()` | 180-203 | MT5 login and initialization |
-| `check_entry_time()` | 218-241 | Detect candle close time for entry signal |
-| `get_current_candle()` | 244-286 | Fetch last closed candle from MT5 |
-| `run_bot()` | 289-800+ | Main bot execution loop |
+### `src/bot_runner.py`
+Live runner chạy như subprocess (argparse entry point). Dispatch theo `entry_type`:
+- Master Candle: `run_master_candle_bot()`.
+- FEG: `run_feg_bot()` — vòng lặp liên tục, lấy 2 nến đóng gần nhất + EMA, gọi `analyze_feg`, gate `active_trade`, `place_order(test=...)`.
+- `get_recent_candles()`: lấy N nến từ MT5, bỏ nến đang chạy.
+- `feg_entry_decision()`: trả None nếu đang có lệnh.
 
-**Parameters Supported**: 45 total
-- **Required**: --strategy, --symbol, --user
-- **Entry**: --timeframe, --entry_time, --entry_mode, --entry_percent
-- **Risk**: --sl_pips, --rr_ratio, --lot_size, --buffer_k
-- **Money Management**: --lot_mode, --risk_mode, --risk_percent, --risk_amount, --risk_compounding
-- **Exit**: --tp_type, --sl_type, --max_candles
-- **Breakeven**: --move_sl_to_breakeven, --breakeven_trigger_percent, --breakeven_target
-- **Pending Orders**: --pending_order_max_candles, --pending_order_expire_candles
-- **Control**: --test, --interval
+### `src/feg_strategy.py`
+Logic phát hiện FEG pattern:
+- `detect_feg_signal(candle1, candle2, ema2, pip_value, ema_distance_enabled, ema_distance_pips) -> "BUY"|"SELL"|None`
+- `analyze_feg(...) -> dict | None`: dựng signal đầy đủ (entry/SL/TP) dùng `compute_trade_levels`.
 
-**Main Loop Stages**:
-1. **Init** (lines 289-390): Load strategy, credentials, config
-2. **Wait** (lines 438-610): Loop every N seconds, wait for entry time
-3. **Entry** (lines 609-760): Connect to MT5, fetch candle, analyze signal
-4. **Order** (lines 760-830): Place market or LIMIT order
-5. **Management** (lines 830+): Monitor position, manage exits
+### `src/orders.py`
+- `place_order(symbol, direction, volume, sl, tp, credentials, test, magic, comment)`:
+  - `test=True` → simulate, không gọi MT5.
+  - `test=False` → gọi `mt5.order_send()` thật.
+- `close_position_by_ticket()`: đóng lệnh mở bằng ticket.
 
-**Special Features**:
-- LIMIT order retry logic (pending_order_max_candles)
-- LIMIT order expiration (pending_order_expire_candles)
-- Move SL to breakeven at N% profit
-- Close-based vs price-based exits
-- Asynchronous Telegram notifications
-- Real-time trade logging
+### `src/strategy_manager.py`
+Đọc YAML strategy file → trả dict params đầy đủ:
+- `entry_type`, `ema_period`, `ema_distance_enabled`, `ema_distance_pips`, `pattern`.
+- `entry_time`, `tp_type`, `sl_type`, `max_candles`, `rr_ratio`, `buffer_k`, `lot_size`, `symbols`.
 
-### 2. bot_manager.py (Process Management)
+### `src/utils.py`
+- `get_pip_value(symbol)`: pip size (0.01 cho XAU/BTC, 0.0001 cho Forex).
+- `check_exit(direction, candle, tp, sl, tp_type, sl_type) -> (exit_type, exit_price)`.
+- `compute_trade_levels(direction, candle, entry_mode, entry_percent, buffer_k, rr_ratio, pip_value) -> dict`: tính entry/SL/TP/sl_pips.
 
-**Lines**: ~200+
-**Purpose**: Start/stop/list trading bot processes
+### `src/calculation.py`
+Chỉ báo kỹ thuật: `calculate_macd()`, `calculate_stoch()`, `calculate_ma()`, `calculate_ema()`, `check_cross_2_list_updated()`.
 
-**Key Functions**:
+### `src/telegram.py`
+`send_message(msg, chat_id, ...)` với retry tối đa 5 lần. Token đọc từ env `TELEGRAM_BOT_TOKEN`.
 
-| Function | Purpose |
-|----------|---------|
-| `load_bots()` | Load running bot state from `data/running_bots.json` |
-| `save_bots()` | Persist bot state atomically (prevents corruption) |
-| `start_bot()` | Launch bot_runner.py subprocess with parameters |
-| `stop_bot()` | Terminate bot process gracefully |
-| `is_process_running()` | Check if bot process is alive (Windows/Linux compatible) |
-| `list_bots()` | Get all running bots |
+## Strategies YAML
 
-**Data Format**:
-```json
-{
-  "bot_id": "strategy_symbol_user_pid",
-  "strategy": "master_candle",
-  "symbol": "ETHUSDm",
-  "user": "admin",
-  "pid": 12345,
-  "status": "running",
-  "started_at": "2026-02-26T10:30:00",
-  "params": { ... }
-}
-```
-
-**Platform Support**:
-- Windows: Uses tasklist and psutil
-- Linux: Uses ps and signal handling
-- Atomic file writes to prevent JSON corruption
-
-### 3. orders.py (MT5 Order Operations)
-
-**Lines**: ~250+
-**Purpose**: Execute orders and manage positions in MT5
-
-**Key Functions**:
-
-| Function | Purpose |
-|----------|---------|
-| `get_mt5_connection()` | Login to MT5 with credentials |
-| `fetch_open_positions()` | Get all open positions |
-| `close_position()` | Close position by ticket |
-| `place_order()` | Market order execution |
-| `place_pending_order()` | LIMIT pending order placement |
-| `modify_position_sl()` | Update stop loss |
-| `modify_position_tp()` | Update take profit |
-
-**Order Management**:
-- Market orders with deviation tolerance
-- LIMIT pending orders with price specifications
-- SL/TP modification for breakeven moves
-- Position closing by ticket
-- Error handling for broker rejections
-
-### 4. backtest.py (Backtesting Engine)
-
-**Lines**: ~400+
-**Purpose**: Simulate trading strategy on historical data
-
-**Key Functions**:
-
-| Function | Purpose |
-|----------|---------|
-| `calculate_flex_lot_size()` | Calculate lot based on risk % or fixed amount |
-| `simulate_trade()` | Execute single trade simulation |
-| `simulate_strategy()` | Run full backtest on historical data |
-| `backtest_for_symbol()` | Backtest single symbol across date range |
-| `backtest_multiple_symbols()` | Backtest multiple symbols in parallel |
-
-**Features**:
-- Historical data fetching from MT5
-- OHLC-based trade simulation
-- LIMIT order retry simulation
-- Move SL to breakeven feature
-- P&L calculation with commissions
-- Statistics generation (win rate, Sharpe ratio, etc.)
-- Results persistence to JSON
-
-**Output Format**:
-```json
-{
-  "symbol": "ETHUSDm",
-  "date_range": ["2025-01-01", "2025-02-26"],
-  "total_trades": 45,
-  "winning_trades": 32,
-  "losing_trades": 13,
-  "win_rate": 71.1,
-  "total_pnl": 450.25,
-  "average_win": 15.32,
-  "average_loss": -8.45,
-  "max_drawdown": 2.1,
-  "timestamps": { ... }
-}
-```
-
-### 5. strategy.py (Master Candle Strategy)
-
-**Lines**: ~323
-**Purpose**: Master Candle strategy logic and signal generation
-
-**Key Functions**:
-
-| Function | Purpose |
-|----------|---------|
-| `is_master_candle_time()` | Check if time matches strategy entry window |
-| `analyze_master_candle()` | Generate trade signal from OHLC |
-| `notify_signal()` | Send signal notification to Telegram |
-| `place_order()` | Execute order (test mode only) |
-| `close_position_by_ticket()` | Close position (test mode only) |
-| `check_and_execute_strategy()` | Main strategy function |
-
-**Strategy Rules**:
-```
-Entry Time: 21:05 HCM (Asia/Ho_Chi_Minh timezone)
-Timeframe: M5 (5-minute candle)
-
-Signal:
-- Close > Open: BUY, SL = Low - 30 pips
-- Close < Open: SELL, SL = High + 30 pips
-- Close == Open: SKIP (Doji, no trade)
-
-Exit:
-- TP: price_based (immediate when price touches TP)
-- SL: close_based (when candle closes beyond SL)
-- Time: max_candles (~35 min for 7 M5 candles)
-
-Risk/Reward: RR 1:2
-```
-
-**Return Format**:
-```python
-{
-    "symbol": "ETHUSDm",
-    "direction": "BUY",
-    "entry_price": 2450.50,
-    "stop_loss": 2420.00,
-    "take_profit": 2510.00,
-    "lot_size": 0.01,
-    "candle_time": datetime,
-    "master_candle": {
-        "open": 2440.00,
-        "high": 2460.00,
-        "low": 2430.00,
-        "close": 2450.50
-    }
-}
-```
-
-### 6. auth.py (Credential Management)
-
-**Lines**: ~150+
-**Purpose**: Load/save/validate MT5 credentials
-
-**Key Functions**:
-
-| Function | Purpose |
-|----------|---------|
-| `load_auth_config()` | Read `config/auth.yaml` |
-| `get_user_mt5_credentials()` | Get credentials for specific user |
-| `save_user_mt5_credentials()` | Save user credentials |
-| `validate_credentials()` | Verify login/password/server format |
-| `list_users()` | Get all configured users |
-
-**Credential Storage**:
+### `strategies/master_candle.yaml`
 ```yaml
-users:
-  admin:
-    login: "123456789"
-    password: "secret_password"
-    server: "Exness-MT5Real"
-  demo_user:
-    login: "987654321"
-    password: "demo_password"
-    server: "Exness-MT5Demo"
-```
-
-**Security**:
-- File-based storage (not in code)
-- Passwords hashed/masked in logs
-- Validation before MT5 connection
-
-### 7. strategy_manager.py (Strategy Loading)
-
-**Lines**: ~200+
-**Purpose**: Load strategy configs from YAML files
-
-**Key Functions**:
-
-| Function | Purpose |
-|----------|---------|
-| `get_strategy()` | Load strategy definition |
-| `get_strategy_parameters()` | Get default parameters |
-| `list_strategies()` | Get all available strategies |
-| `validate_strategy()` | Verify strategy config format |
-
-**Strategy Config Structure**:
-```yaml
-id: master_candle
-name: Master Candle Strategy
-version: "1.0"
-parameters:
-  sl_pips: 30
-  rr_ratio: 2.0
-  lot_size: 0.01
-  max_candles: 7
 entry:
+  type: time         # discriminator
   timeframe: M5
   time: "21:05"
-  timezone: Asia/Ho_Chi_Minh
+  timezone: "Asia/Ho_Chi_Minh"
+```
+
+### `strategies/feg_ema21.yaml`
+```yaml
+entry:
+  type: pattern      # discriminator
+  timeframe: M5
+  pattern: feg_ema21
+  ema_period: 21
+  ema_distance: {enabled: false, pips: 0}
 exit:
-  tp_type: price_based
-  sl_type: close_based
-symbols:
-  - XAUUSD
-  - BTCUSD
-  - EURUSD
-  # ...
+  tp: {type: price_based}
+  sl: {type: close_based}
+  time_limit: {enabled: true, max_candles: 7}
+parameters:
+  rr_ratio: 2.0
+  buffer_k: 5
+  lot_size: 0.01
+symbols: [XAUUSD, BTCUSD, ETHUSD, XAUUSDm, BTCUSDm, ETHUSDm]
 ```
 
-### 8. utils.py (Utility Functions)
+## Magic Numbers
 
-**Lines**: ~300+
-**Purpose**: Shared utility functions
+| Magic | Strategy |
+|-------|----------|
+| 210500 | Master Candle |
+| 212100 | FEG EMA21 |
 
-**Key Functions**:
+## Công Nghệ Stack
 
-| Function | Purpose |
-|----------|---------|
-| `get_pip_value()` | Get pip size by symbol (0.0001 for forex, 0.01 for metals, 1.0 for crypto) |
-| `get_point_value()` | Get smallest price increment (point) for buffer calculations |
-| `get_pip_value_per_lot()` | Get dollar value per pip per lot (for risk calculation) |
-| `is_mt5_available()` | Check if MT5 is installed |
-| `check_exit()` | Verify if position should exit (TP/SL/Time limit) |
-| `non_zero_range()` | Handle zero ranges in crypto data |
+| Thành phần | Thư viện | Phiên bản |
+|-----------|---------|---------|
+| Dashboard | Streamlit | 1.52.2 |
+| Auth | streamlit-authenticator | 0.4.2 |
+| MT5 API | metatrader5 | 5.0.5430 |
+| Telegram | python-telegram-bot | 22.5 |
+| Data | pandas | 2.3.3 |
+| Charting | plotly | 6.5.2 |
+| Excel | openpyxl | 3.1.2 |
+| Config | PyYAML | 6.0.3 |
+| Test | pytest | 8.3.4 |
+| Env | python-dotenv | 1.2.1 |
 
-**Symbol Pip Value Mapping**:
-| Symbol Pattern | Pip Value | Example |
-|---|---|---|
-| XAU*, *GOLD* | 0.01 | XAUUSD: $1 = 100 pips |
-| BTC*, *BITCOIN* | 1.0 | BTCUSD: $100 = 100 pips |
-| ETH*, *ETHEREUM* | 0.01 | ETHUSD: $1 = 100 pips |
-| *JPY | 0.01 | USDJPY: 0.01 = 1 pip |
-| Other Forex | 0.0001 | EURUSD: 0.0001 = 1 pip |
+## Test Suite
 
-### 9. calculation.py (Technical Indicators)
+Chạy: `pytest tests/ -v`
 
-**Lines**: ~350+
-**Purpose**: Technical indicator calculations
-
-**Key Functions**:
-
-| Function | Purpose |
-|----------|---------|
-| `calculate_macd()` | MACD (Moving Average Convergence Divergence) |
-| `calculate_stochastic()` | Stochastic Oscillator |
-| `calculate_ma()` | Simple Moving Average |
-| `calculate_ema()` | Exponential Moving Average |
-| `check_cross_2_list_updated()` | Detect crossover between two lines |
-
-**Used By**: Backtest engine, potential future signal enhancements
-
-### 10. telegram.py (Notifications)
-
-**Lines**: ~100+
-**Purpose**: Send Telegram alerts asynchronously
-
-**Key Functions**:
-
-| Function | Purpose |
-|----------|---------|
-| `send_telegram()` | Send blocking Telegram message |
-| `send_telegram_async()` | Send non-blocking (threaded) message |
-| `format_trade_notification()` | Format trade alert message |
-| `format_error_notification()` | Format error alert message |
-
-**Channels**:
-- `TELEGRAM_ERROR_CHAT_ID`: Dev channel (errors, critical alerts)
-- `TELEGRAM_CHAT_ID`: User channel (trade notifications)
-
-### 11. symbol_validator.py (Symbol Validation)
-
-**Lines**: ~150+
-**Purpose**: Validate trading symbols against broker availability
-
-**Key Functions**:
-
-| Function | Purpose |
-|----------|---------|
-| `validate_symbol()` | Check if symbol exists in MT5 |
-| `get_symbol_info()` | Get symbol properties (min lot, step, etc.) |
-| `get_available_symbols()` | List all symbols from MT5 |
-| `validate_symbol_properties()` | Verify lot size/step requirements |
-
-### 12. backtest_history.py (Backtest Persistence)
-
-**Lines**: ~200+
-**Purpose**: Store and retrieve backtest results
-
-**Key Functions**:
-
-| Function | Purpose |
-|----------|---------|
-| `save_backtest_result()` | Persist backtest to JSON |
-| `load_backtest_result()` | Retrieve backtest results |
-| `list_backtest_history()` | Get all backtest runs |
-| `compare_backtests()` | Compare two backtest results |
-
-### 13. bot_config_history.py (Config Snapshots)
-
-**Lines**: ~150+
-**Purpose**: Track configuration changes for debugging
-
-**Key Functions**:
-
-| Function | Purpose |
-|----------|---------|
-| `save_bot_config()` | Save bot parameters at startup |
-| `load_bot_config()` | Retrieve config snapshot |
-| `get_config_history()` | Get all config versions for a bot |
-
----
-
-## Streamlit Pages
-
-### 1_Bots.py (Bot Management)
-- Start/stop bots
-- View running bot status
-- Configure bot parameters
-- Monitor real-time logs
-
-### 2_Orders.py (Order History)
-- View all closed trades
-- Filter by symbol/date/P&L
-- Export to CSV/Excel
-- Calculate statistics
-
-### 3_Signals.py (Signal Monitoring)
-- View generated signals
-- Signal history
-- Signal accuracy tracking
-
-### 4_Strategies.py (Strategy Configuration)
-- Load/edit strategy YAML files
-- Test strategy logic
-- Parameter adjustment UI
-
-### 5_Backtest.py (Backtesting)
-- Run backtest on date range
-- Compare multiple symbols
-- Optimize parameters
-- View statistics and equity curves
-
-### 6_Simulation.py (Simulation Tools)
-- Market simulation
-- "What-if" scenario testing
-- Risk analysis
-
-### 7_Users.py (User Management)
-- Create/edit user accounts
-- Configure MT5 credentials per user
-- User permissions
-
-### 8_Settings.py (Configuration)
-- Telegram bot configuration
-- System settings
-- Data storage management
-- Backup/restore
-
----
-
-## Data Storage
-
-| File | Format | Purpose |
-|------|--------|---------|
-| `config/auth.yaml` | YAML | MT5 credentials (login, password, server) per user |
-| `data/running_bots.json` | JSON | Active bot processes (PID, status, params) |
-| `data/orders.csv` | CSV | Trade history (symbol, direction, lot, entry, exit, P&L) |
-| `data/bot_config_history.json` | JSON | Snapshots of bot parameters at each run |
-| `data/backtest_history.json` | JSON | Backtest results with statistics |
-| `logs/bot_*.log` | TXT | Per-bot execution logs (timestamped) |
-| `strategies/master_candle.yaml` | YAML | Master Candle strategy definition |
-
----
-
-## Dependencies
-
-**Key Libraries**:
-
-| Package | Version | Purpose |
-|---------|---------|---------|
-| MetaTrader5 | 5.0.5430 | MT5 API (Windows only) |
-| Streamlit | 1.52.2 | Web dashboard UI |
-| pandas | 2.3.3 | Data manipulation (trades, candles) |
-| python-telegram-bot | 22.5 | Telegram notifications |
-| PyYAML | 6.0.3 | Configuration files |
-| python-dotenv | 1.2.1 | Environment variables (.env) |
-| plotly | 6.5.2 | Interactive charts (backtesting) |
-| requests | 2.32.5 | HTTP requests (Telegram API) |
-| cryptography | 46.0.3 | Credential encryption (future) |
-
----
-
-## Configuration
-
-### Environment Variables (.env)
-
-```bash
-# MT5 (fallback, overridden by config/auth.yaml)
-MT5_LOGIN=123456789
-MT5_PASSWORD=secret_password
-MT5_SERVER=Exness-MT5Real
-
-# Telegram
-TELEGRAM_BOT_TOKEN=123456:ABC-DEF1234567890
-TELEGRAM_CHAT_ID=123456789        # User alerts
-TELEGRAM_ERROR_CHAT_ID=987654321  # Dev errors
-
-# Python
-PYTHONIOENCODING=utf-8            # For Windows Unicode
+```
+25 passed in ~2.2s
 ```
 
-### Timezone
-- **Default**: Asia/Ho_Chi_Minh (UTC+7)
-- **Used for**: Entry time matching, log timestamps, candle time
-- **Configurable**: In strategy YAML files
+| File test | Nội dung |
+|-----------|---------|
+| test_feg_strategy.py | detect_feg_signal (7 cases), analyze_feg (2 cases) |
+| test_trade_levels.py | compute_trade_levels BUY/SELL/range_percent |
+| test_backtest_feg.py | EMA blocks SELL; EMA below L2 → SELL fires |
+| test_backtest_time_characterization.py | Master Candle backward-compat lock |
+| test_strategy_manager_feg.py | FEG params + master_candle defaults |
+| test_place_order.py | test mode short-circuit; live mode mock |
+| test_feg_runner.py | entry when flat+pattern; no entry when active_trade |
+| test_bot_command.py | EMA flags in command; disabled EMA = 0 |
+| test_history_columns.py | EMA columns in history_to_dataframe |
+| test_smoke.py | import sanity |
 
----
+## Vấn Đề Bảo Mật
 
-## Key Patterns & Conventions
+| Mức | Vấn đề | Trạng thái |
+|-----|--------|-----------|
+| ⚠️ Medium | `config/auth.yaml` (MT5 credentials) được track trong git | Cần `git rm --cached` + rotate password |
+| ✅ | Telegram token đọc từ env `TELEGRAM_BOT_TOKEN` | OK |
+| ✅ | MT5 credentials đọc từ `config/auth.yaml` (không hardcode) | OK |
 
-### 1. Entry Time Precision
-- **Entry time**: Candle OPEN time (e.g., "21:05")
-- **Bot trigger**: Entry time + timeframe (e.g., "21:10" for M5)
-- **Why**: Allows analysis of completed candle before placing trade
+## Tài Liệu Liên Quan
 
-### 2. Lot Calculation (Flex Mode)
-```
-Formula: lot_size = risk_amount / (sl_pips × pip_value_per_lot)
-
-Example:
-- Equity: $1000
-- Risk: 1%
-- Risk amount: $10
-- SL: 30 pips
-- EURUSD pip value per lot: $0.1
-- Lot = $10 / (30 × $0.1) = 3.33 lots → 0.33 (rounded down)
-```
-
-### 3. LIMIT Order Retry Logic
-```
-Signal fails (broker rejects LIMIT):
-  → Save signal data
-  → Next candle: Retry same LIMIT price
-  → If still fails: Keep retrying
-  → After N candles: Abandon trade
-  → If price past SL: Invalidate signal (no loss potential)
-  → If price at/past entry: Convert to MARKET
-```
-
-### 4. Breakeven Feature
-```
-When profit reaches N% of TP distance:
-  → Move SL from original level to breakeven
-  → Breakeven target: Entry price OR candle close price
-  → Protects profits, allows upside continuation
-  → Example: Entry=1.0800, TP=1.0900, SL=1.0700
-             At 50% profit: Move SL to 1.0800
-```
-
-### 5. Exit Types
-| Type | Behavior |
-|------|----------|
-| Price-based | Exit immediately when price touches level |
-| Close-based | Exit only when candle CLOSES beyond level |
-
----
-
-## Error Handling Strategy
-
-### Connection Errors
-- MT5 login fails → Retry next loop
-- Network timeout → Continue with fallback
-- Symbol not found → Skip trade, log error
-
-### Validation Errors
-- Invalid parameters → Prevent bot start, show error message
-- Missing credentials → Stop bot immediately
-- Invalid timeframe → Use fallback from strategy
-
-### Graceful Degradation
-- Telegram unavailable → Continue trading (non-blocking)
-- File write error → Log to console instead
-- MT5 disconnect → Reconnect on next loop iteration
-
----
-
-## Performance Characteristics
-
-| Metric | Value |
-|--------|-------|
-| Bot loop interval | 1 second (configurable) |
-| MT5 connection latency | 100-200ms |
-| Entry detection accuracy | <1 second |
-| Memory per bot process | 50-100 MB |
-| Max concurrent bots | 50+ (system dependent) |
-| Order placement latency | 200-500ms |
-
----
-
-## Future Enhancements
-
-- Multiple strategy support
-- Advanced order types (Trailing SL, OCO)
-- Position scaling (pyramid entries)
-- Correlation-based multi-symbol management
-- ML-based signal validation
-- API for external integrations
-- Mobile app companion
+- [Project Overview & PDR](./project-overview-pdr.md)
+- [System Architecture](./system-architecture.md)
+- [Project Roadmap](./project-roadmap.md)
+- [Code Standards](./code-standards.md)
