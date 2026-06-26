@@ -39,11 +39,9 @@ jobs:
               Write-Host 'CWD:' (Get-Location); \
               Write-Host 'Remote:' (git remote -v); \
               Write-Host 'Pulling latest code...'; \
-              git stash --include-untracked 2>&1; \
               \$result = git pull https://github.com/CallmeChups/BotForex.git main 2>&1; \
               Write-Host \$result; \
               if (\$LASTEXITCODE -ne 0) { Write-Error 'git pull failed'; exit 1 }; \
-              git stash pop 2>&1; \
               Write-Host 'Installing dependencies...'; \
               .venv\\Scripts\\pip.exe install -r requirements.txt --quiet; \
               Write-Host 'Deploy complete.' \
