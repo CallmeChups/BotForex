@@ -49,16 +49,10 @@ jobs:
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             hyperion@100.110.182.114 \
             "powershell -NonInteractive -Command \"\
-              \$proc = Get-Process -Name 'streamlit' -ErrorAction SilentlyContinue; \
-              if (\$proc) { \
-                Stop-Process -Name 'streamlit' -Force; \
-                Write-Host 'Streamlit stopped.'; \
-              } else { \
-                Write-Host 'Streamlit not running, skipping stop.'; \
-              }; \
+              Get-Process -Name 'streamlit' -ErrorAction SilentlyContinue | Stop-Process -Force; \
               Start-Sleep -Seconds 2; \
-              \$logPath = 'D:\\BotForex\\logs\\streamlit.log'; \
-              \$cmd = 'D:\\BotForex\\.venv\\Scripts\\streamlit.exe run D:\\BotForex\\app.py --server.port 8501'; \
-              Start-Process powershell -ArgumentList '-NonInteractive','-Command',\$cmd -RedirectStandardOutput \$logPath -WindowStyle Hidden; \
-              Write-Host 'Streamlit restarted.' \
+              schtasks /Delete /TN 'StreamlitRestart' /F 2>null; \
+              schtasks /Create /TN 'StreamlitRestart' /TR 'powershell -NonInteractive -WindowStyle Hidden -Command \"Set-Location D:\\BotForex; D:\\BotForex\\.venv\\Scripts\\streamlit.exe run app.py --server.port 8501 >> D:\\BotForex\\logs\\streamlit.log 2>&1\"' /SC ONCE /ST 00:00 /RL HIGHEST /F; \
+              schtasks /Run /TN 'StreamlitRestart'; \
+              Write-Host 'Streamlit restarted via Task Scheduler.' \
             \""
