@@ -2,6 +2,12 @@
 .env
 .env.*
 
+# Server-local files — never overwrite on deploy
+config/auth.yaml
+data/orders.csv
+data/running_bots.json
+logs/
+
 *.txt
 !requirements.txt
 
