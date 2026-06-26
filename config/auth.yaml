@@ -1,0 +1,27 @@
+cookie:
+  expiry_days: 30
+  key: botforex_secret_key_change_this_in_production
+  name: botforex_auth
+credentials:
+  usernames:
+    admin:
+      email: admin@botforex.com
+      mt5:
+        login: '415929088'
+        password: Hang1970@
+        server: Exness-MT5Trial14
+      name: Admin
+      password: $2b$12$JVO8Nb0r7BfXbnOVWZ91q.qrV9ubS4GU9B6Qv.lhNoElMQitniNTC
+      role: admin
+    user:
+      email: user@botforex.com
+      mt5:
+        login: '415929088'
+        password: Hang1970@
+        server: Exness-MT5Trial14
+      name: User
+      password: $2b$12$32ZRRwf8Sp0b/AGXgYIsvOMLHClOxzGs3JDKv5rVw3iB.qnylWECW
+      role: user
+pre-authorized:
+  emails:
+  - admin@botforex.com
