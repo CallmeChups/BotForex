@@ -320,9 +320,9 @@ def main():
     with col1:
         buffer_k = st.number_input(
             "Buffer K (pips)",
-            value=5.0,
+            value=float(params.get('buffer_k', 5)),
             min_value=0.0,
-            max_value=50.0,
+            max_value=200.0,
             step=1.0,
             help="SL = candle body + k pips"
         )
