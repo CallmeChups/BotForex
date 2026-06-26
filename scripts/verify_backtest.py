@@ -235,6 +235,7 @@ def main():
         help="Which strategy to verify (default: all)",
     )
     parser.add_argument("--user", default="admin", help="Auth user for MT5 credentials")
+    parser.add_argument("--timeframe", default="M1", help="Candle timeframe (default: M1)")
     args = parser.parse_args()
 
     # credentials
@@ -247,15 +248,15 @@ def main():
     # fetch data
     end_dt = datetime.now(tz=timezone.utc)
     start_dt = end_dt - timedelta(days=args.days)
-    print(f"Fetching M5 data: {args.symbol}  {start_dt.date()} -> {end_dt.date()}")
-    df, err = fetch_historical_data(args.symbol, start_dt, end_dt, credentials, "M5")
+    print(f"Fetching {args.timeframe} data: {args.symbol}  {start_dt.date()} -> {end_dt.date()}")
+    df, err = fetch_historical_data(args.symbol, start_dt, end_dt, credentials, args.timeframe)
     if err:
         print(f"ERROR fetching data: {err}")
         sys.exit(1)
     if df is None or df.empty:
         print("ERROR: empty DataFrame returned - is MT5 connected?")
         sys.exit(1)
-    print(f"Loaded {len(df)} M5 candles")
+    print(f"Loaded {len(df)} {args.timeframe} candles")
 
     # run strategies
     results = {}

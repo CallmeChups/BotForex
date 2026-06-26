@@ -50,6 +50,24 @@ def get_args():
                         help="Enable EMA distance filter: 1=yes, 0=no")
     parser.add_argument("--ema_distance_pips", type=float, default=0.0,
                         help="EMA distance in pips when filter enabled")
+    parser.add_argument("--entry_mode", type=str, default=None,
+                        help="Entry mode: 'close' or 'range_percent' (default: from strategy)")
+    parser.add_argument("--entry_percent", type=float, default=None,
+                        help="Entry percent for range_percent mode (default: from strategy)")
+    parser.add_argument("--tp_type", type=str, default=None,
+                        help="TP exit type: 'price_based' or 'close_based' (default: from strategy)")
+    parser.add_argument("--sl_type", type=str, default=None,
+                        help="SL exit type: 'close_based' or 'price_based' (default: from strategy)")
+    parser.add_argument("--buffer_k", type=float, default=None,
+                        help="SL buffer in pips beyond candle extreme (default: from strategy)")
+    parser.add_argument("--lot_mode", type=str, default="fixed",
+                        help="Lot size mode: 'fixed' or 'flex' (default: fixed)")
+    parser.add_argument("--risk_mode", type=str, default="percent",
+                        help="Risk mode for flex lots: 'percent' or 'fixed_amount'")
+    parser.add_argument("--risk_percent", type=float, default=0.5,
+                        help="Risk per trade as % of equity (flex mode)")
+    parser.add_argument("--risk_amount", type=float, default=0.0,
+                        help="Fixed risk per trade in USD (flex mode)")
 
     # Bot control
     parser.add_argument("--test", type=int, default=1,
@@ -398,6 +416,44 @@ def get_recent_candles(mt5, symbol: str, timeframe_str: str, count: int = 120):
     return df
 
 
+def _calc_flex_lot(mt5, symbol: str, risk_mode: str, risk_percent: float, risk_amount: float,
+                   entry_price: float, sl_price: float) -> float:
+    """Calculate lot size from account equity and SL distance (flex mode)."""
+    pip_value = get_pip_value(symbol)
+    sl_pips = abs(entry_price - sl_price) / pip_value
+    if sl_pips == 0:
+        return 0.01
+
+    # Get account equity and symbol tick info
+    account = mt5.account_info()
+    sym_info = mt5.symbol_info(symbol)
+    if not account or not sym_info:
+        return 0.01
+
+    equity = account.equity
+    if risk_mode == "percent":
+        risk_usd = equity * risk_percent / 100
+    else:
+        risk_usd = risk_amount
+
+    # pip_value_per_lot: dollar value of 1 pip for 1 lot
+    # = tick_value * (pip_value / tick_size)
+    tick_value = sym_info.trade_tick_value
+    tick_size = sym_info.trade_tick_size
+    if tick_size == 0:
+        return 0.01
+    pip_value_per_lot = tick_value * (pip_value / tick_size)
+    if pip_value_per_lot == 0:
+        return 0.01
+
+    raw_lot = risk_usd / (sl_pips * pip_value_per_lot)
+    # Round to symbol's volume step
+    step = sym_info.volume_step or 0.01
+    lot = max(sym_info.volume_min, round(raw_lot / step) * step)
+    lot = min(lot, sym_info.volume_max)
+    return round(lot, 2)
+
+
 def run_feg_bot(args, strategy, params, credentials):
     """Vòng lặp live cho strategy FEG (pattern + EMA21, 1 lệnh/lúc)."""
     from src.orders import place_order, close_position
@@ -405,25 +461,33 @@ def run_feg_bot(args, strategy, params, credentials):
     timeframe = params.get('timeframe', 'M5')
     ema_period = args.ema_period or params.get('ema_period', 21)
     rr_ratio = args.rr_ratio or params.get('rr_ratio', 2.0)
-    buffer_k = params.get('buffer_k', 5)
+    buffer_k = args.buffer_k if args.buffer_k is not None else params.get('buffer_k', 5)
     lot_size = args.lot_size or params.get('lot_size', 0.01)
-    max_candles = args.max_candles or params.get('max_candles', 7)
+    max_candles = args.max_candles if args.max_candles is not None else params.get('max_candles', 7)
     ema_dist_enabled = bool(args.ema_distance_enabled) or params.get('ema_distance_enabled', False)
     ema_dist_pips = args.ema_distance_pips or params.get('ema_distance_pips', 0)
-    entry_mode = "close"
-    entry_percent = 0.0
+    entry_mode = args.entry_mode or params.get('entry_mode', 'close')
+    entry_percent = args.entry_percent if args.entry_percent is not None else params.get('entry_percent', 0.0)
+    tp_type = args.tp_type or params.get('tp_type', 'price_based')
+    sl_type = args.sl_type or params.get('sl_type', 'close_based')
+    lot_mode = args.lot_mode or 'fixed'
+    risk_mode = args.risk_mode or 'percent'
+    risk_percent = args.risk_percent
+    risk_amount = args.risk_amount
 
-    # Auto-detect symbol min lot and clamp
+    # Auto-detect symbol min lot and clamp (only for fixed mode)
     mt5_tmp, err_tmp = get_mt5_connection(credentials)
     if not err_tmp:
         sym_info = mt5_tmp.symbol_info(args.symbol)
-        if sym_info and lot_size < sym_info.volume_min:
+        if sym_info and lot_mode == "fixed" and lot_size < sym_info.volume_min:
             log(f"lot_size {lot_size} < symbol min {sym_info.volume_min} — using {sym_info.volume_min}", "WARN")
             lot_size = sym_info.volume_min
         mt5_tmp.shutdown()
 
+    lot_log = f"flex({risk_mode} {risk_percent}%/{risk_amount}$)" if lot_mode == "flex" else f"fixed={lot_size}"
     log(f"FEG params: EMA{ema_period}, RR={rr_ratio}, buffer_k={buffer_k}, "
-        f"lot={lot_size}, max_candles={max_candles}, dist={'ON ' + str(ema_dist_pips) + 'p' if ema_dist_enabled else 'OFF'}")
+        f"lot={lot_log}, max_candles={max_candles or 'unlimited'}, "
+        f"dist={'ON ' + str(ema_dist_pips) + 'p' if ema_dist_enabled else 'OFF'}")
 
     send_telegram(f"FEG Bot Started\nSymbol: {args.symbol}\nUser: {args.user}\n"
                   f"Test: {'Yes' if args.test else 'No'}")
@@ -463,13 +527,21 @@ def run_feg_bot(args, strategy, params, credentials):
                     ema_dist_enabled, ema_dist_pips,
                 )
                 if signal:
+                    # Calculate flex lot if needed
+                    trade_lot = lot_size
+                    if lot_mode == "flex":
+                        trade_lot = _calc_flex_lot(
+                            mt5, args.symbol, risk_mode, risk_percent, risk_amount,
+                            signal["entry_price"], signal["stop_loss"],
+                        )
                     log(f"FEG Signal: {signal['direction']} @ {signal['entry_price']:.2f}, "
-                        f"SL={signal['stop_loss']:.2f}, TP={signal['take_profit']:.2f}")
+                        f"SL={signal['stop_loss']:.2f}, TP={signal['take_profit']:.2f}, lot={trade_lot}")
                     send_telegram(f"<b>FEG Signal: {signal['direction']}</b>\n"
                                   f"Symbol: {args.symbol}\nEntry: {signal['entry_price']:.2f}\n"
-                                  f"SL: {signal['stop_loss']:.2f}\nTP: {signal['take_profit']:.2f}")
+                                  f"SL: {signal['stop_loss']:.2f}\nTP: {signal['take_profit']:.2f}\n"
+                                  f"Lot: {trade_lot}")
                     ok, msg, ticket = place_order(
-                        args.symbol, signal["direction"], lot_size,
+                        args.symbol, signal["direction"], trade_lot,
                         sl=signal["stop_loss"], tp=signal["take_profit"],
                         credentials=credentials, test=bool(args.test),
                         magic=212100, comment="FEG",
@@ -491,10 +563,10 @@ def run_feg_bot(args, strategy, params, credentials):
                 exit_type, exit_price = check_exit(
                     active_trade["direction"], candle,
                     active_trade["tp"], active_trade["sl"],
-                    params.get("tp_type", "price_based"),
-                    params.get("sl_type", "close_based"),
+                    tp_type,
+                    sl_type,
                 )
-                if not exit_type and active_trade["candles"] >= max_candles:
+                if not exit_type and max_candles > 0 and active_trade["candles"] >= max_candles:
                     exit_type, exit_price = "TIME", last["close"]
 
                 if exit_type:

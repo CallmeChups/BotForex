@@ -71,6 +71,8 @@ def build_bot_command(
     python_exe, script_path, strategy, symbol, user, test, interval,
     lot_size=None, sl_pips=None, rr_ratio=None, max_candles=None,
     ema_period=None, ema_distance_enabled=False, ema_distance_pips=0.0,
+    entry_mode=None, entry_percent=None, tp_type=None, sl_type=None,
+    buffer_k=None, lot_mode=None, risk_mode=None, risk_percent=None, risk_amount=None,
 ):
     """Build command list to run bot_runner (separated for testability)."""
     cmd = [
@@ -93,6 +95,24 @@ def build_bot_command(
         cmd.extend(["--max_candles", str(max_candles)])
     if ema_period:
         cmd.extend(["--ema_period", str(ema_period)])
+    if entry_mode:
+        cmd.extend(["--entry_mode", entry_mode])
+    if entry_percent is not None:
+        cmd.extend(["--entry_percent", str(entry_percent)])
+    if tp_type:
+        cmd.extend(["--tp_type", tp_type])
+    if sl_type:
+        cmd.extend(["--sl_type", sl_type])
+    if buffer_k is not None:
+        cmd.extend(["--buffer_k", str(buffer_k)])
+    if lot_mode:
+        cmd.extend(["--lot_mode", lot_mode])
+    if risk_mode:
+        cmd.extend(["--risk_mode", risk_mode])
+    if risk_percent is not None:
+        cmd.extend(["--risk_percent", str(risk_percent)])
+    if risk_amount is not None:
+        cmd.extend(["--risk_amount", str(risk_amount)])
     return cmd
 
 
@@ -109,6 +129,15 @@ def start_bot(
     ema_period: int = None,
     ema_distance_enabled: bool = False,
     ema_distance_pips: float = 0.0,
+    entry_mode: str = None,
+    entry_percent: float = None,
+    tp_type: str = None,
+    sl_type: str = None,
+    buffer_k: float = None,
+    lot_mode: str = None,
+    risk_mode: str = None,
+    risk_percent: float = None,
+    risk_amount: float = None,
 ) -> tuple:
     """
     Start a new bot process
@@ -132,6 +161,8 @@ def start_bot(
         python_exe, script_path, strategy, symbol, user, test, interval,
         lot_size, sl_pips, rr_ratio, max_candles,
         ema_period, ema_distance_enabled, ema_distance_pips,
+        entry_mode, entry_percent, tp_type, sl_type,
+        buffer_k, lot_mode, risk_mode, risk_percent, risk_amount,
     )
 
     try:

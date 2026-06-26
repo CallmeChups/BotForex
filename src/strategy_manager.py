@@ -214,6 +214,8 @@ def get_strategy_parameters(strategy_id: str) -> dict:
         'rr_ratio': params.get('rr_ratio', 2.0),
         'buffer_k': params.get('buffer_k', 5),
         'lot_size': params.get('lot_size', 0.01),
+        'entry_mode': params.get('entry_mode', 'close'),
+        'entry_percent': params.get('entry_percent', 0.0),
         'max_candles': exit_config.get('time_limit', {}).get('max_candles', 7),
         'tp_type': exit_config.get('tp', {}).get('type', 'price_based'),
         'sl_type': exit_config.get('sl', {}).get('type', 'close_based'),

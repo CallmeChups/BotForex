@@ -182,121 +182,253 @@ def show_create_bot():
         st.page_link("pages/4_Strategies.py", label="Go to Strategies", icon="📖")
         return
 
-    with st.form("create_bot"):
-        col1, col2 = st.columns(2)
+    # Strategy selection outside form so changing it rerenders the fields below
+    strategy_options = {s['name']: s['id'] for s in enabled_strategies}
+    selected_strategy_name = st.selectbox(
+        "Strategy*",
+        options=list(strategy_options.keys())
+    )
+    selected_strategy = strategy_options[selected_strategy_name]
 
-        with col1:
-            # Strategy selection
-            strategy_options = {s['name']: s['id'] for s in enabled_strategies}
-            selected_strategy_name = st.selectbox(
-                "Strategy*",
-                options=list(strategy_options.keys())
-            )
-            selected_strategy = strategy_options[selected_strategy_name]
+    # Load strategy parameters as defaults
+    params = get_strategy_parameters(selected_strategy)
+    is_pattern = params.get('entry_type', 'time') == 'pattern'
 
-            # Load strategy parameters as defaults
-            params = get_strategy_parameters(selected_strategy)
-            is_pattern = params.get('entry_type', 'time') == 'pattern'
+    # Strategy info preview
+    if is_pattern:
+        st.caption(f"Pattern: {params.get('pattern', 'feg')} | EMA{params.get('ema_period', 21)} | TF: {params.get('timeframe', 'M5')} | buffer_k: {params.get('buffer_k', 5)}")
+    else:
+        st.caption(f"Entry: {params.get('entry_time', 'N/A')} | TF: {params.get('timeframe', 'M5')} | SL: {params.get('sl_pips', 30)} pips")
 
-            symbol = st.text_input(
-                "Symbol*",
-                value=params.get('symbols', ['XAUUSD'])[0] if params.get('symbols') else os.getenv("SYMBOL", "XAUUSD")
-            )
+    sk = selected_strategy  # key prefix — forces widget reinit when strategy changes
 
-            test_mode = st.checkbox("Test Mode", value=True, help="No real trades, only simulation")
+    # --- Symbol ---
+    strategy_symbols = params.get('symbols', [])
+    use_custom_symbol = st.checkbox("Custom symbol", value=False, key=f"{sk}_custom_sym")
+    if use_custom_symbol:
+        symbol = st.text_input("Symbol*", value=os.getenv("SYMBOL", "XAUUSD"), key=f"{sk}_symbol")
+    elif strategy_symbols:
+        symbol = st.selectbox("Symbol*", options=strategy_symbols, key=f"{sk}_symbol")
+    else:
+        symbol = st.text_input("Symbol*", value=os.getenv("SYMBOL", "XAUUSD"), key=f"{sk}_symbol")
 
-        with col2:
-            lot_size = st.number_input(
-                "Lot Size",
-                value=float(params.get('lot_size', 0.01)),
-                min_value=0.01,
-                step=0.01,
-                format="%.2f"
-            )
+    # --- Basic params ---
+    col1, col2, col3 = st.columns(3)
 
-            sl_pips = st.number_input(
-                "SL (pips)",
-                value=int(params.get('sl_pips', 30)),
-                min_value=1,
-                max_value=200
-            )
+    with col1:
+        test_mode = st.checkbox("Test Mode", value=True, help="No real trades, only simulation", key=f"{sk}_test")
+        rr_ratio = st.number_input(
+            "RR Ratio", value=float(params.get('rr_ratio', 2.0)),
+            min_value=0.5, max_value=10.0, step=0.5,
+            help=f"Default: {params.get('rr_ratio', 2.0)}", key=f"{sk}_rr"
+        )
 
-            rr_ratio = st.number_input(
-                "RR Ratio",
-                value=float(params.get('rr_ratio', 2.0)),
-                min_value=0.5,
-                max_value=10.0,
-                step=0.5
-            )
-
-        col1, col2 = st.columns(2)
-
-        with col1:
+    with col2:
+        use_max_candles = st.checkbox(
+            "Enable Max Candles", value=True,
+            help="Tắt để chỉ thoát bằng TP/SL, không giới hạn thời gian", key=f"{sk}_use_mc"
+        )
+        if use_max_candles:
             max_candles = st.number_input(
-                "Max Candles",
-                value=int(params.get('max_candles', 7)),
-                min_value=1,
-                max_value=50
+                "Max Candles", value=int(params.get('max_candles', 7)),
+                min_value=1, max_value=50,
+                help=f"Default: {params.get('max_candles', 7)} candles", key=f"{sk}_mc"
             )
+        else:
+            max_candles = 0
+            st.caption("Không giới hạn thời gian — chỉ thoát TP/SL")
 
-        with col2:
-            interval = st.number_input(
-                "Check Interval (seconds)",
-                value=60,
-                min_value=10,
-                max_value=300,
-                help="How often to check for signals"
+    with col3:
+        interval = st.number_input(
+            "Check Interval (seconds)", value=60,
+            min_value=10, max_value=300,
+            help="How often to check for signals", key=f"{sk}_iv"
+        )
+        # Show timeframe from strategy (read-only)
+        st.caption(f"Timeframe: **{params.get('timeframe', 'M5')}** (from strategy)")
+
+    # --- EMA Filter (pattern only) ---
+    if is_pattern:
+        st.markdown("**EMA Filter (FEG)**")
+        ec1, ec2, ec3 = st.columns(3)
+        with ec1:
+            ema_period = st.number_input("EMA Period", value=int(params.get('ema_period', 21)), min_value=2, max_value=200, key=f"{sk}_ema")
+        with ec2:
+            ema_distance_enabled = st.checkbox("Xét khoảng cách EMA21", value=bool(params.get('ema_distance_enabled', False)), key=f"{sk}_emad")
+        with ec3:
+            ema_distance_pips = st.number_input("Khoảng cách (pips)", value=float(params.get('ema_distance_pips', 0) or 0), min_value=0.0, step=1.0, disabled=not ema_distance_enabled, key=f"{sk}_emdp")
+    else:
+        ema_period = None
+        ema_distance_enabled = False
+        ema_distance_pips = 0.0
+
+    st.divider()
+
+    # --- Entry ---
+    st.subheader("Entry")
+    ecol1, ecol2 = st.columns(2)
+    with ecol1:
+        entry_mode = st.radio(
+            "Entry Mode",
+            options=["close", "range_percent"],
+            index=0 if params.get('entry_mode', 'close') == 'close' else 1,
+            format_func=lambda x: "Close Price" if x == "close" else "Body Percent (%)",
+            horizontal=True,
+            help="Close: vào tại giá đóng nến 2 | Body %: limit tại X% thân nến",
+            key=f"{sk}_entry_mode",
+        )
+    with ecol2:
+        if entry_mode == "range_percent":
+            entry_percent = st.number_input(
+                "Entry Percent (%)",
+                value=float(params.get('entry_percent', 10.0) or 10.0),
+                min_value=0.0, max_value=100.0, step=5.0,
+                key=f"{sk}_entry_pct",
             )
-
-        if is_pattern:
-            st.markdown("**EMA Filter (FEG)**")
-            ec1, ec2, ec3 = st.columns(3)
-            with ec1:
-                ema_period = st.number_input("EMA Period", value=int(params.get('ema_period', 21)), min_value=2, max_value=200)
-            with ec2:
-                ema_distance_enabled = st.checkbox("Xét khoảng cách EMA21", value=bool(params.get('ema_distance_enabled', False)))
-            with ec3:
-                ema_distance_pips = st.number_input("Khoảng cách (pips)", value=float(params.get('ema_distance_pips', 0) or 0), min_value=0.0, step=1.0, disabled=not ema_distance_enabled)
+            st.caption(f"BUY: Close - {entry_percent}%(body) | SELL: Close + {entry_percent}%(body)")
         else:
-            ema_period = None
-            ema_distance_enabled = False
-            ema_distance_pips = 0.0
+            entry_percent = 0.0
+            st.caption("Entry tại giá Close nến 2")
 
-        # Show strategy info
-        st.markdown("---")
-        st.markdown(f"**Strategy:** {selected_strategy_name}")
-        if is_pattern:
-            st.caption(f"Pattern: {params.get('pattern', 'feg')} | EMA{params.get('ema_period', 21)} ({params.get('timeframe', 'M5')})")
+    st.divider()
+
+    # --- Exit Types ---
+    st.subheader("Exit Types")
+    xcol1, xcol2 = st.columns(2)
+    with xcol1:
+        tp_type = st.radio(
+            "Take Profit (TP) Exit",
+            options=["price_based", "close_based"],
+            index=0 if params.get('tp_type', 'price_based') == 'price_based' else 1,
+            format_func=lambda x: "Price-based (Immediate)" if x == "price_based" else "Close-based (Delayed)",
+            horizontal=True,
+            help="Price: thoát khi wick chạm TP | Close: thoát khi nến đóng qua TP",
+            key=f"{sk}_tp_type",
+        )
+        if tp_type == "price_based":
+            st.caption("TP triggers when High/Low touches TP level (exits at TP price)")
         else:
-            st.caption(f"Entry: {params.get('entry_time', 'N/A')} ({params.get('timeframe', 'N/A')})")
+            st.caption("TP triggers when candle CLOSES beyond TP (exits at close price)")
+    with xcol2:
+        sl_type = st.radio(
+            "Stop Loss (SL) Exit",
+            options=["close_based", "price_based"],
+            index=0 if params.get('sl_type', 'close_based') == 'close_based' else 1,
+            format_func=lambda x: "Close-based (Delayed)" if x == "close_based" else "Price-based (Immediate)",
+            horizontal=True,
+            help="Close: thoát khi nến đóng qua SL | Price: thoát khi wick chạm SL",
+            key=f"{sk}_sl_type",
+        )
+        if sl_type == "close_based":
+            st.caption("SL triggers when candle CLOSES beyond SL (exits at close price)")
+        else:
+            st.caption("SL triggers when High/Low touches SL level (exits at SL price)")
 
-        submitted = st.form_submit_button("Start Bot", type="primary", use_container_width=True)
+    st.divider()
 
-        if submitted:
-            if not symbol:
-                st.error("Symbol is required")
-            else:
-                success, msg, bot_info = start_bot(
-                    strategy=selected_strategy,
-                    symbol=symbol,
-                    user=username,
-                    test=test_mode,
-                    lot_size=lot_size,
-                    sl_pips=sl_pips,
-                    rr_ratio=rr_ratio,
-                    max_candles=max_candles,
-                    interval=interval,
-                    ema_period=ema_period,
-                    ema_distance_enabled=ema_distance_enabled,
-                    ema_distance_pips=ema_distance_pips,
+    # --- Lot Size ---
+    st.subheader("Lot Size")
+
+    lot_mode = st.radio(
+        "Lot Size Mode",
+        options=["fixed", "flex"],
+        format_func=lambda x: "Fixed" if x == "fixed" else "Flex (Risk-based)",
+        horizontal=True,
+        help="Fixed: nhập tay | Flex: tính từ % risk và khoảng cách SL thực tế",
+        key=f"{sk}_lot_mode",
+    )
+
+    lc1, lc2 = st.columns(2)
+    with lc1:
+        buffer_k = st.number_input(
+            "Buffer K (pips)",
+            value=float(params.get('buffer_k', 5)),
+            min_value=0.0, max_value=200.0, step=1.0,
+            help="SL = candle extreme + k pips",
+            key=f"{sk}_buffer_k",
+        )
+    st.caption("SL pips = (Close - Low) + k cho BUY, (High - Close) + k cho SELL")
+
+    if lot_mode == "fixed":
+        with lc2:
+            lot_size = st.number_input(
+                "Lot Size", value=float(params.get('lot_size', 0.01)),
+                min_value=0.01, max_value=10.0, step=0.01, format="%.2f",
+                key=f"{sk}_lot"
+            )
+        risk_mode = "percent"
+        risk_percent = 0.5
+        risk_amount = 0.0
+    else:
+        lc1b, lc2b, lc3b = st.columns(3)
+        with lc1b:
+            risk_mode = st.radio(
+                "Risk Mode",
+                options=["percent", "fixed_amount"],
+                format_func=lambda x: "Percentage (%)" if x == "percent" else "Fixed Amount ($)",
+                horizontal=True,
+                help="Percent: risk theo equity hiện tại | Fixed: cố định USD/trade",
+                key=f"{sk}_risk_mode",
+            )
+        with lc2b:
+            if risk_mode == "percent":
+                risk_percent = st.number_input(
+                    "Risk per Trade (%)", value=0.5,
+                    min_value=0.1, max_value=5.0, step=0.1, format="%.1f",
+                    help="% equity hiện tại risk mỗi lệnh",
+                    key=f"{sk}_risk_pct",
                 )
+                risk_amount = 0.0
+                st.caption(f"Lot tự động tính từ equity MT5 × {risk_percent}%")
+            else:
+                risk_amount = st.number_input(
+                    "Risk per Trade ($)", value=5.0,
+                    min_value=1.0, max_value=1000.0, step=1.0, format="%.2f",
+                    key=f"{sk}_risk_amt",
+                )
+                risk_percent = 0.0
+                st.caption(f"Cố định ${risk_amount:.2f} risk mỗi lệnh")
+        lot_size = 0.01  # not used in flex mode
 
-                if success:
-                    st.success(f"Bot started! {msg}")
-                    st.balloons()
-                    st.rerun()
-                else:
-                    st.error(msg)
+    # sl_pips not used for pattern strategies (SL from candle + buffer_k)
+    sl_pips = None if is_pattern else int(params.get('sl_pips', 30))
+
+    st.divider()
+
+    if st.button("Start Bot", type="primary", use_container_width=True):
+        if not symbol:
+            st.error("Symbol is required")
+        else:
+            success, msg, bot_info = start_bot(
+                strategy=selected_strategy,
+                symbol=symbol,
+                user=username,
+                test=test_mode,
+                lot_size=lot_size if lot_mode == "fixed" else None,
+                sl_pips=sl_pips,
+                rr_ratio=rr_ratio,
+                max_candles=max_candles,
+                interval=interval,
+                ema_period=ema_period,
+                ema_distance_enabled=ema_distance_enabled,
+                ema_distance_pips=ema_distance_pips,
+                entry_mode=entry_mode,
+                entry_percent=entry_percent if entry_mode == "range_percent" else None,
+                tp_type=tp_type,
+                sl_type=sl_type,
+                buffer_k=buffer_k,
+                lot_mode=lot_mode,
+                risk_mode=risk_mode if lot_mode == "flex" else None,
+                risk_percent=risk_percent if lot_mode == "flex" else None,
+                risk_amount=risk_amount if lot_mode == "flex" else None,
+            )
+
+            if success:
+                st.success(f"Bot started! {msg}")
+                st.balloons()
+                st.rerun()
+            else:
+                st.error(msg)
 
     # Quick start buttons
     st.markdown("---")

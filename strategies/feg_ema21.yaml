@@ -12,7 +12,7 @@ enabled: true
 
 entry:
   type: pattern
-  timeframe: M5
+  timeframe: M1
   pattern: feg_ema21
   ema_period: 21
   ema_distance:
@@ -30,8 +30,10 @@ exit:
 
 parameters:
   rr_ratio: 2.0
-  buffer_k: 5
+  buffer_k: 50
   lot_size: 0.01
+  entry_mode: close      # "close" = market at C2 close | "range_percent" = limit at X% of body
+  entry_percent: 10      # used when entry_mode=range_percent: 10% of |close-open| pullback
 
 symbols:
   - XAUUSD
