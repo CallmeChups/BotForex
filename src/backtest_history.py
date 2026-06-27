@@ -223,19 +223,22 @@ HISTORY_COLUMNS = {
         'End Time',
         'Trades',
         'Win Rate %',
-        'Total Pips',
         'Total USD',
-        'Lot Mode',
         'RR Ratio',
+        'Max Candles',
+        'Entry %',
+        'SL Type',
+        'Risk %',
+        'Buffer K',
+        'Risk $',
     ],
 
     # Config columns (optional, shown/hidden via multiselect)
     'config': [
         'Strategy', 'Symbol', 'Timeframe',
         'Entry Time', 'Entry Type', 'EMA Period', 'EMA Dist',
-        'Entry Mode', 'Entry %', 'Max Candles', 'Buffer K',
-        'TP Type', 'SL Type', 'Fixed Lot', 'Start Equity',
-        'Risk Mode', 'Risk %', 'Risk $',
+        'Entry Mode', 'Total Pips', 'Lot Mode', 'Fixed Lot', 'Start Equity',
+        'TP Type', 'Risk Mode',
     ],
 
     # Summary columns (optional)

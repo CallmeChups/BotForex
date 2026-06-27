@@ -38,15 +38,16 @@ def detect_feg_signal(
     dist = ema_distance_pips * pip_value if ema_distance_enabled else 0.0
 
     bullish1, bullish2 = c1 > o1, c2 > o2  # True = nến tăng
+    body1, body2 = abs(c1 - o1), abs(c2 - o2)
 
-    # SELL: FEG giảm — cả 2 nến phải cùng loại (đều giảm)
-    if not bullish1 and not bullish2:
+    # SELL: FEG giảm — cả 2 nến phải cùng loại (đều giảm), body C2 > body C1
+    if not bullish1 and not bullish2 and body2 > body1:
         if h2 > h1 and c2 < l1:
             if l2 > ema2 + dist:
                 return "SELL"
 
-    # BUY: FEG tăng — cả 2 nến phải cùng loại (đều tăng)
-    if bullish1 and bullish2:
+    # BUY: FEG tăng — cả 2 nến phải cùng loại (đều tăng), body C2 > body C1
+    if bullish1 and bullish2 and body2 > body1:
         if l2 < l1 and c2 > h1:
             if h2 < ema2 - dist:
                 return "BUY"
