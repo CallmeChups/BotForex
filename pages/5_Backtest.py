@@ -24,7 +24,7 @@ from src.auth import require_auth, get_user_mt5_credentials, has_mt5_credentials
 username, name = require_auth()
 
 from src.backtest import fetch_historical_data, run_backtest
-from src.utils import is_mt5_available
+from src.utils import is_mt5_available, get_pip_value
 from src.strategy_manager import list_strategies, get_strategy_parameters
 from src.backtest_history import (
     save_backtest_result,
@@ -36,6 +36,13 @@ from src.backtest_history import (
 )
 
 TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
+
+
+def _pip_caption(pips: float, symbol: str) -> str:
+    """Hiển thị giá trị thực của N pips theo symbol đang chọn."""
+    pv = get_pip_value(symbol)
+    return f"{pips} pips = **{pips * pv:.4g}** giá ({symbol})"
+
 
 
 def main():
@@ -139,19 +146,27 @@ def main():
             if is_pattern:
                 ema_period = st.number_input("EMA Period", value=int(params.get('ema_period', 21)),
                                              min_value=2, max_value=200)
-                ema_dist_enabled = st.checkbox("EMA Distance filter",
-                                               value=bool(params.get('ema_distance_enabled', False)),
-                                               help="Require L2/H2 ≥ N pips from EMA")
-                ema_dist_pips = (
-                    st.number_input("EMA Dist (pips)", value=float(params.get('ema_distance_pips', 0) or 0),
-                                    min_value=0.0, step=1.0)
-                    if ema_dist_enabled else 0.0
-                )
+                h2_exceed_pips = st.number_input(
+                    "H2 > H1 + N pips", value=float(params.get('h2_exceed_pips', 0.0)),
+                    min_value=0.0, step=1.0,
+                    help="SELL: H2 phải vượt H1 thêm N pips | BUY: L2 phải thấp hơn L1 thêm N pips")
+                st.caption(_pip_caption(h2_exceed_pips, symbol))
+                c2_gap_pips = st.number_input(
+                    "C2 vượt L1/H1 + N pips", value=float(params.get('c2_gap_pips', 0.0)),
+                    min_value=0.0, step=1.0,
+                    help="SELL: C2 phải đóng thấp hơn L1 thêm N pips | BUY: C2 phải đóng cao hơn H1 thêm N pips")
+                st.caption(_pip_caption(c2_gap_pips, symbol))
+                ema_margin_pips = st.number_input(
+                    "L2/H2 cách EMA + N pips", value=float(params.get('ema_margin_pips', 0.0)),
+                    min_value=0.0, step=1.0,
+                    help="SELL: L2 phải cách EMA ≥ N pips | BUY: H2 phải cách EMA ≥ N pips")
+                st.caption(_pip_caption(ema_margin_pips, symbol))
                 entry_time = datetime.strptime("00:00", "%H:%M").time()
             else:
                 ema_period = int(params.get('ema_period', 21))
-                ema_dist_enabled = False
-                ema_dist_pips = 0.0
+                h2_exceed_pips = 0.0
+                c2_gap_pips = 0.0
+                ema_margin_pips = 0.0
                 entry_time_str = params.get('entry_time', '21:05')
                 use_custom_time = st.checkbox("Custom entry time", value=False)
                 if use_custom_time:
@@ -260,21 +275,30 @@ def main():
         with col2:
             end_date = st.date_input("End Date", value=default_end, max_value=default_end)
             if is_pattern:
-                st.markdown("**EMA Filter**")
+                st.markdown("**FEG Filter Margins**")
                 ema_period = st.number_input("EMA Period", value=int(params.get('ema_period', 21)),
                                              min_value=2, max_value=200)
-                ema_dist_enabled = st.checkbox("EMA Distance filter",
-                                               value=bool(params.get('ema_distance_enabled', False)))
-                ema_dist_pips = (
-                    st.number_input("EMA Dist (pips)", value=float(params.get('ema_distance_pips', 0) or 0),
-                                    min_value=0.0, step=1.0)
-                    if ema_dist_enabled else 0.0
-                )
+                h2_exceed_pips = st.number_input(
+                    "H2 > H1 + N pips", value=float(params.get('h2_exceed_pips', 0.0)),
+                    min_value=0.0, step=1.0,
+                    help="SELL: H2 phải vượt H1 thêm N pips | BUY: L2 phải thấp hơn L1 thêm N pips")
+                st.caption(_pip_caption(h2_exceed_pips, symbol))
+                c2_gap_pips = st.number_input(
+                    "C2 vượt L1/H1 + N pips", value=float(params.get('c2_gap_pips', 0.0)),
+                    min_value=0.0, step=1.0,
+                    help="SELL: C2 phải đóng thấp hơn L1 thêm N pips | BUY: C2 phải đóng cao hơn H1 thêm N pips")
+                st.caption(_pip_caption(c2_gap_pips, symbol))
+                ema_margin_pips = st.number_input(
+                    "L2/H2 cách EMA + N pips", value=float(params.get('ema_margin_pips', 0.0)),
+                    min_value=0.0, step=1.0,
+                    help="SELL: L2 phải cách EMA ≥ N pips | BUY: H2 phải cách EMA ≥ N pips")
+                st.caption(_pip_caption(ema_margin_pips, symbol))
                 entry_time = datetime.strptime("00:00", "%H:%M").time()
             else:
                 ema_period = int(params.get('ema_period', 21))
-                ema_dist_enabled = False
-                ema_dist_pips = 0.0
+                h2_exceed_pips = 0.0
+                c2_gap_pips = 0.0
+                ema_margin_pips = 0.0
                 entry_time_str = params.get('entry_time', '21:05')
                 use_custom_time = st.checkbox("Custom entry time", value=False)
                 if use_custom_time:
@@ -453,8 +477,9 @@ def main():
                 entry_percent=entry_percent,
                 entry_type=entry_type,
                 ema_period=ema_period,
-                ema_distance_enabled=ema_dist_enabled,
-                ema_distance_pips=ema_dist_pips,
+                h2_exceed_pips=h2_exceed_pips,
+                c2_gap_pips=c2_gap_pips,
+                ema_margin_pips=ema_margin_pips,
                 entry_start_time=entry_start_time,
                 entry_end_time=entry_end_time,
             )
@@ -477,8 +502,9 @@ def main():
             'sl_type': sl_type,
             'entry_type': entry_type,
             'ema_period': ema_period,
-            'ema_dist_enabled': ema_dist_enabled,
-            'ema_dist_pips': ema_dist_pips,
+            'h2_exceed_pips': h2_exceed_pips,
+            'c2_gap_pips': c2_gap_pips,
+            'ema_margin_pips': ema_margin_pips,
         }
 
         if lot_mode == 'fixed':

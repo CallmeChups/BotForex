@@ -70,7 +70,7 @@ def is_process_running(pid: int) -> bool:
 def build_bot_command(
     python_exe, script_path, strategy, symbol, user, test, interval,
     lot_size=None, sl_pips=None, rr_ratio=None, max_candles=None,
-    ema_period=None, ema_distance_enabled=False, ema_distance_pips=0.0,
+    ema_period=None, h2_exceed_pips=0.0, c2_gap_pips=0.0, ema_margin_pips=0.0,
     entry_mode=None, entry_percent=None, tp_type=None, sl_type=None,
     buffer_k=None, lot_mode=None, risk_mode=None, risk_percent=None, risk_amount=None,
     entry_start_time='00:00', entry_end_time='23:59',
@@ -83,8 +83,9 @@ def build_bot_command(
         "--user", user,
         "--test", "1" if test else "0",
         "--interval", str(interval),
-        "--ema_distance_enabled", "1" if ema_distance_enabled else "0",
-        "--ema_distance_pips", str(ema_distance_pips),
+        "--h2_exceed_pips", str(h2_exceed_pips),
+        "--c2_gap_pips", str(c2_gap_pips),
+        "--ema_margin_pips", str(ema_margin_pips),
     ]
     if lot_size:
         cmd.extend(["--lot_size", str(lot_size)])
@@ -130,8 +131,9 @@ def start_bot(
     max_candles: int = None,
     interval: int = 60,
     ema_period: int = None,
-    ema_distance_enabled: bool = False,
-    ema_distance_pips: float = 0.0,
+    h2_exceed_pips: float = 0.0,
+    c2_gap_pips: float = 0.0,
+    ema_margin_pips: float = 0.0,
     entry_mode: str = None,
     entry_percent: float = None,
     tp_type: str = None,
@@ -165,7 +167,7 @@ def start_bot(
     cmd = build_bot_command(
         python_exe, script_path, strategy, symbol, user, test, interval,
         lot_size, sl_pips, rr_ratio, max_candles,
-        ema_period, ema_distance_enabled, ema_distance_pips,
+        ema_period, h2_exceed_pips, c2_gap_pips, ema_margin_pips,
         entry_mode, entry_percent, tp_type, sl_type,
         buffer_k, lot_mode, risk_mode, risk_percent, risk_amount,
         entry_start_time, entry_end_time,
@@ -206,8 +208,9 @@ def start_bot(
             'max_candles': max_candles,
             'interval': interval,
             'ema_period': ema_period,
-            'ema_distance_enabled': ema_distance_enabled,
-            'ema_distance_pips': ema_distance_pips,
+            'h2_exceed_pips': h2_exceed_pips,
+            'c2_gap_pips': c2_gap_pips,
+            'ema_margin_pips': ema_margin_pips,
             'started_at': datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M:%S'),
             'command': ' '.join(cmd)
         }
@@ -357,8 +360,9 @@ def restart_bot(pid: int) -> tuple:
         max_candles=bot.get('max_candles'),
         interval=bot.get('interval', 60),
         ema_period=bot.get('ema_period'),
-        ema_distance_enabled=bot.get('ema_distance_enabled', False),
-        ema_distance_pips=bot.get('ema_distance_pips', 0.0),
+        h2_exceed_pips=bot.get('h2_exceed_pips', 0.0),
+        c2_gap_pips=bot.get('c2_gap_pips', 0.0),
+        ema_margin_pips=bot.get('ema_margin_pips', 0.0),
     )
 
 

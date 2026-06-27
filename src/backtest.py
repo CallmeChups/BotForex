@@ -271,8 +271,9 @@ def run_backtest(
     entry_percent: float = 0.0,
     entry_type: str = "time",
     ema_period: int = 21,
-    ema_distance_enabled: bool = False,
-    ema_distance_pips: float = 0.0,
+    h2_exceed_pips: float = 0.0,
+    c2_gap_pips: float = 0.0,
+    ema_margin_pips: float = 0.0,
     entry_start_time: _time = _time(0, 0),
     entry_end_time: _time = _time(23, 59),
 ) -> dict:
@@ -315,7 +316,7 @@ def run_backtest(
             risk_amount=risk_amount, risk_mode=risk_mode, buffer_k=buffer_k,
             starting_equity=starting_equity, tp_type=tp_type, sl_type=sl_type,
             entry_mode=entry_mode, entry_percent=entry_percent, ema_period=ema_period,
-            ema_distance_enabled=ema_distance_enabled, ema_distance_pips=ema_distance_pips,
+            h2_exceed_pips=h2_exceed_pips, c2_gap_pips=c2_gap_pips, ema_margin_pips=ema_margin_pips,
             entry_start_time=entry_start_time, entry_end_time=entry_end_time,
         )
         result["run_id"] = run_id
@@ -394,7 +395,8 @@ def run_backtest(
 def _run_feg_backtest(
     df, symbol, rr_ratio, max_candles, lot_mode, fixed_lot, risk_percent,
     risk_amount, risk_mode, buffer_k, starting_equity, tp_type, sl_type,
-    entry_mode, entry_percent, ema_period, ema_distance_enabled, ema_distance_pips,
+    entry_mode, entry_percent, ema_period,
+    h2_exceed_pips: float = 0.0, c2_gap_pips: float = 0.0, ema_margin_pips: float = 0.0,
     entry_start_time: _time = _time(0, 0),
     entry_end_time: _time = _time(23, 59),
 ):
@@ -422,7 +424,7 @@ def _run_feg_backtest(
         c2 = {"open": df.at[i, "open"], "high": df.at[i, "high"],
               "low": df.at[i, "low"], "close": df.at[i, "close"]}
         direction = detect_feg_signal(
-            c1, c2, ema[i], pip_value, ema_distance_enabled, ema_distance_pips,
+            c1, c2, ema[i], pip_value, h2_exceed_pips, c2_gap_pips, ema_margin_pips,
         )
         if direction:
             levels = compute_trade_levels(

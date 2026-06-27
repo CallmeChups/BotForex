@@ -29,8 +29,15 @@ from src.bot_manager import (
     get_bot_stats
 )
 from src.strategy_manager import list_strategies, get_strategy_parameters
+from src.utils import get_pip_value
 
 TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
+
+
+def _pip_caption(pips: float, symbol: str) -> str:
+    """Hiển thị giá trị thực của N pips theo symbol đang chọn."""
+    pv = get_pip_value(symbol)
+    return f"{pips} pips = **{pips * pv:.4g}** giá ({symbol})"
 
 
 def main():
@@ -241,18 +248,26 @@ def show_create_bot():
             if is_pattern:
                 ema_period = st.number_input("EMA Period", value=int(params.get('ema_period', 21)),
                                              min_value=2, max_value=200, key=f"{sk}_ema")
-                ema_distance_enabled = st.checkbox("EMA Dist filter",
-                                                   value=bool(params.get('ema_distance_enabled', False)),
-                                                   key=f"{sk}_emad")
-                ema_distance_pips = (
-                    st.number_input("EMA Dist (pips)", value=float(params.get('ema_distance_pips', 0) or 0),
-                                    min_value=0.0, step=1.0, key=f"{sk}_emdp")
-                    if ema_distance_enabled else 0.0
-                )
+                h2_exceed_pips = st.number_input(
+                    "H2 > H1 + N pips", value=float(params.get('h2_exceed_pips', 0.0)),
+                    min_value=0.0, step=1.0, key=f"{sk}_h2x",
+                    help="SELL: H2 phải vượt H1 thêm N pips | BUY: L2 phải thấp hơn L1 thêm N pips")
+                st.caption(_pip_caption(h2_exceed_pips, symbol))
+                c2_gap_pips = st.number_input(
+                    "C2 vượt L1/H1 + N pips", value=float(params.get('c2_gap_pips', 0.0)),
+                    min_value=0.0, step=1.0, key=f"{sk}_c2g",
+                    help="SELL: C2 phải đóng thấp hơn L1 thêm N pips | BUY: C2 phải đóng cao hơn H1 thêm N pips")
+                st.caption(_pip_caption(c2_gap_pips, symbol))
+                ema_margin_pips = st.number_input(
+                    "L2/H2 cách EMA + N pips", value=float(params.get('ema_margin_pips', 0.0)),
+                    min_value=0.0, step=1.0, key=f"{sk}_emam",
+                    help="SELL: L2 phải cách EMA ≥ N pips | BUY: H2 phải cách EMA ≥ N pips")
+                st.caption(_pip_caption(ema_margin_pips, symbol))
             else:
                 ema_period = None
-                ema_distance_enabled = False
-                ema_distance_pips = 0.0
+                h2_exceed_pips = 0.0
+                c2_gap_pips = 0.0
+                ema_margin_pips = 0.0
                 st.caption(f"Entry: **{params.get('entry_time', 'N/A')}** (from strategy)")
 
         with r2c2:
@@ -365,24 +380,34 @@ def show_create_bot():
             st.caption(f"Timeframe: **{params.get('timeframe', 'M5')}** (from strategy)")
 
         if is_pattern:
-            st.markdown("**EMA Filter (FEG)**")
-            ec1, ec2, ec3 = st.columns(3)
+            st.markdown("**FEG Filter Margins**")
+            ec1, ec2, ec3, ec4 = st.columns(4)
             with ec1:
                 ema_period = st.number_input("EMA Period", value=int(params.get('ema_period', 21)),
                                              min_value=2, max_value=200, key=f"{sk}_ema")
             with ec2:
-                ema_distance_enabled = st.checkbox("Xét khoảng cách EMA21",
-                                                   value=bool(params.get('ema_distance_enabled', False)),
-                                                   key=f"{sk}_emad")
+                h2_exceed_pips = st.number_input(
+                    "H2 > H1 + N pips", value=float(params.get('h2_exceed_pips', 0.0)),
+                    min_value=0.0, step=1.0, key=f"{sk}_h2x",
+                    help="SELL: H2 phải vượt H1 thêm N pips | BUY: L2 phải thấp hơn L1 thêm N pips")
+                st.caption(_pip_caption(h2_exceed_pips, symbol))
             with ec3:
-                ema_distance_pips = st.number_input("Khoảng cách (pips)",
-                                                    value=float(params.get('ema_distance_pips', 0) or 0),
-                                                    min_value=0.0, step=1.0,
-                                                    disabled=not ema_distance_enabled, key=f"{sk}_emdp")
+                c2_gap_pips = st.number_input(
+                    "C2 vượt L1/H1 + N pips", value=float(params.get('c2_gap_pips', 0.0)),
+                    min_value=0.0, step=1.0, key=f"{sk}_c2g",
+                    help="SELL: C2 phải đóng thấp hơn L1 thêm N pips | BUY: C2 phải đóng cao hơn H1 thêm N pips")
+                st.caption(_pip_caption(c2_gap_pips, symbol))
+            with ec4:
+                ema_margin_pips = st.number_input(
+                    "L2/H2 cách EMA + N pips", value=float(params.get('ema_margin_pips', 0.0)),
+                    min_value=0.0, step=1.0, key=f"{sk}_emam",
+                    help="SELL: L2 phải cách EMA ≥ N pips | BUY: H2 phải cách EMA ≥ N pips")
+                st.caption(_pip_caption(ema_margin_pips, symbol))
         else:
             ema_period = None
-            ema_distance_enabled = False
-            ema_distance_pips = 0.0
+            h2_exceed_pips = 0.0
+            c2_gap_pips = 0.0
+            ema_margin_pips = 0.0
 
         st.divider()
         st.subheader("Entry Time Window")
@@ -482,8 +507,9 @@ def show_create_bot():
                 max_candles=max_candles,
                 interval=interval,
                 ema_period=ema_period,
-                ema_distance_enabled=ema_distance_enabled,
-                ema_distance_pips=ema_distance_pips,
+                h2_exceed_pips=h2_exceed_pips,
+                c2_gap_pips=c2_gap_pips,
+                ema_margin_pips=ema_margin_pips,
                 entry_mode=entry_mode,
                 entry_percent=entry_percent if entry_mode == "range_percent" else None,
                 tp_type=tp_type,

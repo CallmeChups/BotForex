@@ -48,10 +48,12 @@ def get_args():
                         help="Max candles before time exit (default: from strategy)")
     parser.add_argument("--ema_period", type=int, default=None,
                         help="EMA period for pattern strategies (default: from strategy)")
-    parser.add_argument("--ema_distance_enabled", type=int, default=0,
-                        help="Enable EMA distance filter: 1=yes, 0=no")
-    parser.add_argument("--ema_distance_pips", type=float, default=0.0,
-                        help="EMA distance in pips when filter enabled")
+    parser.add_argument("--h2_exceed_pips", type=float, default=0.0,
+                        help="H2 > H1 + N pips / L2 < L1 - N pips (điều kiện 4, default 0)")
+    parser.add_argument("--c2_gap_pips", type=float, default=0.0,
+                        help="C2 < L1 - N pips / C2 > H1 + N pips (điều kiện 5, default 0)")
+    parser.add_argument("--ema_margin_pips", type=float, default=0.0,
+                        help="L2/H2 cách EMA + N pips (điều kiện 6, default 0)")
     parser.add_argument("--entry_mode", type=str, default=None,
                         help="Entry mode: 'close' or 'range_percent' (default: from strategy)")
     parser.add_argument("--entry_percent", type=float, default=None,
@@ -406,7 +408,7 @@ def run_bot(args):
 def feg_entry_decision(
     active_trade, candle1, candle2, ema2, symbol,
     rr_ratio, buffer_k, lot_size, entry_mode, entry_percent,
-    ema_distance_enabled, ema_distance_pips,
+    h2_exceed_pips=0.0, c2_gap_pips=0.0, ema_margin_pips=0.0,
 ):
     """Quyết định vào lệnh FEG. None nếu đang có lệnh (1 lệnh/lúc) hoặc không có pattern."""
     from src.feg_strategy import analyze_feg
@@ -416,7 +418,7 @@ def feg_entry_decision(
         symbol, candle1, candle2, ema2,
         rr_ratio=rr_ratio, buffer_k=buffer_k, lot_size=lot_size,
         entry_mode=entry_mode, entry_percent=entry_percent,
-        ema_distance_enabled=ema_distance_enabled, ema_distance_pips=ema_distance_pips,
+        h2_exceed_pips=h2_exceed_pips, c2_gap_pips=c2_gap_pips, ema_margin_pips=ema_margin_pips,
     )
 
 
@@ -488,8 +490,9 @@ def run_feg_bot(args, strategy, params, credentials,
     buffer_k = args.buffer_k if args.buffer_k is not None else params.get('buffer_k', 5)
     lot_size = args.lot_size or params.get('lot_size', 0.01)
     max_candles = args.max_candles if args.max_candles is not None else params.get('max_candles', 7)
-    ema_dist_enabled = bool(args.ema_distance_enabled) or params.get('ema_distance_enabled', False)
-    ema_dist_pips = args.ema_distance_pips or params.get('ema_distance_pips', 0)
+    h2_exceed_pips = args.h2_exceed_pips if args.h2_exceed_pips else params.get('h2_exceed_pips', 0.0)
+    c2_gap_pips    = args.c2_gap_pips    if args.c2_gap_pips    else params.get('c2_gap_pips',    0.0)
+    ema_margin_pips = args.ema_margin_pips if args.ema_margin_pips else params.get('ema_margin_pips', 0.0)
     entry_mode = args.entry_mode or params.get('entry_mode', 'close')
     entry_percent = args.entry_percent if args.entry_percent is not None else params.get('entry_percent', 0.0)
     tp_type = args.tp_type or params.get('tp_type', 'price_based')
@@ -511,7 +514,7 @@ def run_feg_bot(args, strategy, params, credentials,
     lot_log = f"flex({risk_mode} {risk_percent}%/{risk_amount}$)" if lot_mode == "flex" else f"fixed={lot_size}"
     log(f"FEG params: EMA{ema_period}, RR={rr_ratio}, buffer_k={buffer_k}, "
         f"lot={lot_log}, max_candles={max_candles or 'unlimited'}, "
-        f"dist={'ON ' + str(ema_dist_pips) + 'p' if ema_dist_enabled else 'OFF'}")
+        f"h2_exceed={h2_exceed_pips}p, c2_gap={c2_gap_pips}p, ema_margin={ema_margin_pips}p")
 
     send_telegram(f"FEG Bot Started\nSymbol: {args.symbol}\nUser: {args.user}\n"
                   f"Test: {'Yes' if args.test else 'No'}")
@@ -552,7 +555,7 @@ def run_feg_bot(args, strategy, params, credentials,
                     signal = feg_entry_decision(
                         None, c1, c2, ema[-1], args.symbol,
                         rr_ratio, buffer_k, lot_size, entry_mode, entry_percent,
-                        ema_dist_enabled, ema_dist_pips,
+                        h2_exceed_pips, c2_gap_pips, ema_margin_pips,
                     )
                     if signal:
                         # Calculate flex lot if needed
