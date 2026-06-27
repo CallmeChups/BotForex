@@ -6,7 +6,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 import os
@@ -239,6 +239,25 @@ def main():
 
     st.divider()
 
+    # Entry Time Window
+    st.subheader("Entry Time Window")
+    tw_col1, tw_col2 = st.columns(2)
+    with tw_col1:
+        entry_start_time = st.time_input(
+            "Entry Start Time (HCM)",
+            value=time(0, 0),
+            help="Only enter new positions at or after this time. Default 00:00 = no filter.",
+        )
+    with tw_col2:
+        entry_end_time = st.time_input(
+            "Entry End Time (HCM)",
+            value=time(23, 59),
+            help="Only enter new positions at or before this time. Default 23:59 = no filter.",
+        )
+    st.caption("Active trade continues holding if window ends. Window only gates new entries.")
+
+    st.divider()
+
     # Entry Configuration
     st.subheader("Entry")
 
@@ -445,6 +464,8 @@ def main():
                 ema_period=ema_period,
                 ema_distance_enabled=ema_dist_enabled,
                 ema_distance_pips=ema_dist_pips,
+                entry_start_time=entry_start_time,
+                entry_end_time=entry_end_time,
             )
 
         # Build config dict for export/history
@@ -453,6 +474,8 @@ def main():
             'start_date': str(start_date),
             'end_date': str(end_date),
             'entry_time': entry_time.strftime('%H:%M'),
+            'entry_start_time': entry_start_time.strftime('%H:%M'),
+            'entry_end_time': entry_end_time.strftime('%H:%M'),
             'entry_mode': entry_mode,
             'entry_percent': entry_percent,
             'rr_ratio': rr_ratio,
