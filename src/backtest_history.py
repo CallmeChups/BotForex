@@ -146,6 +146,20 @@ def clear_history():
     _save_history([])
 
 
+def _fmt_ema_dist(config: dict) -> str:
+    """Format EMA distance config for display in history table."""
+    h2 = config.get('h2_exceed_pips', 0) or 0
+    c2 = config.get('c2_gap_pips', 0) or 0
+    em = config.get('ema_margin_pips', 0) or 0
+    if h2 == 0 and c2 == 0 and em == 0:
+        return 'Off'
+    parts = []
+    if h2: parts.append(f"H2={h2}p")
+    if c2: parts.append(f"C2={c2}p")
+    if em: parts.append(f"EM={em}p")
+    return ' '.join(parts)
+
+
 def history_to_dataframe(history: list) -> pd.DataFrame:
     """Convert history to a comparison DataFrame"""
     if not history:
@@ -179,7 +193,7 @@ def history_to_dataframe(history: list) -> pd.DataFrame:
             'K': round(float(config.get('buffer_k', 0) or 0), 1),
             'Entry Type': config.get('entry_type', 'time'),
             'EMA Period': config.get('ema_period', ''),
-            'EMA Dist': (f"{config.get('ema_dist_pips', 0)}p" if config.get('ema_dist_enabled') else 'Off'),
+            'EMA Dist': _fmt_ema_dist(config),
             'TP Type': config.get('tp_type', ''),
             'SL Type': config.get('sl_type', ''),
             'Fixed Lot': round(float(config.get('fixed_lot', 0) or 0), 2),
