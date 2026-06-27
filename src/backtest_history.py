@@ -252,8 +252,8 @@ HISTORY_COLUMNS = {
         'Max Wins', 'Max Losses', 'P/F',
     ],
 
-    # Default optional columns to show in multiselect
-    'default_optional': ['Strategy', 'Symbol', 'Timeframe', 'Entry Type', 'SL Type'],
+    # Default optional columns to show in multiselect (empty = core only by default)
+    'default_optional': [],
 }
 
 

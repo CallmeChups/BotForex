@@ -1155,7 +1155,16 @@ def show_history_section():
     if 'Avg Pips' in display_df.columns:
         style_subsets.append(('Avg Pips', color_pips))
 
-    styled_history = display_df.style
+    # Format số thập phân tại tầng display
+    fmt = {}
+    for col in ['Win %', 'Total USD', 'RR', 'Entry %', 'K', 'Risk %']:
+        if col in display_df.columns:
+            fmt[col] = '{:.1f}'
+    for col in ['Fixed Lot']:
+        if col in display_df.columns:
+            fmt[col] = '{:.2f}'
+
+    styled_history = display_df.style.format(fmt, na_rep='')
     for col, func in style_subsets:
         styled_history = styled_history.map(func, subset=[col])
 
