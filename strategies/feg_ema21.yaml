@@ -15,9 +15,9 @@ entry:
   timeframe: M1
   pattern: feg_ema21
   ema_period: 21
-  ema_distance:
-    enabled: false
-    pips: 0
+  h2_exceed_pips: 0.0
+  c2_gap_pips: 0.0
+  ema_margin_pips: 0.0
 
 exit:
   tp:

@@ -199,8 +199,6 @@ def get_strategy_parameters(strategy_id: str) -> dict:
     exit_config = strategy.get('exit', {})
     params = strategy.get('parameters', {})
 
-    ema_distance = entry.get('ema_distance', {})
-
     return {
         'timeframe': entry.get('timeframe', 'M5'),
         'entry_type': entry.get('type', 'time'),
@@ -208,8 +206,9 @@ def get_strategy_parameters(strategy_id: str) -> dict:
         'timezone': entry.get('timezone', 'Asia/Ho_Chi_Minh'),
         'pattern': entry.get('pattern', ''),
         'ema_period': entry.get('ema_period', 21),
-        'ema_distance_enabled': ema_distance.get('enabled', False),
-        'ema_distance_pips': ema_distance.get('pips', 0),
+        'h2_exceed_pips': entry.get('h2_exceed_pips', 0.0),
+        'c2_gap_pips': entry.get('c2_gap_pips', 0.0),
+        'ema_margin_pips': entry.get('ema_margin_pips', 0.0),
         'sl_pips': params.get('sl_pips', 30),
         'rr_ratio': params.get('rr_ratio', 2.0),
         'buffer_k': params.get('buffer_k', 5),

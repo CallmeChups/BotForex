@@ -4,9 +4,10 @@ def test_feg_params():
     p = get_strategy_parameters("feg_ema21")
     assert p["entry_type"] == "pattern"
     assert p["ema_period"] == 21
-    assert p["ema_distance_enabled"] is False
-    assert p["ema_distance_pips"] == 0
-    assert p["buffer_k"] == 5
+    assert p["h2_exceed_pips"] == 0.0
+    assert p["c2_gap_pips"] == 0.0
+    assert p["ema_margin_pips"] == 0.0
+    assert p["buffer_k"] == 50
     assert p["rr_ratio"] == 2.0
     assert "XAUUSD" in p["symbols"]
 

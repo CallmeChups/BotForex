@@ -290,6 +290,10 @@ def show_create_bot():
                                                 key=f"{sk}_entry_pct")
             else:
                 entry_percent = 0.0
+            limit_order_candles = st.number_input(
+                "Chờ khớp lệnh (nến)", value=1, min_value=1, max_value=100,
+                key=f"{sk}_loc",
+                help="Số nến tối đa chờ limit order khớp. 1 = khớp ngay nến tiếp theo nếu giá chạm entry.")
 
         with r2c4:
             buffer_k = st.number_input("Buffer K (pips)", value=float(params.get('buffer_k', 5)),
@@ -422,7 +426,7 @@ def show_create_bot():
 
         st.divider()
         st.subheader("Entry")
-        ecol1, ecol2 = st.columns(2)
+        ecol1, ecol2, ecol3 = st.columns(3)
         with ecol1:
             entry_mode = st.radio("Entry Mode", options=["close", "range_percent"],
                                   index=0 if params.get('entry_mode', 'close') == 'close' else 1,
@@ -436,6 +440,11 @@ def show_create_bot():
                                                 key=f"{sk}_entry_pct")
             else:
                 entry_percent = 0.0
+        with ecol3:
+            limit_order_candles = st.number_input(
+                "Chờ khớp lệnh (nến)", value=1, min_value=1, max_value=100,
+                key=f"{sk}_loc",
+                help="Số nến tối đa chờ limit order khớp. 1 = khớp ngay nến tiếp theo nếu giá chạm entry.")
 
         st.divider()
         st.subheader("Exit Types")
@@ -521,6 +530,7 @@ def show_create_bot():
                 risk_amount=risk_amount if lot_mode == "flex" else None,
                 entry_start_time=entry_start_time.strftime('%H:%M'),
                 entry_end_time=entry_end_time.strftime('%H:%M'),
+                limit_order_candles=int(limit_order_candles),
             )
 
             if success:

@@ -54,6 +54,8 @@ def get_args():
                         help="C2 < L1 - N pips / C2 > H1 + N pips (điều kiện 5, default 0)")
     parser.add_argument("--ema_margin_pips", type=float, default=0.0,
                         help="L2/H2 cách EMA + N pips (điều kiện 6, default 0)")
+    parser.add_argument("--limit_order_candles", type=int, default=1,
+                        help="Chờ khớp lệnh tối đa N nến (default 1)")
     parser.add_argument("--entry_mode", type=str, default=None,
                         help="Entry mode: 'close' or 'range_percent' (default: from strategy)")
     parser.add_argument("--entry_percent", type=float, default=None,
@@ -481,7 +483,7 @@ def _calc_flex_lot(mt5, symbol: str, risk_mode: str, risk_percent: float, risk_a
 def run_feg_bot(args, strategy, params, credentials,
                 entry_start_time: _time = _time(0, 0),
                 entry_end_time: _time = _time(23, 59)):
-    """Vòng lặp live cho strategy FEG (pattern + EMA21, 1 lệnh/lúc)."""
+    """Vòng lặp live cho strategy FEG (pattern + EMA21, nhiều pending orders + trades cùng lúc)."""
     from src.orders import place_order, close_position
 
     timeframe = params.get('timeframe', 'M5')
@@ -493,6 +495,7 @@ def run_feg_bot(args, strategy, params, credentials,
     h2_exceed_pips = args.h2_exceed_pips if args.h2_exceed_pips else params.get('h2_exceed_pips', 0.0)
     c2_gap_pips    = args.c2_gap_pips    if args.c2_gap_pips    else params.get('c2_gap_pips',    0.0)
     ema_margin_pips = args.ema_margin_pips if args.ema_margin_pips else params.get('ema_margin_pips', 0.0)
+    limit_order_candles = args.limit_order_candles if args.limit_order_candles else params.get('limit_order_candles', 1)
     entry_mode = args.entry_mode or params.get('entry_mode', 'close')
     entry_percent = args.entry_percent if args.entry_percent is not None else params.get('entry_percent', 0.0)
     tp_type = args.tp_type or params.get('tp_type', 'price_based')
@@ -519,7 +522,10 @@ def run_feg_bot(args, strategy, params, credentials,
     send_telegram(f"FEG Bot Started\nSymbol: {args.symbol}\nUser: {args.user}\n"
                   f"Test: {'Yes' if args.test else 'No'}")
 
-    active_trade = None
+    # pending_orders: list of {signal, trade_lot, candles_left, order_id}
+    # active_trades: list of {direction, entry, sl, tp, ticket, candles, order_id}
+    pending_orders = []
+    active_trades  = []
     last_candle_time = None
 
     try:
@@ -543,11 +549,76 @@ def run_feg_bot(args, strategy, params, credentials,
             last = df.iloc[-1]
             prev = df.iloc[-2]
             candle_time = datetime.fromtimestamp(int(last["time"]), tz=TIMEZONE)
-
-            # chỉ xử lý khi có nến đóng mới
             is_new_candle = (last_candle_time is None) or (candle_time > last_candle_time)
 
-            if active_trade is None and is_new_candle:
+            if is_new_candle:
+                from src.utils import check_exit
+                candle = {"high": last["high"], "low": last["low"], "close": last["close"]}
+
+                # 1. Check pending orders — khớp nếu giá nến chạm entry price
+                still_pending = []
+                for order in pending_orders:
+                    entry_price = order["signal"]["entry_price"]
+                    filled = candle["low"] <= entry_price <= candle["high"]
+                    if filled:
+                        import uuid as _uuid
+                        oid = order["order_id"]
+                        log(f"[{oid}] Limit order filled @ {entry_price:.2f}")
+                        send_telegram(f"<b>FEG Limit Filled: {order['signal']['direction']}</b>\n"
+                                      f"ID: <code>{oid}</code>\nEntry: {entry_price:.2f}\n"
+                                      f"SL: {order['signal']['stop_loss']:.2f} TP: {order['signal']['take_profit']:.2f}\n"
+                                      f"Lot: {order['trade_lot']}")
+                        ok, msg, ticket = place_order(
+                            args.symbol, order["signal"]["direction"], order["trade_lot"],
+                            sl=order["signal"]["stop_loss"], tp=order["signal"]["take_profit"],
+                            credentials=credentials, test=bool(args.test),
+                            magic=212100, comment=f"FEG-{oid[-4:]}",
+                        )
+                        log(f"[{oid}] Order result: {msg}")
+                        if ok:
+                            active_trades.append({
+                                "direction": order["signal"]["direction"],
+                                "entry": entry_price,
+                                "sl": order["signal"]["stop_loss"],
+                                "tp": order["signal"]["take_profit"],
+                                "ticket": ticket, "candles": 0, "order_id": oid,
+                            })
+                        else:
+                            send_telegram(f"❌ Order failed\nID: <code>{oid}</code>\nReason: {msg}", is_error=True)
+                        # filled → không giữ lại
+                    else:
+                        order["candles_left"] -= 1
+                        if order["candles_left"] > 0:
+                            still_pending.append(order)
+                        else:
+                            log(f"[{order['order_id']}] Limit order expired (no fill)")
+                pending_orders = still_pending
+
+                # 2. Check active trades — exit
+                still_active = []
+                for trade in active_trades:
+                    trade["candles"] += 1
+                    exit_type, exit_price = check_exit(
+                        trade["direction"], candle, trade["tp"], trade["sl"], tp_type, sl_type,
+                    )
+                    if not exit_type and max_candles > 0 and trade["candles"] >= max_candles:
+                        exit_type, exit_price = "TIME", last["close"]
+                    if exit_type:
+                        pv = get_pip_value(args.symbol)
+                        pnl = (exit_price - trade["entry"]) / pv if trade["direction"] == "BUY" else (trade["entry"] - exit_price) / pv
+                        oid = trade.get("order_id", "")
+                        log(f"[{oid}] FEG Exit: {exit_type} @ {exit_price:.2f}, P&L: {pnl:.1f} pips")
+                        send_telegram(f"<b>FEG Exit: {exit_type}</b>\nID: <code>{oid}</code>\nPrice: {exit_price:.2f}\nP&L: {pnl:.1f} pips")
+                        if not args.test and trade.get("ticket"):
+                            closed_ok, close_msg = close_position(trade["ticket"], credentials=credentials)
+                            if not closed_ok:
+                                log(f"[{oid}] Close failed: {close_msg}", "ERROR")
+                                send_telegram(f"❌ Close failed\nID: <code>{oid}</code>\nReason: {close_msg}", is_error=True)
+                    else:
+                        still_active.append(trade)
+                active_trades = still_active
+
+                # 3. Scan FEG signal → tạo pending order mới
                 now_hcm = datetime.now(TIMEZONE)
                 if _in_time_window(now_hcm, entry_start_time, entry_end_time):
                     c1 = {"open": prev["open"], "high": prev["high"], "low": prev["low"], "close": prev["close"]}
@@ -558,7 +629,6 @@ def run_feg_bot(args, strategy, params, credentials,
                         h2_exceed_pips, c2_gap_pips, ema_margin_pips,
                     )
                     if signal:
-                        # Calculate flex lot if needed
                         trade_lot = lot_size
                         if lot_mode == "flex":
                             trade_lot = _calc_flex_lot(
@@ -568,59 +638,20 @@ def run_feg_bot(args, strategy, params, credentials,
                         import uuid as _uuid
                         order_id = f"ORD-{last['time'].strftime('%y%m%d-%H%M%S')}-{args.symbol}-{_uuid.uuid4().hex[:4].upper()}"
                         log(f"[{order_id}] FEG Signal: {signal['direction']} @ {signal['entry_price']:.2f}, "
-                            f"SL={signal['stop_loss']:.2f}, TP={signal['take_profit']:.2f}, lot={trade_lot}")
-                        send_telegram(f"<b>FEG Signal: {signal['direction']}</b>\n"
+                            f"SL={signal['stop_loss']:.2f}, TP={signal['take_profit']:.2f}, lot={trade_lot}, "
+                            f"limit_timeout={limit_order_candles}c")
+                        send_telegram(f"<b>FEG Signal (pending): {signal['direction']}</b>\n"
                                       f"ID: <code>{order_id}</code>\n"
                                       f"Symbol: {args.symbol}\nEntry: {signal['entry_price']:.2f}\n"
-                                      f"SL: {signal['stop_loss']:.2f}\nTP: {signal['take_profit']:.2f}\n"
-                                      f"Lot: {trade_lot}")
-                        ok, msg, ticket = place_order(
-                            args.symbol, signal["direction"], trade_lot,
-                            sl=signal["stop_loss"], tp=signal["take_profit"],
-                            credentials=credentials, test=bool(args.test),
-                            magic=212100, comment=f"FEG-{order_id[-4:]}",
-                        )
-                        log(f"[{order_id}] Order result: {msg}")
-                        if ok:
-                            active_trade = {
-                                "direction": signal["direction"], "entry": signal["entry_price"],
-                                "sl": signal["stop_loss"], "tp": signal["take_profit"],
-                                "ticket": ticket, "candles": 0, "order_id": order_id,
-                            }
-                        else:
-                            log(f"[{order_id}] Order failed — will retry next signal", "WARN")
-                            send_telegram(f"❌ Order failed\nID: <code>{order_id}</code>\nReason: {msg}", is_error=True)
+                                      f"SL: {signal['stop_loss']:.2f} TP: {signal['take_profit']:.2f}\n"
+                                      f"Lot: {trade_lot} | Chờ: {limit_order_candles} nến")
+                        pending_orders.append({
+                            "signal": signal,
+                            "trade_lot": trade_lot,
+                            "candles_left": limit_order_candles,
+                            "order_id": order_id,
+                        })
 
-            elif active_trade is not None and is_new_candle:
-                active_trade["candles"] += 1
-                candle = {"high": last["high"], "low": last["low"], "close": last["close"]}
-                from src.utils import check_exit
-                exit_type, exit_price = check_exit(
-                    active_trade["direction"], candle,
-                    active_trade["tp"], active_trade["sl"],
-                    tp_type,
-                    sl_type,
-                )
-                if not exit_type and max_candles > 0 and active_trade["candles"] >= max_candles:
-                    exit_type, exit_price = "TIME", last["close"]
-
-                if exit_type:
-                    pip_value = get_pip_value(args.symbol)
-                    if active_trade["direction"] == "BUY":
-                        pnl = (exit_price - active_trade["entry"]) / pip_value
-                    else:
-                        pnl = (active_trade["entry"] - exit_price) / pip_value
-                    oid = active_trade.get("order_id", "")
-                    log(f"[{oid}] FEG Exit: {exit_type} @ {exit_price:.2f}, P&L: {pnl:.1f} pips")
-                    send_telegram(f"<b>FEG Exit: {exit_type}</b>\nID: <code>{oid}</code>\nPrice: {exit_price:.2f}\nP&L: {pnl:.1f} pips")
-                    if not args.test and active_trade.get("ticket"):
-                        closed_ok, close_msg = close_position(active_trade["ticket"], credentials=credentials)
-                        if not closed_ok:
-                            log(f"[{oid}] Close position failed: {close_msg}", "ERROR")
-                            send_telegram(f"❌ Close position failed\nID: <code>{oid}</code>\nTicket: {active_trade['ticket']}\nReason: {close_msg}", is_error=True)
-                    active_trade = None
-
-            if is_new_candle:
                 last_candle_time = candle_time
 
             mt5.shutdown()

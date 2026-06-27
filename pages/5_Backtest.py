@@ -196,6 +196,9 @@ def main():
                                                 min_value=0.0, max_value=100.0, step=5.0)
             else:
                 entry_percent = 0.0
+            limit_order_candles = st.number_input(
+                "Chờ khớp lệnh (nến)", value=1, min_value=1, max_value=100,
+                help="Số nến tối đa chờ limit order khớp. 1 = khớp ngay nến tiếp theo nếu giá chạm entry.")
 
         with r3c4:
             buffer_k = st.number_input("Buffer K (pips)", value=float(params.get('buffer_k', 5)),
@@ -352,6 +355,7 @@ def main():
 
         st.subheader("Entry")
         col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
             entry_mode = st.radio("Entry Mode", options=["close", "range_percent"],
                                   format_func=lambda x: "Close Price" if x == "close" else "Body Percent (%)",
@@ -365,6 +369,10 @@ def main():
             else:
                 entry_percent = 0.0
                 st.caption("Entry at candle Close price")
+        with col3:
+            limit_order_candles = st.number_input(
+                "Chờ khớp lệnh (nến)", value=1, min_value=1, max_value=100,
+                help="Số nến tối đa chờ limit order khớp. 1 = khớp ngay nến tiếp theo nếu giá chạm entry.")
         st.divider()
 
         st.subheader("Exit Types")
@@ -482,6 +490,7 @@ def main():
                 ema_margin_pips=ema_margin_pips,
                 entry_start_time=entry_start_time,
                 entry_end_time=entry_end_time,
+                limit_order_candles=int(limit_order_candles),
             )
 
         # Build config dict for export/history
@@ -505,6 +514,7 @@ def main():
             'h2_exceed_pips': h2_exceed_pips,
             'c2_gap_pips': c2_gap_pips,
             'ema_margin_pips': ema_margin_pips,
+            'limit_order_candles': int(limit_order_candles),
         }
 
         if lot_mode == 'fixed':

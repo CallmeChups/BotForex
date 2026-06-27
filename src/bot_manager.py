@@ -74,6 +74,7 @@ def build_bot_command(
     entry_mode=None, entry_percent=None, tp_type=None, sl_type=None,
     buffer_k=None, lot_mode=None, risk_mode=None, risk_percent=None, risk_amount=None,
     entry_start_time='00:00', entry_end_time='23:59',
+    limit_order_candles=1,
 ):
     """Build command list to run bot_runner (separated for testability)."""
     cmd = [
@@ -117,6 +118,7 @@ def build_bot_command(
         cmd.extend(["--risk_amount", str(risk_amount)])
     cmd.extend(["--entry_start_time", str(entry_start_time)])
     cmd.extend(["--entry_end_time", str(entry_end_time)])
+    cmd.extend(["--limit_order_candles", str(limit_order_candles)])
     return cmd
 
 
@@ -145,6 +147,7 @@ def start_bot(
     risk_amount: float = None,
     entry_start_time: str = '00:00',
     entry_end_time: str = '23:59',
+    limit_order_candles: int = 1,
 ) -> tuple:
     """
     Start a new bot process
@@ -170,7 +173,7 @@ def start_bot(
         ema_period, h2_exceed_pips, c2_gap_pips, ema_margin_pips,
         entry_mode, entry_percent, tp_type, sl_type,
         buffer_k, lot_mode, risk_mode, risk_percent, risk_amount,
-        entry_start_time, entry_end_time,
+        entry_start_time, entry_end_time, limit_order_candles,
     )
 
     try:
@@ -211,6 +214,7 @@ def start_bot(
             'h2_exceed_pips': h2_exceed_pips,
             'c2_gap_pips': c2_gap_pips,
             'ema_margin_pips': ema_margin_pips,
+            'limit_order_candles': limit_order_candles,
             'started_at': datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M:%S'),
             'command': ' '.join(cmd)
         }
@@ -363,6 +367,7 @@ def restart_bot(pid: int) -> tuple:
         h2_exceed_pips=bot.get('h2_exceed_pips', 0.0),
         c2_gap_pips=bot.get('c2_gap_pips', 0.0),
         ema_margin_pips=bot.get('ema_margin_pips', 0.0),
+        limit_order_candles=bot.get('limit_order_candles', 1),
     )
 
 

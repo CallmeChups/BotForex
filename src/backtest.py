@@ -222,7 +222,7 @@ def _simulate_exit(df, entry_pos, direction, tp, sl, max_candles, tp_type, sl_ty
     return exit_type, exit_price, exit_time, candles_held, exit_pos
 
 
-def _make_trade(entry_time, direction, levels, lot, exit_type, exit_price, exit_time, candles_held, symbol):
+def _make_trade(entry_time, direction, levels, lot, exit_type, exit_price, exit_time, candles_held, symbol, exit_pos=None):
     """Dựng dict trade + tính pnl pips/usd."""
     pip_value = get_pip_value(symbol)
     entry = levels["entry_price"]
@@ -246,6 +246,7 @@ def _make_trade(entry_time, direction, levels, lot, exit_type, exit_price, exit_
         "candles": candles_held,
         "pnl_pips": round(pnl_pips, 1),
         "pnl_usd": round(pnl_usd, 2),
+        "_exit_pos": exit_pos,
     }
     return trade, pnl_pips, pnl_usd
 
@@ -276,6 +277,7 @@ def run_backtest(
     ema_margin_pips: float = 0.0,
     entry_start_time: _time = _time(0, 0),
     entry_end_time: _time = _time(23, 59),
+    limit_order_candles: int = 1,
 ) -> dict:
     """
     Run backtest on historical data
@@ -318,6 +320,7 @@ def run_backtest(
             entry_mode=entry_mode, entry_percent=entry_percent, ema_period=ema_period,
             h2_exceed_pips=h2_exceed_pips, c2_gap_pips=c2_gap_pips, ema_margin_pips=ema_margin_pips,
             entry_start_time=entry_start_time, entry_end_time=entry_end_time,
+            limit_order_candles=limit_order_candles,
         )
         result["run_id"] = run_id
         return result
@@ -399,8 +402,9 @@ def _run_feg_backtest(
     h2_exceed_pips: float = 0.0, c2_gap_pips: float = 0.0, ema_margin_pips: float = 0.0,
     entry_start_time: _time = _time(0, 0),
     entry_end_time: _time = _time(23, 59),
+    limit_order_candles: int = 1,
 ):
-    """Backtest FEG: quét tuần tự, 1 lệnh tại 1 thời điểm."""
+    """Backtest FEG: nhiều pending limit orders + nhiều trade active cùng lúc."""
     pip_value = get_pip_value(symbol)
     df = df.reset_index(drop=True)
     ema = df["close"].ewm(span=ema_period, adjust=False).mean()
@@ -412,50 +416,74 @@ def _run_feg_backtest(
     equity_curve_usd = [starting_equity]
     current_equity = starting_equity
 
+    # pending_orders: list of {levels, lot_size, direction, candles_left, signal_i, c1, c2}
+    pending_orders = []
+
     n = len(df)
     i = max(1, ema_period)  # warmup: bỏ vùng EMA chưa ổn định
     while i < n:
+        candle = {"high": df.at[i, "high"], "low": df.at[i, "low"], "close": df.at[i, "close"]}
+
+        # 1. Check pending orders — xem cây nến i có khớp limit order nào không
+        still_pending = []
+        for order in pending_orders:
+            entry_price = order["levels"]["entry_price"]
+            direction   = order["direction"]
+            # Khớp nếu giá nến chạm entry price
+            filled = candle["low"] <= entry_price <= candle["high"]
+            if filled:
+                exit_type, exit_price, exit_time, candles_held, exit_pos = _simulate_exit(
+                    df, i, direction, order["levels"]["take_profit"],
+                    order["levels"]["stop_loss"], max_candles, tp_type, sl_type,
+                )
+                if exit_type:
+                    trade, pnl_pips, pnl_usd = _make_trade(
+                        df.at[i, "time"], direction, order["levels"],
+                        order["lot_size"], exit_type, exit_price, exit_time,
+                        candles_held, symbol, exit_pos=exit_pos,
+                    )
+                    current_equity += pnl_usd
+                    trade["_c1"] = order["c1"]
+                    trade["_c2"] = order["c2"]
+                    trade["_ema"] = ema[order["signal_i"]]
+                    trades.append(trade)
+                    equity_curve_pips.append(equity_curve_pips[-1] + pnl_pips)
+                    equity_curve_usd.append(current_equity)
+                # filled (đã khớp) → không giữ lại dù exit hay hết data
+            else:
+                order["candles_left"] -= 1
+                if order["candles_left"] > 0:
+                    still_pending.append(order)
+                # timeout hết → bỏ
+        pending_orders = still_pending
+
+        # 2. Scan FEG signal tại nến i (nếu trong time window)
         candle_time = df.at[i, "time"]
-        if not _in_time_window(candle_time, entry_start_time, entry_end_time):
-            i += 1
-            continue
-        c1 = {"open": df.at[i - 1, "open"], "high": df.at[i - 1, "high"],
-              "low": df.at[i - 1, "low"], "close": df.at[i - 1, "close"]}
-        c2 = {"open": df.at[i, "open"], "high": df.at[i, "high"],
-              "low": df.at[i, "low"], "close": df.at[i, "close"]}
-        direction = detect_feg_signal(
-            c1, c2, ema[i], pip_value, h2_exceed_pips, c2_gap_pips, ema_margin_pips,
-        )
-        if direction:
-            levels = compute_trade_levels(
-                direction, c2, entry_mode, entry_percent, buffer_k, rr_ratio, pip_value,
+        if _in_time_window(candle_time, entry_start_time, entry_end_time):
+            c1 = {"open": df.at[i - 1, "open"], "high": df.at[i - 1, "high"],
+                  "low": df.at[i - 1, "low"], "close": df.at[i - 1, "close"]}
+            c2 = {"open": df.at[i, "open"], "high": df.at[i, "high"],
+                  "low": df.at[i, "low"], "close": df.at[i, "close"]}
+            direction = detect_feg_signal(
+                c1, c2, ema[i], pip_value, h2_exceed_pips, c2_gap_pips, ema_margin_pips,
             )
-            lot_size = _compute_lot_size(
-                lot_mode, current_equity, risk_mode, risk_percent, risk_amount,
-                levels["sl_pips"], symbol, fixed_lot,
-            )
-            exit_type, exit_price, exit_time, candles_held, exit_pos = _simulate_exit(
-                df, i, direction, levels["take_profit"], levels["stop_loss"],
-                max_candles, tp_type, sl_type,
-            )
-            if not exit_type:
-                break  # hết data, không đóng được lệnh
-
-            trade, pnl_pips, pnl_usd = _make_trade(
-                df.at[i, "time"], direction, levels, lot_size, exit_type,
-                exit_price, exit_time, candles_held, symbol,
-            )
-            current_equity += pnl_usd
-            trades.append(trade)
-            trade["_c1"] = {**c1, "time": df.at[i - 1, "time"]}   # trace-only
-            trade["_c2"] = {**c2, "time": df.at[i, "time"]}        # trace-only
-            trade["_ema"] = ema[i]                                   # trace-only
-            trade["_exit_pos"] = exit_pos                            # trace-only
-            equity_curve_pips.append(equity_curve_pips[-1] + pnl_pips)
-            equity_curve_usd.append(current_equity)
-
-            i = exit_pos + 1  # 1 lệnh/lúc: quét tiếp sau nến exit
-            continue
+            if direction:
+                levels = compute_trade_levels(
+                    direction, c2, entry_mode, entry_percent, buffer_k, rr_ratio, pip_value,
+                )
+                lot_size = _compute_lot_size(
+                    lot_mode, current_equity, risk_mode, risk_percent, risk_amount,
+                    levels["sl_pips"], symbol, fixed_lot,
+                )
+                pending_orders.append({
+                    "levels": levels,
+                    "lot_size": lot_size,
+                    "direction": direction,
+                    "candles_left": limit_order_candles,
+                    "signal_i": i,
+                    "c1": {**c1, "time": df.at[i - 1, "time"]},
+                    "c2": {**c2, "time": df.at[i, "time"]},
+                })
         i += 1
 
     stats = calculate_stats(trades, lot_mode)
