@@ -1,125 +1,153 @@
-# MT5 Forex Bot Project
+# BotForex - MT5 Forex Bot
 
-## Giới Thiệu
-Project này là một bot trading forex tự động sử dụng Python và MetaTrader 5 (MT5) API. Bot kết nối với terminal MT5 để thực hiện giao dịch dựa trên các chiến lược trading, gửi thông báo qua Telegram, lưu log lệnh giao dịch để phân tích sau này, và cung cấp giao diện web đơn giản bằng Streamlit để người dùng tương tác.
+**Phiên Bản**: 0.3.0 | **Trạng Thái**: Production-ready
 
-### Tính Năng Chính
-- **Tự động giao dịch**: Kết nối MT5, lấy dữ liệu real-time, kiểm tra tín hiệu và gửi lệnh buy/sell.
-- **Thông báo Telegram**: Gửi alert khi có lệnh vào/ra, lỗi kết nối, hoặc sự kiện quan trọng (riêng kênh cho dev và user).
-- **Logging lệnh**: Lưu chi tiết mọi lệnh giao dịch (symbol, loại lệnh, volume, giá vào/ra, thời gian, profit/loss) để dễ dàng export và phân tích.
-- **Giao diện người dùng**: Dashboard Streamlit để start/stop bot, chỉnh sửa config thời gian thực, xem trạng thái live và lịch sử lệnh.
-- **Hỗ trợ multi-bot**: Mỗi bot chạy như một process Python riêng biệt, dễ chạy nhiều instance với config khác nhau.
+Bot trading forex tự động sử dụng Python và MetaTrader 5. Dashboard Streamlit để quản lý bot, chạy backtest và theo dõi lệnh. Deploy tự động qua GitHub Actions + Tailscale SSH.
 
-### Công Nghệ Sử Dụng
-- Python 3.10+
-- MetaTrader5 (API chính thức)
-- python-telegram-bot (gửi thông báo)
-- Streamlit (giao diện web)
-- PyYAML (đọc config)
-- Pandas & SQLite (xử lý và lưu log, phân tích)
+## Tính Năng
 
-## Hướng Dẫn Cài Đặt
+- **Hai chiến lược**: Master Candle (vào lệnh 21:05 HCM) + FEG EMA21 (pattern 2 nến cùng hướng + EMA21 filter)
+- **Backtest engine**: EMA indicator overlay, trace ID (BT-...) copyable, per-trade debug fields
+- **Live bot**: order trace ID (ORD-...), auto-restart sau crash, mọi lỗi gửi Telegram
+- **CI/CD**: GitHub Actions → Tailscale SSH → Windows server, auto restart Streamlit
+- **Telegram**: kênh main (trade alerts) + kênh error (mọi lỗi server)
+- **Test suite**: 25 pytest tests
 
-1. **Clone repository**
-   ```bash
-   git clone <your-repo-url>
-   cd mt5_forex_bot
-   ```
+## Cài Đặt
 
-2. **Tạo virtual environment (khuyến nghị)**
-   ```bash
-   python -m venv venv
-   source venv/bin/activate    # Linux/Mac
-   venv\Scripts\activate       # Windows
-   ```
-
-3. **Cài đặt dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Cấu hình project**
-   - Copy file mẫu config (nếu có) hoặc tạo mới file `config/config.yaml` với nội dung cơ bản:
-     ```yaml
-     mt5:
-       login: 12345678              # Login MT5
-       password: "your_password"    # Password MT5
-       server: "Exness-MT5Real"     # Server broker (ví dụ Exness)
-     
-     telegram:
-       bot_token: "123456:ABC-DEF"  # Token từ BotFather
-       dev_chat_id: 123456789       # Chat ID dev (nhận debug)
-       user_chat_id: 987654321      # Chat ID user (nhận alert trade)
-     
-     strategy:
-       symbol: "EURUSD"
-       timeframe: "H1"
-       risk_percent: 1.0
-       # Các tham số strategy khác...
-     
-     logging:
-       level: "INFO"
-       path: "logs/trades.log"
-       db_path: "data/trades.db"
-     ```
-
-5. **Yêu cầu bổ sung**
-   - Cài đặt và mở MetaTrader 5 terminal trên Windows (bot cần terminal đang chạy để kết nối).
-   - Tạo Telegram Bot qua @BotFather để lấy `bot_token`.
-   - Lấy `chat_id` bằng cách chat với bot và truy cập `https://api.telegram.org/bot<token>/getUpdates`.
-
-## Hướng Dẫn Sử Dụng
-
-### 1. Chạy Bot Trading
 ```bash
-python main.py
+git clone https://github.com/CallmeChups/BotForex.git
+cd BotForex
+python -m venv .venv
+.venv\Scripts\activate    # Windows
+pip install -r requirements.txt
 ```
-- Có thể truyền config khác: `python main.py --config config/my_custom.yaml`
 
-### 2. Chạy Giao Diện Streamlit
+Yêu cầu: MetaTrader 5 terminal đang chạy trên Windows, MT5 credentials, Telegram bot token.
+
+## Cấu Hình
+
+### `config/auth.yaml`
+```yaml
+credentials:
+  usernames:
+    admin:
+      name: Admin
+      password: "<hashed>"
+      role: admin
+      mt5:
+        login: 12345678
+        password: "your_mt5_password"
+        server: "Exness-MT5Real"
+```
+
+### Environment Variables (`.env`)
+```
+TELEGRAM_BOT_TOKEN=123456:ABC-DEF
+TELEGRAM_CHAT_ID=987654321
+TELEGRAM_ERROR_CHAT_ID=123456789
+```
+
+## Chạy
+
 ```bash
+# Dashboard Streamlit
 streamlit run app.py
-```
-- Mở trình duyệt tại `http://localhost:8501` để:
-  - Start/Stop bot
-  - Chỉnh sửa tham số strategy thời gian thực
-  - Xem trạng thái tài khoản, vị thế mở, log gần nhất
-  - Export dữ liệu giao dịch
 
-### 3. Phân Tích Lịch Sử Giao Dịch
-Sau khi có log, bạn có thể chạy script phân tích (sẽ triển khai sau):
-```bash
-python -m src.analysis.analyzer
+# Hoặc dùng script (trên server)
+scripts\start_streamlit.bat
 ```
-Hoặc dùng Streamlit để xem biểu đồ và metrics trực tiếp.
+
+## Bot Trading
+
+Bot chạy như subprocess từ UI (trang 1_Bots.py), hoặc trực tiếp:
+
+```bash
+# Test mode (không đặt lệnh thật)
+python src/bot_runner.py --strategy feg_ema21 --symbol XAUUSD --user admin --test 1
+
+# Live mode
+python src/bot_runner.py --strategy feg_ema21 --symbol XAUUSD --user admin --test 0
+```
+
+Bot tự restart sau crash (30s delay). Mọi lỗi gửi Telegram.
+
+## Backtest Verification
+
+Chạy với MT5 connected để verify logic per-trade:
+
+```bash
+python scripts/verify_backtest.py --symbol XAUUSD --days 90 --strategy feg
+```
+
+In trace từng trade: signal conditions (✓/✗), SL/TP math, exit info, running equity.
+
+## CI/CD Deploy
+
+Manual trigger trên GitHub Actions tab. Secrets cần thiết:
+- `TAILSCALE_AUTHKEY` — ephemeral Tailscale auth key
+- `DEPLOY_SSH_PRIVATE_KEY` — SSH private key cho server
+
+Workflow: Tailscale connect → SSH → git pull + pip install → [optional] restart Streamlit + verify port 8501.
+
+## Chiến Lược
+
+| Strategy | Entry | Magic |
+|----------|-------|-------|
+| Master Candle | Nến M5 lúc 21:05 HCM, Close>Open → BUY | 210500 |
+| FEG EMA21 | Pattern 2 nến cùng hướng + EMA21 filter | 212100 |
+
+### FEG EMA21 — Điều Kiện Vào Lệnh
+
+**SELL** (cả 2 nến phải bearish):
+- H2 > H1 (high mới cao hơn)
+- C2 < L1 (close dưới low nến trước)
+- L2 > EMA21 (low trên EMA)
+
+**BUY** (cả 2 nến phải bullish):
+- L2 < L1 (low mới thấp hơn)
+- C2 > H1 (close trên high nến trước)
+- H2 < EMA21 (high dưới EMA)
 
 ## Cấu Trúc Project
+
 ```
-mt5_forex_bot/
-├── config/               # File cấu hình
-├── src/                  # Source code chính
-│   ├── bot/              # MT5 connector, strategy, trader loop
-│   ├── notifications/    # Telegram notifier
-│   ├── logging/          # Custom logger & DB handler
-│   ├── analysis/         # Phân tích & export dữ liệu
-│   └── ui/               # Streamlit dashboard
-├── logs/                 # File log giao dịch
-├── data/                 # Database SQLite & file export
-├── main.py               # Entry point chạy bot
-├── app.py                # Entry point Streamlit
-├── requirements.txt
-└── README.md
+BotForex/
+├── app.py                   # Streamlit entry point
+├── pages/                   # 8 UI pages (Bots, Orders, Backtest...)
+├── src/                     # Core modules
+│   ├── feg_strategy.py      # FEG pattern detection
+│   ├── backtest.py          # Backtest engine
+│   ├── bot_runner.py        # Live bot loop
+│   ├── bot_manager.py       # Subprocess manager
+│   ├── orders.py            # MT5 order execution
+│   └── utils.py             # Shared helpers
+├── strategies/              # Strategy YAML configs
+├── scripts/                 # verify_backtest.py, start_streamlit.bat
+├── .github/workflows/       # deploy.yml CI/CD
+├── tests/                   # 25 pytest tests
+└── docs/                    # Documentation
 ```
 
-## Lưu Ý Quan Trọng
-- **Rủi ro tài chính**: Bot trading có thể gây mất tiền. Luôn test kỹ trên tài khoản demo trước khi chạy live.
-- **Kết nối MT5**: Terminal MT5 phải đang mở và đã login tài khoản.
-- **Weekend**: Chỉ crypto chạy 24/7 trên Exness; các cặp forex truyền thống đóng cửa cuối tuần.
-- **Debug**: Đặt `logging.level: "DEBUG"` trong config để nhận thông tin chi tiết.
+## Tests
 
-## License
-MIT License
+```bash
+pytest tests/ -v
+# 25 passed
+```
 
-Chúc bạn code vui và project thành công! 🚀
+## Lưu Ý
 
-Nếu có bất kỳ vấn đề nào, hãy mở issue trên repository hoặc liên hệ trực tiếp.
+- MT5 terminal phải đang mở và connected (Windows only)
+- Luôn test trên demo account trước khi chạy live (`--test 0`)
+- Trace IDs: copy từ UI → grep log để debug
+- `config/auth.yaml` và `.streamlit/config.toml` được track trong git (deployed qua CI/CD)
+- `data/running_bots.json`, `logs/` là server-local (git-ignored)
+
+## Docs
+
+Xem thư mục `docs/` để biết chi tiết:
+- [Codebase Summary](docs/codebase-summary.md)
+- [System Architecture](docs/system-architecture.md)
+- [Project Roadmap](docs/project-roadmap.md)
+- [Project Overview & PDR](docs/project-overview-pdr.md)

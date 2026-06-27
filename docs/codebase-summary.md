@@ -1,12 +1,12 @@
 # BotForex - Tóm Tắt Codebase
 
-**Cập Nhật Lần Cuối**: 2026-06-21
-**Phiên Bản**: 0.2.0
-**Trạng Thái**: Production-ready (multi-strategy)
+**Cập Nhật Lần Cuối**: 2026-06-27
+**Phiên Bản**: 0.3.0
+**Trạng Thái**: Production-ready (CI/CD + Trace IDs + Full Error Coverage)
 
 ## Tổng Quan Project
 
-BotForex là ứng dụng Streamlit đa trang cho phép quản lý, backtest và vận hành nhiều bot giao dịch MT5 tự động. Hỗ trợ hai chiến lược: **Master Candle** (vào lệnh theo giờ cố định) và **FEG EMA21** (quét pattern 2 nến liên tục với bộ lọc EMA21).
+BotForex là ứng dụng Streamlit đa trang cho phép quản lý, backtest và vận hành nhiều bot giao dịch MT5 tự động. Hỗ trợ hai chiến lược: **Master Candle** (vào lệnh theo giờ cố định) và **FEG EMA21** (quét pattern 2 nến liên tục với bộ lọc EMA21, cả 2 nến phải cùng hướng). Deploy tự động qua GitHub Actions + Tailscale SSH.
 
 ## Cấu Trúc Thư Mục
 
@@ -18,49 +18,58 @@ E:\Project\BotForex\
 │   ├── 2_Orders.py               # Lịch sử lệnh MT5
 │   ├── 3_Signals.py              # Tín hiệu giao dịch
 │   ├── 4_Strategies.py           # Xem cấu hình strategy (read-only)
-│   ├── 5_Backtest.py             # Backtest engine UI
+│   ├── 5_Backtest.py             # Backtest engine UI (EMA toggle + run_id)
 │   ├── 6_Simulation.py           # Mô phỏng
 │   ├── 7_Users.py                # Quản lý người dùng (admin)
 │   └── 8_Settings.py             # Cài đặt hệ thống
 │
 ├── src/                          # Core modules
 │   ├── auth.py                   # Xác thực (streamlit-authenticator)
-│   ├── backtest.py               # Backtest engine (Master Candle + FEG)
+│   ├── backtest.py               # Backtest engine (Master Candle + FEG + debug fields)
 │   ├── backtest_history.py       # Lưu/đọc lịch sử backtest (JSON + Excel)
 │   ├── bot_manager.py            # Quản lý subprocess bot
-│   ├── bot_runner.py             # Live bot runner (MT5 loop, argparse entry)
+│   ├── bot_runner.py             # Live bot runner (order IDs, full Telegram errors, auto-restart)
 │   ├── calculation.py            # Chỉ báo kỹ thuật (MACD, Stoch, MA, EMA)
-│   ├── feg_strategy.py           # FEG pattern detection + signal builder
+│   ├── feg_strategy.py           # FEG pattern detection (same-type candle rule)
 │   ├── orders.py                 # Đặt lệnh MT5 (place_order, close_position)
 │   ├── strategy.py               # Hàm strategy chung
 │   ├── strategy_manager.py       # Đọc YAML strategy → params dict
-│   ├── telegram.py               # Gửi thông báo Telegram
+│   ├── telegram.py               # Gửi thông báo Telegram (main + error channel)
 │   └── utils.py                  # Tiện ích: get_pip_value, check_exit, compute_trade_levels
 │
 ├── strategies/                   # Strategy YAML definitions
 │   ├── master_candle.yaml        # Master Candle strategy config
-│   └── feg_ema21.yaml            # FEG EMA21 strategy config
+│   └── feg_ema21.yaml            # FEG EMA21 strategy config (buffer_k=50)
+│
+├── scripts/                      # Utility scripts
+│   ├── verify_backtest.py        # Phase 1 verification: per-trade trace từ MT5 data
+│   ├── start_streamlit.bat       # Windows bat để restart Streamlit qua schtasks
+│   └── start_streamlit.ps1       # PS1 alternative (có execution policy issue)
+│
+├── .github/
+│   └── workflows/
+│       └── deploy.yml            # CI/CD: GitHub Actions → Tailscale SSH → Windows server
 │
 ├── tests/                        # Pytest test suite (25 tests)
-│   ├── test_feg_strategy.py      # 9 tests: detect_feg_signal + analyze_feg
+│   ├── test_feg_strategy.py      # 9 tests: detect_feg_signal + analyze_feg (same-type fixtures)
 │   ├── test_trade_levels.py      # 3 tests: compute_trade_levels
-│   ├── test_backtest_time_characterization.py  # 1 characterization test
-│   ├── test_backtest_feg.py      # 2 tests: FEG backtest path
-│   ├── test_strategy_manager_feg.py  # 2 tests: strategy params
+│   ├── test_backtest_time_characterization.py  # 1 characterization test + debug fields
+│   ├── test_backtest_feg.py      # 2 tests: EMA blocks SELL; EMA below L2 → SELL (debug fields)
+│   ├── test_strategy_manager_feg.py  # 2 tests: strategy params (buffer_k=50)
 │   ├── test_place_order.py       # 2 tests: test/live mode gate
-│   ├── test_feg_runner.py        # 2 tests: live runner entry logic
+│   ├── test_feg_runner.py        # 2 tests: live runner entry logic (same-type fixtures)
 │   ├── test_bot_command.py       # 2 tests: bot_manager command builder
 │   ├── test_history_columns.py   # 1 test: EMA columns in history
 │   └── test_smoke.py             # 1 test: import sanity
 │
 ├── config/
-│   ├── auth.yaml                 # User accounts (streamlit-authenticator)
+│   ├── auth.yaml                 # User accounts + MT5 credentials (tracked in git, deployed)
 │   └── auth.yaml.example         # Template
 │
 ├── data/
-│   └── backtest_history.json     # Lịch sử backtest (auto-created)
+│   └── backtest_history.json     # Lịch sử backtest (auto-created, git-ignored)
 │
-├── logs/                         # Bot log files (auto-created)
+├── logs/                         # Bot log files (auto-created, git-ignored)
 ├── conftest.py                   # Pytest sys.path setup
 ├── requirements.txt              # Python dependencies
 └── docs/                         # Tài liệu dự án
@@ -77,7 +86,11 @@ Engine backtest MT5. Entry point: `run_backtest(df, symbol, ..., entry_type)`.
 - `entry_type="pattern"` → `_run_feg_backtest()` (while loop tuần tự, 1 lệnh/lúc).
 - Helpers dùng chung: `_compute_lot_size`, `_simulate_exit`, `_make_trade`.
 - `fetch_historical_data()`: lấy OHLC từ MT5.
-- `calculate_flex_lot_size()`: tính lot theo risk %.
+- **EMA column**: `df[f"ema{ema_period}"] = ema` — lưu vào `ohlc_data` để chart render EMA overlay.
+- **Debug fields per trade** (underscore prefix, trace-only):
+  - Master Candle: `_candle: {open, high, low, close}`
+  - FEG: `_c1`, `_c2` (OHLC + time), `_ema: float`, `_exit_pos: int`
+- **Trace ID**: `run_id = "BT-YYMMDD-HHMMSS-SYMBOL-XXXX"` trong `stats["run_id"]`.
 
 ### `src/backtest_history.py`
 Lưu/đọc kết quả backtest vào `data/backtest_history.json`.
@@ -87,7 +100,7 @@ Lưu/đọc kết quả backtest vào `data/backtest_history.json`.
 - `HISTORY_COLUMNS`: dict định nghĩa nhóm cột cho UI.
 
 ### `src/bot_manager.py`
-Quản lý subprocess bot. Bot state lưu trong `data/running_bots.json`.
+Quản lý subprocess bot. Bot state lưu trong `data/running_bots.json` (git-ignored).
 - `start_bot()`: build command → subprocess.
 - `stop_bot()`, `restart_bot()`.
 - `build_bot_command()`: tổng hợp args (bao gồm `--ema_period`, `--ema_distance_enabled`, `--ema_distance_pips`).
@@ -96,12 +109,18 @@ Quản lý subprocess bot. Bot state lưu trong `data/running_bots.json`.
 Live runner chạy như subprocess (argparse entry point). Dispatch theo `entry_type`:
 - Master Candle: `run_master_candle_bot()`.
 - FEG: `run_feg_bot()` — vòng lặp liên tục, lấy 2 nến đóng gần nhất + EMA, gọi `analyze_feg`, gate `active_trade`, `place_order(test=...)`.
+- **Order Trace ID**: `order_id = "ORD-YYMMDD-HHMMSS-SYMBOL-XXXX"` — prefix mọi log line, gửi kèm Telegram.
+- **Full Telegram error coverage**: mọi lỗi (startup, candle fetch, MT5 loop, signal, order fail, close fail, crash + traceback) đều gửi về `TELEGRAM_ERROR_CHAT_ID`.
+- **Auto-restart loop**: `while True` trong `__main__` — catch crash, log, sleep 30s, restart `run_bot()`. Chỉ dừng khi `KeyboardInterrupt`.
 - `get_recent_candles()`: lấy N nến từ MT5, bỏ nến đang chạy.
 - `feg_entry_decision()`: trả None nếu đang có lệnh.
 
 ### `src/feg_strategy.py`
 Logic phát hiện FEG pattern:
 - `detect_feg_signal(candle1, candle2, ema2, pip_value, ema_distance_enabled, ema_distance_pips) -> "BUY"|"SELL"|None`
+- **Same-type candle rule (v0.3.0)**: C1 và C2 phải cùng hướng (cả 2 tăng hoặc cả 2 giảm). Mixed-type pair → `None`.
+  - SELL: `not bullish1 and not bullish2` → H2>H1, C2<L1, L2>EMA+dist
+  - BUY: `bullish1 and bullish2` → L2<L1, C2>H1, H2<EMA-dist
 - `analyze_feg(...) -> dict | None`: dựng signal đầy đủ (entry/SL/TP) dùng `compute_trade_levels`.
 
 ### `src/orders.py`
@@ -124,7 +143,40 @@ Logic phát hiện FEG pattern:
 Chỉ báo kỹ thuật: `calculate_macd()`, `calculate_stoch()`, `calculate_ma()`, `calculate_ema()`, `check_cross_2_list_updated()`.
 
 ### `src/telegram.py`
-`send_message(msg, chat_id, ...)` với retry tối đa 5 lần. Token đọc từ env `TELEGRAM_BOT_TOKEN`.
+`send_message(msg, chat_id, is_error=False, ...)` với retry tối đa 5 lần. Token đọc từ env `TELEGRAM_BOT_TOKEN`. `is_error=True` → gửi về `TELEGRAM_ERROR_CHAT_ID` thay vì main chat.
+
+## Pages Chi Tiết
+
+### `pages/5_Backtest.py`
+- Hiển thị `run_id` dạng copyable code block sau mỗi backtest.
+- **EMA indicator toggle**: detect cột `ema*` trong `ohlc_data`, render expander "Indicators" với checkbox per EMA period. EMA21 = màu #FF6B00.
+- `buffer_k` max_value=200.0, default=float(params.get('buffer_k', 5)).
+
+## Scripts
+
+### `scripts/verify_backtest.py`
+Phase 1 verification: fetch MT5 historical data, chạy backtest cả 2 strategy, in per-trade trace với signal conditions, SL/TP math, exit info. Dùng debug fields (`_c1`, `_c2`, `_ema`, `_exit_pos`) từ backtest engine.
+```bash
+python scripts/verify_backtest.py --symbol XAUUSD --days 90 --strategy feg
+```
+
+### `scripts/start_streamlit.bat`
+Được gọi bởi Windows Task Scheduler (`schtasks /Run`) để start/restart Streamlit **tách biệt với SSH session**. Tạo `logs/` nếu chưa có, redirect stdout/stderr vào `logs/streamlit.log`.
+
+## CI/CD Pipeline
+
+### `.github/workflows/deploy.yml`
+Manual trigger (`workflow_dispatch`) với input `restart_streamlit` (true/false).
+
+**Steps:**
+1. **Tailscale connect** — join tailnet tạm thời (ephemeral auth key từ secret `TAILSCALE_AUTHKEY`)
+2. **SSH key setup** — private key từ `DEPLOY_SSH_PRIVATE_KEY` secret
+3. **Deploy** — SSH vào `hyperion@100.110.182.114`, PowerShell: `git pull` + `pip install -r requirements.txt`
+4. **Restart Streamlit** (nếu chọn): kiểm tra port 8501, dừng process cũ, tạo schtask chạy `start_streamlit.bat`, verify port 8501 sau 12s (fail workflow nếu không lên)
+
+**Secrets cần thiết:**
+- `TAILSCALE_AUTHKEY` — ephemeral Tailscale auth key
+- `DEPLOY_SSH_PRIVATE_KEY` — SSH private key (public key đặt ở `C:\ProgramData\ssh\administrators_authorized_keys` trên server vì user trong Administrators group)
 
 ## Strategies YAML
 
@@ -135,13 +187,17 @@ entry:
   timeframe: M5
   time: "21:05"
   timezone: "Asia/Ho_Chi_Minh"
+parameters:
+  buffer_k: 30
+  rr_ratio: 2.0
+  lot_size: 0.01
 ```
 
 ### `strategies/feg_ema21.yaml`
 ```yaml
 entry:
   type: pattern      # discriminator
-  timeframe: M5
+  timeframe: M1
   pattern: feg_ema21
   ema_period: 21
   ema_distance: {enabled: false, pips: 0}
@@ -151,10 +207,19 @@ exit:
   time_limit: {enabled: true, max_candles: 7}
 parameters:
   rr_ratio: 2.0
-  buffer_k: 5
+  buffer_k: 50        # 50 pips = $5 buffer cho XAUUSD
   lot_size: 0.01
 symbols: [XAUUSD, BTCUSD, ETHUSD, XAUUSDm, BTCUSDm, ETHUSDm]
 ```
+
+## Trace ID System
+
+| Loại | Format | Ví dụ |
+|------|--------|-------|
+| Backtest Run | `BT-YYMMDD-HHMMSS-SYMBOL-XXXX` | `BT-260627-143022-XAUUSD-A3F1` |
+| Live Order | `ORD-YYMMDD-HHMMSS-SYMBOL-XXXX` | `ORD-260627-143022-XAUUSD-B7C2` |
+
+Mục đích: expert copy ID → grep log → thấy toàn bộ action tại thời điểm đó.
 
 ## Magic Numbers
 
@@ -162,6 +227,16 @@ symbols: [XAUUSD, BTCUSD, ETHUSD, XAUUSDm, BTCUSDm, ETHUSDm]
 |-------|----------|
 | 210500 | Master Candle |
 | 212100 | FEG EMA21 |
+
+## Git-tracked vs Server-local Files
+
+| File | Git | Lý do |
+|------|-----|-------|
+| `config/auth.yaml` | ✅ tracked | Deployed qua CI/CD |
+| `.streamlit/config.toml` | ✅ tracked | Deployed qua CI/CD |
+| `data/orders.csv` | ❌ ignored | Runtime state, server-local |
+| `data/running_bots.json` | ❌ ignored | Runtime state, server-local |
+| `logs/` | ❌ ignored | Log files, server-local |
 
 ## Công Nghệ Stack
 
@@ -183,18 +258,18 @@ symbols: [XAUUSD, BTCUSD, ETHUSD, XAUUSDm, BTCUSDm, ETHUSDm]
 Chạy: `pytest tests/ -v`
 
 ```
-25 passed in ~2.2s
+25 passed in ~0.5s
 ```
 
 | File test | Nội dung |
 |-----------|---------|
-| test_feg_strategy.py | detect_feg_signal (7 cases), analyze_feg (2 cases) |
+| test_feg_strategy.py | detect_feg_signal (7 cases), analyze_feg (2 cases) — all same-type fixtures |
 | test_trade_levels.py | compute_trade_levels BUY/SELL/range_percent |
-| test_backtest_feg.py | EMA blocks SELL; EMA below L2 → SELL fires |
-| test_backtest_time_characterization.py | Master Candle backward-compat lock |
-| test_strategy_manager_feg.py | FEG params + master_candle defaults |
+| test_backtest_feg.py | EMA blocks SELL; EMA below L2 → SELL fires; debug fields verified |
+| test_backtest_time_characterization.py | Master Candle backward-compat + _candle debug field |
+| test_strategy_manager_feg.py | FEG params (buffer_k=50) + master_candle defaults |
 | test_place_order.py | test mode short-circuit; live mode mock |
-| test_feg_runner.py | entry when flat+pattern; no entry when active_trade |
+| test_feg_runner.py | entry when flat+pattern; no entry when active_trade — same-type fixtures |
 | test_bot_command.py | EMA flags in command; disabled EMA = 0 |
 | test_history_columns.py | EMA columns in history_to_dataframe |
 | test_smoke.py | import sanity |
@@ -203,9 +278,11 @@ Chạy: `pytest tests/ -v`
 
 | Mức | Vấn đề | Trạng thái |
 |-----|--------|-----------|
-| ⚠️ Medium | `config/auth.yaml` (MT5 credentials) được track trong git | Cần `git rm --cached` + rotate password |
+| ✅ | `config/auth.yaml` tracked và deployed qua CI/CD | OK — intended |
 | ✅ | Telegram token đọc từ env `TELEGRAM_BOT_TOKEN` | OK |
 | ✅ | MT5 credentials đọc từ `config/auth.yaml` (không hardcode) | OK |
+| ⚠️ | SSH private key trong GitHub Secrets | Cần rotate định kỳ |
+| ℹ️ | `config/auth.yaml` chứa MT5 password trong git history | Cần cân nhắc nếu repo public |
 
 ## Tài Liệu Liên Quan
 
