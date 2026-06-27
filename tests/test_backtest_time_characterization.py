@@ -33,3 +33,18 @@ def test_time_backtest_produces_one_bullish_trade():
     # debug fields (Task 1)
     assert "_candle" in t
     assert t["_candle"] == {"open": 100.0, "high": 101.0, "low": 99.5, "close": 100.8}
+
+
+def test_master_candle_time_window_blocks_entry():
+    """Entry at 21:05 is outside window 09:00-10:00 → 0 trades."""
+    from datetime import time
+    df = _df()
+    res = run_backtest(
+        df=df, symbol="XAUUSD", entry_hour=21, entry_minute=5,
+        rr_ratio=2.0, max_candles=7, lot_mode="fixed", fixed_lot=0.01,
+        buffer_k=5.0, tp_type="price_based", sl_type="close_based",
+        entry_mode="close",
+        entry_start_time=time(9, 0),
+        entry_end_time=time(10, 0),
+    )
+    assert res["total_trades"] == 0
