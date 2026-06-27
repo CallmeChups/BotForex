@@ -4,12 +4,12 @@ Backtest Module for Master Candle Strategy
 Fetches historical M5 data from MT5 and simulates trades.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time as _time
 from zoneinfo import ZoneInfo
 import uuid
 import pandas as pd
 
-from src.utils import get_pip_value, check_exit, compute_trade_levels
+from src.utils import get_pip_value, check_exit, compute_trade_levels, _in_time_window
 from src.feg_strategy import detect_feg_signal
 
 TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
@@ -273,6 +273,8 @@ def run_backtest(
     ema_period: int = 21,
     ema_distance_enabled: bool = False,
     ema_distance_pips: float = 0.0,
+    entry_start_time: _time = _time(0, 0),
+    entry_end_time: _time = _time(23, 59),
 ) -> dict:
     """
     Run backtest on historical data
@@ -314,6 +316,7 @@ def run_backtest(
             starting_equity=starting_equity, tp_type=tp_type, sl_type=sl_type,
             entry_mode=entry_mode, entry_percent=entry_percent, ema_period=ema_period,
             ema_distance_enabled=ema_distance_enabled, ema_distance_pips=ema_distance_pips,
+            entry_start_time=entry_start_time, entry_end_time=entry_end_time,
         )
         result["run_id"] = run_id
         return result
@@ -337,6 +340,8 @@ def run_backtest(
 
     for idx, entry_row in entry_candles.iterrows():
         entry_time = entry_row['time']
+        if not _in_time_window(entry_time, entry_start_time, entry_end_time):
+            continue
         o, h, l, c = entry_row['open'], entry_row['high'], entry_row['low'], entry_row['close']
 
         candle = {"open": o, "high": h, "low": l, "close": c}
@@ -390,6 +395,8 @@ def _run_feg_backtest(
     df, symbol, rr_ratio, max_candles, lot_mode, fixed_lot, risk_percent,
     risk_amount, risk_mode, buffer_k, starting_equity, tp_type, sl_type,
     entry_mode, entry_percent, ema_period, ema_distance_enabled, ema_distance_pips,
+    entry_start_time: _time = _time(0, 0),
+    entry_end_time: _time = _time(23, 59),
 ):
     """Backtest FEG: quét tuần tự, 1 lệnh tại 1 thời điểm."""
     pip_value = get_pip_value(symbol)
@@ -406,6 +413,10 @@ def _run_feg_backtest(
     n = len(df)
     i = max(1, ema_period)  # warmup: bỏ vùng EMA chưa ổn định
     while i < n:
+        candle_time = df.at[i, "time"]
+        if not _in_time_window(candle_time, entry_start_time, entry_end_time):
+            i += 1
+            continue
         c1 = {"open": df.at[i - 1, "open"], "high": df.at[i - 1, "high"],
               "low": df.at[i - 1, "low"], "close": df.at[i - 1, "close"]}
         c2 = {"open": df.at[i, "open"], "high": df.at[i, "high"],
