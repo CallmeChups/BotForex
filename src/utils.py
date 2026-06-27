@@ -156,3 +156,18 @@ def compute_trade_levels(
         "take_profit": take_profit,
         "sl_pips": sl_pips,
     }
+
+
+from datetime import time as _time
+from zoneinfo import ZoneInfo as _ZoneInfo
+
+_TZ_HCM = _ZoneInfo("Asia/Ho_Chi_Minh")
+
+
+def _in_time_window(ts, start: _time, end: _time) -> bool:
+    """True if ts (converted to Asia/Ho_Chi_Minh) falls within [start, end] inclusive."""
+    local = ts.astimezone(_TZ_HCM).time().replace(second=0, microsecond=0)
+    if start <= end:
+        return start <= local <= end
+    # overnight window (e.g. 22:00-02:00)
+    return local >= start or local <= end
