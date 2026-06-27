@@ -3,7 +3,7 @@ Bots Page - Manage trading bot processes
 """
 
 import streamlit as st
-from datetime import datetime
+from datetime import datetime, time
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 import os
@@ -264,6 +264,27 @@ def show_create_bot():
 
     st.divider()
 
+    # --- Entry Time Window ---
+    st.subheader("Entry Time Window")
+    tw1, tw2 = st.columns(2)
+    with tw1:
+        entry_start_time = st.time_input(
+            "Entry Start Time (HCM)",
+            value=time(0, 0),
+            help="Only enter new positions at or after this time. Default 00:00 = no filter.",
+            key=f"{sk}_tw_start",
+        )
+    with tw2:
+        entry_end_time = st.time_input(
+            "Entry End Time (HCM)",
+            value=time(23, 59),
+            help="Only enter new positions at or before this time. Default 23:59 = no filter.",
+            key=f"{sk}_tw_end",
+        )
+    st.caption("Active trade continues if time window ends. Window only gates new entries.")
+
+    st.divider()
+
     # --- Entry ---
     st.subheader("Entry")
     ecol1, ecol2 = st.columns(2)
@@ -421,6 +442,8 @@ def show_create_bot():
                 risk_mode=risk_mode if lot_mode == "flex" else None,
                 risk_percent=risk_percent if lot_mode == "flex" else None,
                 risk_amount=risk_amount if lot_mode == "flex" else None,
+                entry_start_time=entry_start_time.strftime('%H:%M'),
+                entry_end_time=entry_end_time.strftime('%H:%M'),
             )
 
             if success:
