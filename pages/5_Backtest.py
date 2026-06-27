@@ -45,6 +45,12 @@ def _pip_caption(pips: float, symbol: str) -> str:
 
 
 
+def _pf(key, default=None):
+    """Get value from backtest_prefill session state, fallback to default."""
+    pf = st.session_state.get('backtest_prefill', {})
+    return pf.get(key, default)
+
+
 def main():
     st.title("Backtest Strategy")
 
@@ -131,12 +137,12 @@ def main():
         with r2c2:
             end_date = st.date_input("End Date", value=default_end, max_value=default_end)
         with r2c3:
-            rr_ratio = st.number_input("RR Ratio", value=float(params.get('rr_ratio', 2.0)),
+            rr_ratio = st.number_input("RR Ratio", value=float(_pf('rr_ratio', params.get('rr_ratio', 2.0))),
                                        min_value=0.5, max_value=10.0, step=0.5)
         with r2c4:
-            use_max_candles = st.checkbox("Max Candles", value=True, help="Uncheck = TP/SL only")
+            use_max_candles = st.checkbox("Max Candles", value=bool(_pf('max_candles', params.get('max_candles', 7))), help="Uncheck = TP/SL only")
             if use_max_candles:
-                max_candles = st.number_input("", value=int(params.get('max_candles', 7)),
+                max_candles = st.number_input("", value=int(_pf('max_candles', params.get('max_candles', 7))),
                                               min_value=1, max_value=50, label_visibility="collapsed")
             else:
                 max_candles = 0
@@ -144,20 +150,20 @@ def main():
         r3c1, r3c2, r3c3, r3c4 = st.columns(4)
         with r3c1:
             if is_pattern:
-                ema_period = st.number_input("EMA Period", value=int(params.get('ema_period', 21)),
+                ema_period = st.number_input("EMA Period", value=int(_pf('ema_period', params.get('ema_period', 21))),
                                              min_value=2, max_value=200)
                 h2_exceed_pips = st.number_input(
-                    "H2 > H1 + N pips", value=float(params.get('h2_exceed_pips', 0.0)),
+                    "H2 > H1 + N pips", value=float(_pf('h2_exceed_pips', params.get('h2_exceed_pips', 0.0))),
                     min_value=0.0, step=1.0,
                     help="SELL: H2 phải vượt H1 thêm N pips | BUY: L2 phải thấp hơn L1 thêm N pips")
                 st.caption(_pip_caption(h2_exceed_pips, symbol))
                 c2_gap_pips = st.number_input(
-                    "C2 vượt L1/H1 + N pips", value=float(params.get('c2_gap_pips', 0.0)),
+                    "C2 vượt L1/H1 + N pips", value=float(_pf('c2_gap_pips', params.get('c2_gap_pips', 0.0))),
                     min_value=0.0, step=1.0,
                     help="SELL: C2 phải đóng thấp hơn L1 thêm N pips | BUY: C2 phải đóng cao hơn H1 thêm N pips")
                 st.caption(_pip_caption(c2_gap_pips, symbol))
                 ema_margin_pips = st.number_input(
-                    "L2/H2 cách EMA + N pips", value=float(params.get('ema_margin_pips', 0.0)),
+                    "L2/H2 cách EMA + N pips", value=float(_pf('ema_margin_pips', params.get('ema_margin_pips', 0.0))),
                     min_value=0.0, step=1.0,
                     help="SELL: L2 phải cách EMA ≥ N pips | BUY: H2 phải cách EMA ≥ N pips")
                 st.caption(_pip_caption(ema_margin_pips, symbol))
@@ -182,49 +188,59 @@ def main():
                                                disabled=True, help=f"Strategy default: {entry_time_str}")
 
         with r3c2:
-            entry_start_time = st.time_input("Window Start (HCM)", value=time(0, 0),
+            _pf_start = _pf('entry_start_time', '00:00')
+            _pf_end = _pf('entry_end_time', '23:59')
+            entry_start_time = st.time_input("Window Start (HCM)",
+                                             value=datetime.strptime(_pf_start, "%H:%M").time() if isinstance(_pf_start, str) else _pf_start,
                                              help="Gate entries from this time. 00:00 = no filter.")
-            entry_end_time = st.time_input("Window End (HCM)", value=time(23, 59),
+            entry_end_time = st.time_input("Window End (HCM)",
+                                           value=datetime.strptime(_pf_end, "%H:%M").time() if isinstance(_pf_end, str) else _pf_end,
                                            help="Gate entries until this time. 23:59 = no filter.")
 
         with r3c3:
+            _pf_em = _pf('entry_mode', 'close')
             entry_mode = st.radio("Entry Mode", options=["close", "range_percent"],
+                                  index=0 if _pf_em == "close" else 1,
                                   format_func=lambda x: "Close" if x == "close" else "Body %",
                                   help="Close: entry at close price | Body %: limit inside candle body")
             if entry_mode == "range_percent":
-                entry_percent = st.number_input("Entry %", value=30.0,
+                entry_percent = st.number_input("Entry %", value=float(_pf('entry_percent', 30.0)),
                                                 min_value=0.0, max_value=100.0, step=5.0)
             else:
                 entry_percent = 0.0
             limit_order_candles = st.number_input(
-                "Chờ khớp lệnh (nến)", value=1, min_value=1, max_value=100,
+                "Chờ khớp lệnh (nến)", value=int(_pf('limit_order_candles', 1)), min_value=1, max_value=100,
                 help="Số nến tối đa chờ limit order khớp. 1 = khớp ngay nến tiếp theo nếu giá chạm entry.")
 
         with r3c4:
-            buffer_k = st.number_input("Buffer K (pips)", value=float(params.get('buffer_k', 5)),
+            buffer_k = st.number_input("Buffer K (pips)", value=float(_pf('buffer_k', params.get('buffer_k', 5))),
                                        min_value=0.0, max_value=200.0, step=1.0,
                                        help="SL = candle body edge + K pips")
+            _pf_lot = _pf('lot_mode', 'fixed')
             lot_mode = st.radio("Lot Mode", options=["fixed", "flex"],
+                                index=0 if _pf_lot == "fixed" else 1,
                                 format_func=lambda x: "Fixed" if x == "fixed" else "Flex (Risk)")
 
         with st.expander("Exit Types & Lot Size", expanded=False):
             ec1, ec2 = st.columns(2)
             with ec1:
                 tp_type = st.radio("TP Exit", options=["price_based", "close_based"],
+                                   index=0 if _pf('tp_type', 'price_based') == 'price_based' else 1,
                                    format_func=lambda x: "Price-based (wick)" if x == "price_based" else "Close-based",
                                    horizontal=True,
                                    help="Price: wick touches TP | Close: candle closes past TP")
             with ec2:
                 sl_type = st.radio("SL Exit", options=["price_based", "close_based"],
+                                   index=0 if _pf('sl_type', 'price_based') == 'price_based' else 1,
                                    format_func=lambda x: "Price-based (wick)" if x == "price_based" else "Close-based",
                                    horizontal=True,
                                    help="Price: wick touches SL | Close: candle closes past SL")
             bc1, bc2 = st.columns(2)
             with bc1:
-                be_enabled = st.checkbox("Break-Even (BE)", value=False,
+                be_enabled = st.checkbox("Break-Even (BE)", value=bool(_pf('be_enabled', False)),
                                          help="Dời SL về entry khi lời đủ be_r × SL distance")
             with bc2:
-                be_r = st.number_input("BE Trigger (R)", value=1.0, min_value=0.1, max_value=10.0,
+                be_r = st.number_input("BE Trigger (R)", value=float(_pf('be_r', 1.0)), min_value=0.1, max_value=10.0,
                                        step=0.1, format="%.1f",
                                        help="BE kích hoạt khi lời đạt be_r × SL distance",
                                        disabled=not be_enabled)
@@ -232,7 +248,7 @@ def main():
             if lot_mode == "fixed":
                 lc1, _ = st.columns(2)
                 with lc1:
-                    fixed_lot = st.number_input("Lot Size", value=float(params.get('lot_size', 0.01)),
+                    fixed_lot = st.number_input("Lot Size", value=float(_pf('fixed_lot', params.get('lot_size', 0.01))),
                                                 min_value=0.01, max_value=10.0, step=0.01, format="%.2f")
                 risk_percent = 0.5
                 risk_amount = 0.0
@@ -241,20 +257,22 @@ def main():
             else:
                 lc1, lc2, lc3 = st.columns(3)
                 with lc1:
-                    starting_equity = st.number_input("Starting Equity ($)", value=1000.0,
+                    starting_equity = st.number_input("Starting Equity ($)", value=float(_pf('starting_equity', 1000.0)),
                                                       min_value=100.0, step=100.0)
                 with lc2:
+                    _pf_rm = _pf('risk_mode', 'percent')
                     risk_mode = st.radio("Risk Mode", options=["percent", "fixed_amount"],
+                                         index=0 if _pf_rm == "percent" else 1,
                                          format_func=lambda x: "%" if x == "percent" else "Fixed $",
                                          horizontal=True)
                 with lc3:
                     if risk_mode == "percent":
-                        risk_percent = st.number_input("Risk %", value=0.5, min_value=0.1,
+                        risk_percent = st.number_input("Risk %", value=float(_pf('risk_percent', 0.5)), min_value=0.1,
                                                        max_value=5.0, step=0.1, format="%.1f")
                         risk_amount = 0.0
                         st.caption(f"${starting_equity:.0f} × {risk_percent}% = ${starting_equity * risk_percent / 100:.2f}/trade")
                     else:
-                        risk_amount = st.number_input("Risk $", value=5.0, min_value=1.0,
+                        risk_amount = st.number_input("Risk $", value=float(_pf('risk_amount', 5.0)), min_value=1.0,
                                                       max_value=1000.0, step=1.0, format="%.2f")
                         risk_percent = 0.0
                 fixed_lot = 0.01
@@ -535,6 +553,8 @@ def main():
             'c2_gap_pips': c2_gap_pips,
             'ema_margin_pips': ema_margin_pips,
             'limit_order_candles': int(limit_order_candles),
+            'be_enabled': be_enabled,
+            'be_r': be_r,
         }
 
         if lot_mode == 'fixed':
@@ -1192,8 +1212,27 @@ def show_history_section():
 
     st.caption(f"Showing {len(filtered_df)} of {len(history_df)} records | {len(display_cols)} columns")
 
-    # Delete functionality
+    # Reuse / Manage History
     st.markdown("---")
+
+    with st.expander("Reuse Config"):
+        reuse_options = {
+            f"{r['ID']} | {r.get('Date', '')} | {r.get('Strategy', '')} | {r.get('Symbol', '')} | Win {r['Win %']}%": r['ID']
+            for _, r in filtered_df.iterrows()
+        }
+        if reuse_options:
+            selected_reuse = st.selectbox("Chọn backtest để load config", options=list(reuse_options.keys()),
+                                          key="reuse_record_select")
+            if st.button("Load Config", type="primary", key="btn_reuse_config"):
+                record_id = reuse_options[selected_reuse]
+                from src.backtest_history import get_history_record
+                record = get_history_record(record_id)
+                if record:
+                    st.session_state['backtest_prefill'] = record['config']
+                    st.success(f"Đã load config từ {record_id} — scroll lên để xem params.")
+                    st.rerun()
+        else:
+            st.info("Không có record nào để reuse.")
 
     with st.expander("Manage History"):
         st.warning("Delete records from history")

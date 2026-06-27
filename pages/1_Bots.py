@@ -203,6 +203,51 @@ def show_create_bot():
     is_pattern = params.get('entry_type', 'time') == 'pattern'
     sk = selected_strategy  # key prefix — forces widget reinit when strategy changes
 
+    # Load from Backtest History
+    with st.expander("Load from Backtest History"):
+        from src.backtest_history import get_history, get_history_record, history_to_dataframe
+        _bh = get_history()
+        if _bh:
+            _bh_df = history_to_dataframe(_bh)
+            _reuse_opts = {
+                f"{r['ID']} | {r.get('Date', '')} | {r.get('Strategy', '')} | {r.get('Symbol', '')} | Win {r['Win %']}%": r['ID']
+                for _, r in _bh_df.iterrows()
+            }
+            _sel = st.selectbox("Chọn backtest config", options=list(_reuse_opts.keys()), key="bot_reuse_select")
+            if st.button("Load Config vào form", type="primary", key="btn_bot_reuse"):
+                _rid = _reuse_opts[_sel]
+                _rec = get_history_record(_rid)
+                if _rec:
+                    _cfg = _rec['config']
+                    # Map config → bot widget session state keys (sk prefix)
+                    _map = {
+                        f"{sk}_rr": float(_cfg.get('rr_ratio', params.get('rr_ratio', 2.0))),
+                        f"{sk}_mc": int(_cfg.get('max_candles', params.get('max_candles', 7))),
+                        f"{sk}_ema": int(_cfg.get('ema_period', params.get('ema_period', 21))),
+                        f"{sk}_h2x": float(_cfg.get('h2_exceed_pips', 0.0)),
+                        f"{sk}_c2g": float(_cfg.get('c2_gap_pips', 0.0)),
+                        f"{sk}_emm": float(_cfg.get('ema_margin_pips', 0.0)),
+                        f"{sk}_loc": int(_cfg.get('limit_order_candles', 1)),
+                        f"{sk}_buffer_k": float(_cfg.get('buffer_k', params.get('buffer_k', 5))),
+                        f"{sk}_tp_type": _cfg.get('tp_type', 'price_based'),
+                        f"{sk}_sl_type": _cfg.get('sl_type', 'price_based'),
+                        f"{sk}_be_enabled": bool(_cfg.get('be_enabled', False)),
+                        f"{sk}_be_r": float(_cfg.get('be_r', 1.0)),
+                        f"{sk}_lot_mode": _cfg.get('lot_mode', 'fixed'),
+                    }
+                    if _cfg.get('lot_mode') == 'fixed':
+                        _map[f"{sk}_lot"] = float(_cfg.get('fixed_lot', params.get('lot_size', 0.01)))
+                    else:
+                        _map[f"{sk}_risk_mode"] = _cfg.get('risk_mode', 'percent')
+                        _map[f"{sk}_risk_pct"] = float(_cfg.get('risk_percent', 0.5))
+                        _map[f"{sk}_risk_amt"] = float(_cfg.get('risk_amount', 5.0))
+                    for k, v in _map.items():
+                        st.session_state[k] = v
+                    st.success(f"Đã load config từ {_rid}")
+                    st.rerun()
+        else:
+            st.info("Chưa có backtest history.")
+
     if use_compact:
         # ── COMPACT LAYOUT ────────────────────────────────────────────────────
         # Row 1: Symbol | Test Mode | RR | Max Candles | Interval
