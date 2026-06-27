@@ -3,39 +3,39 @@ from src.feg_strategy import detect_feg_signal, analyze_feg
 PIP = 0.1  # XAU
 
 def test_sell_signal_default_filter():
-    # H2>H1, C2<L1, L2>EMA21
-    c1 = {"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.5}
-    c2 = {"open": 100.8, "high": 102.0, "low": 98.5, "close": 98.0}  # H2=102>101, C2=98<99, L2=98.5
+    # H2>H1, C2<L1, L2>EMA21 — both bearish (same-type rule)
+    c1 = {"open": 101.0, "high": 101.0, "low": 99.0, "close": 100.5}  # bearish: c<o
+    c2 = {"open": 100.8, "high": 102.0, "low": 98.5, "close": 98.0}  # bearish: c<o
     ema2 = 98.0  # L2(98.5) > ema2(98.0)
     assert detect_feg_signal(c1, c2, ema2, PIP) == "SELL"
 
 def test_sell_blocked_when_low2_below_ema():
-    c1 = {"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.5}
-    c2 = {"open": 100.8, "high": 102.0, "low": 98.5, "close": 98.0}
+    c1 = {"open": 101.0, "high": 101.0, "low": 99.0, "close": 100.5}  # bearish
+    c2 = {"open": 100.8, "high": 102.0, "low": 98.5, "close": 98.0}   # bearish
     ema2 = 99.0  # L2(98.5) NOT > ema2(99.0)
     assert detect_feg_signal(c1, c2, ema2, PIP) is None
 
 def test_buy_signal_default_filter():
-    # L2<L1, C2>H1, H2<EMA21
-    c1 = {"open": 100.0, "high": 101.0, "low": 99.0, "close": 99.5}
-    c2 = {"open": 99.2, "high": 102.0, "low": 98.0, "close": 101.5}  # L2=98<99, C2=101.5>101, H2=102
+    # L2<L1, C2>H1, H2<EMA21 — both bullish (same-type rule)
+    c1 = {"open": 99.0, "high": 101.0, "low": 99.0, "close": 99.5}   # bullish: c>o
+    c2 = {"open": 99.2, "high": 102.0, "low": 98.0, "close": 101.5}  # bullish: c>o
     ema2 = 103.0  # H2(102) < ema2(103)
     assert detect_feg_signal(c1, c2, ema2, PIP) == "BUY"
 
 def test_buy_blocked_when_high2_above_ema():
-    c1 = {"open": 100.0, "high": 101.0, "low": 99.0, "close": 99.5}
-    c2 = {"open": 99.2, "high": 102.0, "low": 98.0, "close": 101.5}
+    c1 = {"open": 99.0, "high": 101.0, "low": 99.0, "close": 99.5}   # bullish
+    c2 = {"open": 99.2, "high": 102.0, "low": 98.0, "close": 101.5}  # bullish
     ema2 = 101.0  # H2(102) NOT < ema2(101)
     assert detect_feg_signal(c1, c2, ema2, PIP) is None
 
 def test_no_signal_when_no_gap():
-    c1 = {"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0}
-    c2 = {"open": 100.2, "high": 102.0, "low": 99.5, "close": 99.5}  # C2=99.5 NOT < L1=99.0
+    c1 = {"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0}  # doji
+    c2 = {"open": 100.2, "high": 102.0, "low": 99.5, "close": 99.5}   # bearish: C2=99.5 NOT < L1=99.0
     assert detect_feg_signal(c1, c2, 95.0, PIP) is None
 
 def test_sell_distance_filter_enabled_boundary():
-    c1 = {"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.5}
-    c2 = {"open": 100.8, "high": 102.0, "low": 98.5, "close": 98.0}  # L2=98.5
+    c1 = {"open": 101.0, "high": 101.0, "low": 99.0, "close": 100.5}  # bearish
+    c2 = {"open": 100.8, "high": 102.0, "low": 98.5, "close": 98.0}   # bearish; L2=98.5
     ema2 = 98.0
     # threshold 4 pips × 0.1 = 0.4 -> need L2 > 98.4 ; 98.5 > 98.4 -> SELL
     assert detect_feg_signal(c1, c2, ema2, PIP, True, 4.0) == "SELL"
@@ -43,8 +43,8 @@ def test_sell_distance_filter_enabled_boundary():
     assert detect_feg_signal(c1, c2, ema2, PIP, True, 6.0) is None
 
 def test_buy_distance_filter_enabled_boundary():
-    c1 = {"open": 100.0, "high": 101.0, "low": 99.0, "close": 99.5}
-    c2 = {"open": 99.2, "high": 102.0, "low": 98.0, "close": 101.5}  # H2=102
+    c1 = {"open": 99.0, "high": 101.0, "low": 99.0, "close": 99.5}   # bullish
+    c2 = {"open": 99.2, "high": 102.0, "low": 98.0, "close": 101.5}  # bullish; H2=102
     ema2 = 103.0
     # threshold 5 pips × 0.1 = 0.5 -> need H2 < 102.5 ; 102 < 102.5 -> BUY
     assert detect_feg_signal(c1, c2, ema2, PIP, True, 5.0) == "BUY"
@@ -52,8 +52,8 @@ def test_buy_distance_filter_enabled_boundary():
     assert detect_feg_signal(c1, c2, 102.3, PIP, True, 5.0) is None
 
 def test_analyze_feg_sell_levels():
-    c1 = {"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.5}
-    c2 = {"open": 100.8, "high": 102.0, "low": 98.5, "close": 98.0}
+    c1 = {"open": 101.0, "high": 101.0, "low": 99.0, "close": 100.5}  # bearish
+    c2 = {"open": 100.8, "high": 102.0, "low": 98.5, "close": 98.0}   # bearish
     ema2 = 98.0
     sig = analyze_feg("XAUUSD", c1, c2, ema2, rr_ratio=2.0, buffer_k=5.0, lot_size=0.02)
     assert sig["direction"] == "SELL"

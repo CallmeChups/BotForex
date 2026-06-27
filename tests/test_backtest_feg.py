@@ -42,9 +42,9 @@ def test_feg_backtest_sell_when_ema_below_low2():
     for i in range(30):
         base.append({"time": pd.Timestamp("2025-01-02 00:00", tz=TZ) + pd.Timedelta(minutes=5 * i),
                      "open": 95.0, "high": 95.3, "low": 94.7, "close": 95.0})
-    # candle1:
+    # candle1: bearish (close < open) so same-type rule allows SELL with bearish candle2
     base.append({"time": pd.Timestamp("2025-01-02 00:00", tz=TZ) + pd.Timedelta(minutes=5 * 30),
-                 "open": 100.0, "high": 101.0, "low": 99.0, "close": 100.5})
+                 "open": 101.0, "high": 101.0, "low": 99.0, "close": 100.5})
     # candle2: H2=102>101, C2=98<99, L2=98.5 ; EMA21 nên < 98.5
     base.append({"time": pd.Timestamp("2025-01-02 00:00", tz=TZ) + pd.Timedelta(minutes=5 * 31),
                  "open": 100.8, "high": 102.0, "low": 98.5, "close": 98.0})
