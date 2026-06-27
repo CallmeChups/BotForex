@@ -534,9 +534,12 @@ def run_feg_bot(args, strategy, params, credentials):
                             mt5, args.symbol, risk_mode, risk_percent, risk_amount,
                             signal["entry_price"], signal["stop_loss"],
                         )
-                    log(f"FEG Signal: {signal['direction']} @ {signal['entry_price']:.2f}, "
+                    import uuid as _uuid
+                    order_id = f"ORD-{last['time'].strftime('%y%m%d-%H%M%S')}-{args.symbol}-{_uuid.uuid4().hex[:4].upper()}"
+                    log(f"[{order_id}] FEG Signal: {signal['direction']} @ {signal['entry_price']:.2f}, "
                         f"SL={signal['stop_loss']:.2f}, TP={signal['take_profit']:.2f}, lot={trade_lot}")
                     send_telegram(f"<b>FEG Signal: {signal['direction']}</b>\n"
+                                  f"ID: <code>{order_id}</code>\n"
                                   f"Symbol: {args.symbol}\nEntry: {signal['entry_price']:.2f}\n"
                                   f"SL: {signal['stop_loss']:.2f}\nTP: {signal['take_profit']:.2f}\n"
                                   f"Lot: {trade_lot}")
@@ -544,14 +547,14 @@ def run_feg_bot(args, strategy, params, credentials):
                         args.symbol, signal["direction"], trade_lot,
                         sl=signal["stop_loss"], tp=signal["take_profit"],
                         credentials=credentials, test=bool(args.test),
-                        magic=212100, comment="FEG",
+                        magic=212100, comment=f"FEG-{order_id[-4:]}",
                     )
-                    log(f"Order result: {msg}")
+                    log(f"[{order_id}] Order result: {msg}")
                     if ok:
                         active_trade = {
                             "direction": signal["direction"], "entry": signal["entry_price"],
                             "sl": signal["stop_loss"], "tp": signal["take_profit"],
-                            "ticket": ticket, "candles": 0,
+                            "ticket": ticket, "candles": 0, "order_id": order_id,
                         }
                     else:
                         log(f"Order failed — active_trade NOT set, will retry next signal", "WARN")
@@ -575,8 +578,9 @@ def run_feg_bot(args, strategy, params, credentials):
                         pnl = (exit_price - active_trade["entry"]) / pip_value
                     else:
                         pnl = (active_trade["entry"] - exit_price) / pip_value
-                    log(f"FEG Exit: {exit_type} @ {exit_price:.2f}, P&L: {pnl:.1f} pips")
-                    send_telegram(f"<b>FEG Exit: {exit_type}</b>\nPrice: {exit_price:.2f}\nP&L: {pnl:.1f} pips")
+                    oid = active_trade.get("order_id", "")
+                    log(f"[{oid}] FEG Exit: {exit_type} @ {exit_price:.2f}, P&L: {pnl:.1f} pips")
+                    send_telegram(f"<b>FEG Exit: {exit_type}</b>\nID: <code>{oid}</code>\nPrice: {exit_price:.2f}\nP&L: {pnl:.1f} pips")
                     if not args.test and active_trade.get("ticket"):
                         close_position(active_trade["ticket"], credentials=credentials)
                     active_trade = None

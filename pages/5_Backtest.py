@@ -516,7 +516,14 @@ def display_results(results: dict, symbol: str, strategy_name: str = "", lot_mod
     config = config or {}
 
     st.divider()
-    st.subheader(f"Results: {strategy_name}" if strategy_name else "Results")
+    run_id = results.get("run_id", "")
+    header_col, id_col = st.columns([3, 2])
+    with header_col:
+        st.subheader(f"Results: {strategy_name}" if strategy_name else "Results")
+    with id_col:
+        if run_id:
+            st.markdown(f"**Backtest ID**")
+            st.code(run_id, language=None)
 
     if results['total_trades'] == 0:
         st.warning("No trades found in the selected period")
@@ -730,6 +737,16 @@ def show_interactive_chart(trades: list, ohlc_data: pd.DataFrame, symbol: str):
         st.warning("No OHLC data available for chart")
         return
 
+    # Indicator toggles
+    ema_cols = [c for c in ohlc_data.columns if c.startswith("ema")]
+    show_ema = {}
+    if ema_cols:
+        with st.expander("Indicators", expanded=False):
+            cols = st.columns(min(len(ema_cols), 4))
+            for i, col_name in enumerate(ema_cols):
+                period = col_name.replace("ema", "")
+                show_ema[col_name] = cols[i % 4].checkbox(f"EMA{period}", value=True, key=f"ind_{col_name}")
+
     # Trade selector
     trade_options = [f"Trade {i+1}: {t['date']} {t['time']} - {t['direction']} ({t['exit_type']})" for i, t in enumerate(trades)]
     selected_idx = st.selectbox(
@@ -777,6 +794,21 @@ def show_interactive_chart(trades: list, ohlc_data: pd.DataFrame, symbol: str):
             decreasing_line_color='red'
         )
     )
+
+    # EMA overlays
+    ema_colors = {"ema21": "#FF6B00", "ema9": "#9B59B6", "ema50": "#3498DB", "ema200": "#E74C3C"}
+    for col_name, enabled in show_ema.items():
+        if enabled and col_name in chart_data.columns:
+            period = col_name.replace("ema", "")
+            color = ema_colors.get(col_name, "#888888")
+            fig.add_trace(go.Scatter(
+                x=chart_data['time'],
+                y=chart_data[col_name],
+                mode='lines',
+                line=dict(color=color, width=1.5),
+                name=f"EMA{period}",
+                legendgroup=col_name
+            ))
 
     # Get time range for horizontal lines
     x_min = chart_data['time'].iloc[0]

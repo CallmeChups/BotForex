@@ -6,6 +6,7 @@ Fetches historical M5 data from MT5 and simulates trades.
 
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+import uuid
 import pandas as pd
 
 from src.utils import get_pip_value, check_exit, compute_trade_levels
@@ -303,8 +304,10 @@ def run_backtest(
     Returns:
         dict with results
     """
+    run_id = f"BT-{datetime.now().strftime('%y%m%d-%H%M%S')}-{symbol}-{uuid.uuid4().hex[:4].upper()}"
+
     if entry_type == "pattern":
-        return _run_feg_backtest(
+        result = _run_feg_backtest(
             df=df, symbol=symbol, rr_ratio=rr_ratio, max_candles=max_candles,
             lot_mode=lot_mode, fixed_lot=fixed_lot, risk_percent=risk_percent,
             risk_amount=risk_amount, risk_mode=risk_mode, buffer_k=buffer_k,
@@ -312,6 +315,8 @@ def run_backtest(
             entry_mode=entry_mode, entry_percent=entry_percent, ema_period=ema_period,
             ema_distance_enabled=ema_distance_enabled, ema_distance_pips=ema_distance_pips,
         )
+        result["run_id"] = run_id
+        return result
 
     pip_value = get_pip_value(symbol)
 
@@ -369,6 +374,7 @@ def run_backtest(
 
     # Calculate statistics
     stats = calculate_stats(trades, lot_mode)
+    stats["run_id"] = run_id
     stats["equity_curve"] = equity_curve_pips
     stats["equity_curve_usd"] = equity_curve_usd
     stats["trades"] = trades
@@ -388,7 +394,9 @@ def _run_feg_backtest(
     """Backtest FEG: quét tuần tự, 1 lệnh tại 1 thời điểm."""
     pip_value = get_pip_value(symbol)
     df = df.reset_index(drop=True)
-    ema = df["close"].ewm(span=ema_period, adjust=False).mean().tolist()
+    ema = df["close"].ewm(span=ema_period, adjust=False).mean()
+    df[f"ema{ema_period}"] = ema
+    ema = ema.tolist()
 
     trades = []
     equity_curve_pips = [0]
