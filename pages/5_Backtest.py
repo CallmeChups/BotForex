@@ -197,10 +197,10 @@ def main():
                                    horizontal=True,
                                    help="Price: wick touches TP | Close: candle closes past TP")
             with ec2:
-                sl_type = st.radio("SL Exit", options=["close_based", "price_based"],
-                                   format_func=lambda x: "Close-based" if x == "close_based" else "Price-based (wick)",
+                sl_type = st.radio("SL Exit", options=["price_based", "close_based"],
+                                   format_func=lambda x: "Price-based (wick)" if x == "price_based" else "Close-based",
                                    horizontal=True,
-                                   help="Close: candle closes past SL | Price: wick touches SL")
+                                   help="Price: wick touches SL | Close: candle closes past SL")
             st.divider()
             if lot_mode == "fixed":
                 lc1, _ = st.columns(2)
@@ -355,14 +355,14 @@ def main():
             else:
                 st.caption("TP triggers when candle CLOSES beyond TP (exits at close price)")
         with col2:
-            sl_type = st.radio("Stop Loss (SL) Exit", options=["close_based", "price_based"],
-                               format_func=lambda x: "Close-based (Delayed)" if x == "close_based" else "Price-based (Immediate)",
+            sl_type = st.radio("Stop Loss (SL) Exit", options=["price_based", "close_based"],
+                               format_func=lambda x: "Price-based (Immediate)" if x == "price_based" else "Close-based (Delayed)",
                                horizontal=True,
-                               help="Close-based: Exit when candle closes beyond SL | Price-based: Exit when wick touches SL")
-            if sl_type == "close_based":
-                st.caption("SL triggers when candle CLOSES beyond SL (exits at close price)")
-            else:
+                               help="Price-based: Exit when wick touches SL | Close-based: Exit when candle closes beyond SL")
+            if sl_type == "price_based":
                 st.caption("SL triggers when High/Low touches SL level (exits at SL price)")
+            else:
+                st.caption("SL triggers when candle CLOSES beyond SL (exits at close price)")
         st.divider()
 
         st.subheader("Lot Size")

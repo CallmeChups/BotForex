@@ -293,9 +293,9 @@ def show_create_bot():
                                    format_func=lambda x: "Price-based (wick)" if x == "price_based" else "Close-based",
                                    horizontal=True, key=f"{sk}_tp_type")
             with xc2:
-                sl_type = st.radio("SL Exit", options=["close_based", "price_based"],
-                                   index=0 if params.get('sl_type', 'close_based') == 'close_based' else 1,
-                                   format_func=lambda x: "Close-based" if x == "close_based" else "Price-based (wick)",
+                sl_type = st.radio("SL Exit", options=["price_based", "close_based"],
+                                   index=0 if params.get('sl_type', 'price_based') == 'price_based' else 1,
+                                   format_func=lambda x: "Price-based (wick)" if x == "price_based" else "Close-based",
                                    horizontal=True, key=f"{sk}_sl_type")
             st.divider()
             if lot_mode == "fixed":
@@ -421,9 +421,9 @@ def show_create_bot():
                                format_func=lambda x: "Price-based (Immediate)" if x == "price_based" else "Close-based (Delayed)",
                                horizontal=True, key=f"{sk}_tp_type")
         with xcol2:
-            sl_type = st.radio("Stop Loss (SL) Exit", options=["close_based", "price_based"],
-                               index=0 if params.get('sl_type', 'close_based') == 'close_based' else 1,
-                               format_func=lambda x: "Close-based (Delayed)" if x == "close_based" else "Price-based (Immediate)",
+            sl_type = st.radio("Stop Loss (SL) Exit", options=["price_based", "close_based"],
+                               index=0 if params.get('sl_type', 'price_based') == 'price_based' else 1,
+                               format_func=lambda x: "Price-based (Immediate)" if x == "price_based" else "Close-based (Delayed)",
                                horizontal=True, key=f"{sk}_sl_type")
 
         st.divider()
