@@ -6,7 +6,7 @@ def test_feg_params():
     assert p["ema_period"] == 21
     assert p["ema_distance_enabled"] is False
     assert p["ema_distance_pips"] == 0
-    assert p["buffer_k"] == 50
+    assert p["buffer_k"] == 5
     assert p["rr_ratio"] == 2.0
     assert "XAUUSD" in p["symbols"]
 

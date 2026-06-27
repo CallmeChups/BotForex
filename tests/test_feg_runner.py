@@ -2,8 +2,8 @@
 
 from src.bot_runner import feg_entry_decision
 
-C1 = {"open": 101.0, "high": 101.0, "low": 99.0, "close": 100.5}  # bearish: c<o
-C2 = {"open": 100.8, "high": 102.0, "low": 98.5, "close": 98.0}  # bearish: c<o; SELL khi ema2<98.5
+C1 = {"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.5}
+C2 = {"open": 100.8, "high": 102.0, "low": 98.5, "close": 98.0}  # SELL khi ema2<98.5
 EMA2 = 98.0
 
 
