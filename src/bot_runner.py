@@ -192,7 +192,9 @@ def run_bot(args):
     # Load strategy
     strategy = get_strategy(args.strategy)
     if not strategy:
-        log(f"Strategy not found: {args.strategy}", "ERROR")
+        msg = f"Strategy not found: {args.strategy}"
+        log(msg, "ERROR")
+        send_telegram(f"❌ Bot startup failed\n{msg}", is_error=True)
         return
 
     params = get_strategy_parameters(args.strategy)
@@ -202,7 +204,9 @@ def run_bot(args):
     if params.get('entry_type', 'time') == 'pattern':
         credentials = get_user_mt5_credentials(args.user)
         if not credentials.get('login'):
-            log(f"MT5 credentials not configured for user: {args.user}", "ERROR")
+            msg = f"MT5 credentials not configured for user: {args.user}"
+            log(msg, "ERROR")
+            send_telegram(f"❌ Bot startup failed\n{msg}", is_error=True)
             return
         run_feg_bot(args, strategy, params, credentials)
         return
@@ -218,7 +222,9 @@ def run_bot(args):
     # Get user's MT5 credentials
     credentials = get_user_mt5_credentials(args.user)
     if not credentials.get('login'):
-        log(f"MT5 credentials not configured for user: {args.user}", "ERROR")
+        msg = f"MT5 credentials not configured for user: {args.user}"
+        log(msg, "ERROR")
+        send_telegram(f"❌ Bot startup failed\n{msg}", is_error=True)
         return
 
     # Auto-detect symbol min lot and clamp
@@ -264,6 +270,7 @@ def run_bot(args):
                 candle = get_current_candle(mt5, args.symbol, timeframe)
                 if not candle:
                     log("Failed to get candle data", "ERROR")
+                    send_telegram(f"❌ Failed to get candle data\nSymbol: {args.symbol}", is_error=True)
                     mt5.shutdown()
                     time.sleep(args.interval)
                     continue
@@ -324,6 +331,8 @@ def run_bot(args):
             elif active_trade:
                 mt5, error = get_mt5_connection(credentials)
                 if error:
+                    log(f"MT5 connection failed (monitoring): {error}", "ERROR")
+                    send_telegram(f"❌ MT5 Error (monitoring active trade)\n{error}", is_error=True)
                     time.sleep(args.interval)
                     continue
 
@@ -376,8 +385,10 @@ def run_bot(args):
         log("Bot stopped by user")
         send_telegram("Bot Stopped (manual)")
     except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
         log(f"Bot error: {e}", "ERROR")
-        send_telegram(f"Bot Error: {e}", is_error=True)
+        send_telegram(f"❌ Bot crashed\nStrategy: {args.strategy}\nSymbol: {args.symbol}\nError: {e}\n\n<pre>{tb[-800:]}</pre>", is_error=True)
         raise
 
 
@@ -506,6 +517,8 @@ def run_feg_bot(args, strategy, params, credentials):
 
             df = get_recent_candles(mt5, args.symbol, timeframe, count=max(120, ema_period * 4))
             if df is None or len(df) < ema_period + 2:
+                log(f"Insufficient candle data for {args.symbol} (got {len(df) if df is not None else 0})", "ERROR")
+                send_telegram(f"❌ Insufficient candle data\nSymbol: {args.symbol}", is_error=True)
                 mt5.shutdown()
                 time.sleep(args.interval)
                 continue
@@ -557,7 +570,8 @@ def run_feg_bot(args, strategy, params, credentials):
                             "ticket": ticket, "candles": 0, "order_id": order_id,
                         }
                     else:
-                        log(f"Order failed — active_trade NOT set, will retry next signal", "WARN")
+                        log(f"[{order_id}] Order failed — will retry next signal", "WARN")
+                        send_telegram(f"❌ Order failed\nID: <code>{order_id}</code>\nReason: {msg}", is_error=True)
 
             elif active_trade is not None and is_new_candle:
                 active_trade["candles"] += 1
@@ -582,7 +596,10 @@ def run_feg_bot(args, strategy, params, credentials):
                     log(f"[{oid}] FEG Exit: {exit_type} @ {exit_price:.2f}, P&L: {pnl:.1f} pips")
                     send_telegram(f"<b>FEG Exit: {exit_type}</b>\nID: <code>{oid}</code>\nPrice: {exit_price:.2f}\nP&L: {pnl:.1f} pips")
                     if not args.test and active_trade.get("ticket"):
-                        close_position(active_trade["ticket"], credentials=credentials)
+                        closed_ok, close_msg = close_position(active_trade["ticket"], credentials=credentials)
+                        if not closed_ok:
+                            log(f"[{oid}] Close position failed: {close_msg}", "ERROR")
+                            send_telegram(f"❌ Close position failed\nID: <code>{oid}</code>\nTicket: {active_trade['ticket']}\nReason: {close_msg}", is_error=True)
                     active_trade = None
 
             if is_new_candle:
@@ -595,11 +612,23 @@ def run_feg_bot(args, strategy, params, credentials):
         log("FEG Bot stopped by user")
         send_telegram("FEG Bot Stopped (manual)")
     except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
         log(f"FEG Bot error: {e}", "ERROR")
-        send_telegram(f"FEG Bot Error: {e}", is_error=True)
+        send_telegram(f"❌ FEG Bot crashed\nSymbol: {args.symbol}\nError: {e}\n\n<pre>{tb[-800:]}</pre>", is_error=True)
         raise
 
 
 if __name__ == "__main__":
     args = get_args()
-    run_bot(args)
+    RESTART_DELAY = 30
+    while True:
+        try:
+            run_bot(args)
+            break  # clean exit (KeyboardInterrupt bên trong đã xử lý)
+        except KeyboardInterrupt:
+            break
+        except Exception as e:
+            import traceback
+            log(f"Bot crashed, restarting in {RESTART_DELAY}s: {e}", "ERROR")
+            time.sleep(RESTART_DELAY)
