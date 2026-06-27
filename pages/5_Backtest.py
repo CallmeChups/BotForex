@@ -1171,7 +1171,7 @@ def show_history_section():
 
         # Select record to delete
         record_options = {
-            f"{r['Date']} - {r['Strategy']} - {r['Symbol']} ({r['Win Rate %']}% WR)": r['ID']
+            f"{r['Date']} - {r['Strategy']} - {r['Symbol']} ({r['Win %']}% WR)": r['ID']
             for _, r in filtered_df.iterrows()
         }
 
