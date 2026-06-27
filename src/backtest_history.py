@@ -218,6 +218,7 @@ def history_to_dataframe(history: list) -> pd.DataFrame:
 HISTORY_COLUMNS = {
     # Always shown (core) -- in this exact order
     'core': [
+        'ID',
         'Date Range',
         'Start Time',
         'End Time',
