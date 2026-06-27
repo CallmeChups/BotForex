@@ -73,6 +73,7 @@ def build_bot_command(
     ema_period=None, ema_distance_enabled=False, ema_distance_pips=0.0,
     entry_mode=None, entry_percent=None, tp_type=None, sl_type=None,
     buffer_k=None, lot_mode=None, risk_mode=None, risk_percent=None, risk_amount=None,
+    entry_start_time='00:00', entry_end_time='23:59',
 ):
     """Build command list to run bot_runner (separated for testability)."""
     cmd = [
@@ -113,6 +114,8 @@ def build_bot_command(
         cmd.extend(["--risk_percent", str(risk_percent)])
     if risk_amount is not None:
         cmd.extend(["--risk_amount", str(risk_amount)])
+    cmd.extend(["--entry_start_time", str(entry_start_time)])
+    cmd.extend(["--entry_end_time", str(entry_end_time)])
     return cmd
 
 
@@ -138,6 +141,8 @@ def start_bot(
     risk_mode: str = None,
     risk_percent: float = None,
     risk_amount: float = None,
+    entry_start_time: str = '00:00',
+    entry_end_time: str = '23:59',
 ) -> tuple:
     """
     Start a new bot process
@@ -163,6 +168,7 @@ def start_bot(
         ema_period, ema_distance_enabled, ema_distance_pips,
         entry_mode, entry_percent, tp_type, sl_type,
         buffer_k, lot_mode, risk_mode, risk_percent, risk_amount,
+        entry_start_time, entry_end_time,
     )
 
     try:

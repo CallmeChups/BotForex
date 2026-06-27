@@ -11,7 +11,7 @@ import argparse
 import os
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, time as _time
 from zoneinfo import ZoneInfo
 
 # Add parent directory to path
@@ -19,6 +19,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dotenv import load_dotenv
 load_dotenv()
+
+from src.utils import _in_time_window
 
 TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
 
@@ -74,6 +76,11 @@ def get_args():
                         help="Test mode: 1=test (no real trades), 0=live")
     parser.add_argument("--interval", type=int, default=60,
                         help="Check interval in seconds (default: 60)")
+
+    parser.add_argument('--entry_start_time', type=str, default='00:00',
+                        help='Entry window start HH:MM (Asia/Ho_Chi_Minh). Default 00:00 = no filter.')
+    parser.add_argument('--entry_end_time', type=str, default='23:59',
+                        help='Entry window end HH:MM (Asia/Ho_Chi_Minh). Default 23:59 = no filter.')
 
     return parser.parse_args()
 
@@ -200,6 +207,9 @@ def run_bot(args):
     params = get_strategy_parameters(args.strategy)
     log(f"Strategy loaded: {strategy.get('name')}")
 
+    entry_start = datetime.strptime(args.entry_start_time, '%H:%M').time()
+    entry_end   = datetime.strptime(args.entry_end_time,   '%H:%M').time()
+
     # Dispatch theo entry type
     if params.get('entry_type', 'time') == 'pattern':
         credentials = get_user_mt5_credentials(args.user)
@@ -208,7 +218,8 @@ def run_bot(args):
             log(msg, "ERROR")
             send_telegram(f"❌ Bot startup failed\n{msg}", is_error=True)
             return
-        run_feg_bot(args, strategy, params, credentials)
+        run_feg_bot(args, strategy, params, credentials,
+                    entry_start_time=entry_start, entry_end_time=entry_end)
         return
 
     # Override with command line args if provided
@@ -255,7 +266,7 @@ def run_bot(args):
             now = datetime.now(TIMEZONE)
 
             # Check if it's entry time and we haven't traded today
-            if check_entry_time(entry_time) and last_entry_date != now.date():
+            if check_entry_time(entry_time) and last_entry_date != now.date() and _in_time_window(datetime.now(TIMEZONE), entry_start, entry_end):
                 log(f"Entry time detected: {entry_time}")
 
                 # Connect to MT5
@@ -465,7 +476,9 @@ def _calc_flex_lot(mt5, symbol: str, risk_mode: str, risk_percent: float, risk_a
     return round(lot, 2)
 
 
-def run_feg_bot(args, strategy, params, credentials):
+def run_feg_bot(args, strategy, params, credentials,
+                entry_start_time: _time = _time(0, 0),
+                entry_end_time: _time = _time(23, 59)):
     """Vòng lặp live cho strategy FEG (pattern + EMA21, 1 lệnh/lúc)."""
     from src.orders import place_order, close_position
 
@@ -532,46 +545,48 @@ def run_feg_bot(args, strategy, params, credentials):
             is_new_candle = (last_candle_time is None) or (candle_time > last_candle_time)
 
             if active_trade is None and is_new_candle:
-                c1 = {"open": prev["open"], "high": prev["high"], "low": prev["low"], "close": prev["close"]}
-                c2 = {"open": last["open"], "high": last["high"], "low": last["low"], "close": last["close"]}
-                signal = feg_entry_decision(
-                    None, c1, c2, ema[-1], args.symbol,
-                    rr_ratio, buffer_k, lot_size, entry_mode, entry_percent,
-                    ema_dist_enabled, ema_dist_pips,
-                )
-                if signal:
-                    # Calculate flex lot if needed
-                    trade_lot = lot_size
-                    if lot_mode == "flex":
-                        trade_lot = _calc_flex_lot(
-                            mt5, args.symbol, risk_mode, risk_percent, risk_amount,
-                            signal["entry_price"], signal["stop_loss"],
-                        )
-                    import uuid as _uuid
-                    order_id = f"ORD-{last['time'].strftime('%y%m%d-%H%M%S')}-{args.symbol}-{_uuid.uuid4().hex[:4].upper()}"
-                    log(f"[{order_id}] FEG Signal: {signal['direction']} @ {signal['entry_price']:.2f}, "
-                        f"SL={signal['stop_loss']:.2f}, TP={signal['take_profit']:.2f}, lot={trade_lot}")
-                    send_telegram(f"<b>FEG Signal: {signal['direction']}</b>\n"
-                                  f"ID: <code>{order_id}</code>\n"
-                                  f"Symbol: {args.symbol}\nEntry: {signal['entry_price']:.2f}\n"
-                                  f"SL: {signal['stop_loss']:.2f}\nTP: {signal['take_profit']:.2f}\n"
-                                  f"Lot: {trade_lot}")
-                    ok, msg, ticket = place_order(
-                        args.symbol, signal["direction"], trade_lot,
-                        sl=signal["stop_loss"], tp=signal["take_profit"],
-                        credentials=credentials, test=bool(args.test),
-                        magic=212100, comment=f"FEG-{order_id[-4:]}",
+                now_hcm = datetime.now(TIMEZONE)
+                if _in_time_window(now_hcm, entry_start_time, entry_end_time):
+                    c1 = {"open": prev["open"], "high": prev["high"], "low": prev["low"], "close": prev["close"]}
+                    c2 = {"open": last["open"], "high": last["high"], "low": last["low"], "close": last["close"]}
+                    signal = feg_entry_decision(
+                        None, c1, c2, ema[-1], args.symbol,
+                        rr_ratio, buffer_k, lot_size, entry_mode, entry_percent,
+                        ema_dist_enabled, ema_dist_pips,
                     )
-                    log(f"[{order_id}] Order result: {msg}")
-                    if ok:
-                        active_trade = {
-                            "direction": signal["direction"], "entry": signal["entry_price"],
-                            "sl": signal["stop_loss"], "tp": signal["take_profit"],
-                            "ticket": ticket, "candles": 0, "order_id": order_id,
-                        }
-                    else:
-                        log(f"[{order_id}] Order failed — will retry next signal", "WARN")
-                        send_telegram(f"❌ Order failed\nID: <code>{order_id}</code>\nReason: {msg}", is_error=True)
+                    if signal:
+                        # Calculate flex lot if needed
+                        trade_lot = lot_size
+                        if lot_mode == "flex":
+                            trade_lot = _calc_flex_lot(
+                                mt5, args.symbol, risk_mode, risk_percent, risk_amount,
+                                signal["entry_price"], signal["stop_loss"],
+                            )
+                        import uuid as _uuid
+                        order_id = f"ORD-{last['time'].strftime('%y%m%d-%H%M%S')}-{args.symbol}-{_uuid.uuid4().hex[:4].upper()}"
+                        log(f"[{order_id}] FEG Signal: {signal['direction']} @ {signal['entry_price']:.2f}, "
+                            f"SL={signal['stop_loss']:.2f}, TP={signal['take_profit']:.2f}, lot={trade_lot}")
+                        send_telegram(f"<b>FEG Signal: {signal['direction']}</b>\n"
+                                      f"ID: <code>{order_id}</code>\n"
+                                      f"Symbol: {args.symbol}\nEntry: {signal['entry_price']:.2f}\n"
+                                      f"SL: {signal['stop_loss']:.2f}\nTP: {signal['take_profit']:.2f}\n"
+                                      f"Lot: {trade_lot}")
+                        ok, msg, ticket = place_order(
+                            args.symbol, signal["direction"], trade_lot,
+                            sl=signal["stop_loss"], tp=signal["take_profit"],
+                            credentials=credentials, test=bool(args.test),
+                            magic=212100, comment=f"FEG-{order_id[-4:]}",
+                        )
+                        log(f"[{order_id}] Order result: {msg}")
+                        if ok:
+                            active_trade = {
+                                "direction": signal["direction"], "entry": signal["entry_price"],
+                                "sl": signal["stop_loss"], "tp": signal["take_profit"],
+                                "ticket": ticket, "candles": 0, "order_id": order_id,
+                            }
+                        else:
+                            log(f"[{order_id}] Order failed — will retry next signal", "WARN")
+                            send_telegram(f"❌ Order failed\nID: <code>{order_id}</code>\nReason: {msg}", is_error=True)
 
             elif active_trade is not None and is_new_candle:
                 active_trade["candles"] += 1
