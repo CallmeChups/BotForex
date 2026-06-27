@@ -75,6 +75,7 @@ def build_bot_command(
     buffer_k=None, lot_mode=None, risk_mode=None, risk_percent=None, risk_amount=None,
     entry_start_time='00:00', entry_end_time='23:59',
     limit_order_candles=1,
+    be_enabled=False, be_r=1.0,
 ):
     """Build command list to run bot_runner (separated for testability)."""
     cmd = [
@@ -119,6 +120,8 @@ def build_bot_command(
     cmd.extend(["--entry_start_time", str(entry_start_time)])
     cmd.extend(["--entry_end_time", str(entry_end_time)])
     cmd.extend(["--limit_order_candles", str(limit_order_candles)])
+    cmd.extend(["--be_enabled", "1" if be_enabled else "0"])
+    cmd.extend(["--be_r", str(be_r)])
     return cmd
 
 
@@ -148,6 +151,8 @@ def start_bot(
     entry_start_time: str = '00:00',
     entry_end_time: str = '23:59',
     limit_order_candles: int = 1,
+    be_enabled: bool = False,
+    be_r: float = 1.0,
 ) -> tuple:
     """
     Start a new bot process
@@ -174,6 +179,7 @@ def start_bot(
         entry_mode, entry_percent, tp_type, sl_type,
         buffer_k, lot_mode, risk_mode, risk_percent, risk_amount,
         entry_start_time, entry_end_time, limit_order_candles,
+        be_enabled, be_r,
     )
 
     try:
@@ -215,6 +221,8 @@ def start_bot(
             'c2_gap_pips': c2_gap_pips,
             'ema_margin_pips': ema_margin_pips,
             'limit_order_candles': limit_order_candles,
+            'be_enabled': be_enabled,
+            'be_r': be_r,
             'started_at': datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M:%S'),
             'command': ' '.join(cmd)
         }
@@ -368,6 +376,8 @@ def restart_bot(pid: int) -> tuple:
         c2_gap_pips=bot.get('c2_gap_pips', 0.0),
         ema_margin_pips=bot.get('ema_margin_pips', 0.0),
         limit_order_candles=bot.get('limit_order_candles', 1),
+        be_enabled=bot.get('be_enabled', False),
+        be_r=bot.get('be_r', 1.0),
     )
 
 

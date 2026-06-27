@@ -85,6 +85,10 @@ def get_args():
                         help='Entry window start HH:MM (Asia/Ho_Chi_Minh). Default 00:00 = no filter.')
     parser.add_argument('--entry_end_time', type=str, default='23:59',
                         help='Entry window end HH:MM (Asia/Ho_Chi_Minh). Default 23:59 = no filter.')
+    parser.add_argument('--be_enabled', type=int, default=0,
+                        help='Break-even: 1=enabled, 0=disabled (default 0)')
+    parser.add_argument('--be_r', type=float, default=1.0,
+                        help='Break-even trigger at be_r * SL_distance profit (default 1.0)')
 
     return parser.parse_args()
 
@@ -359,6 +363,20 @@ def run_bot(args):
                     exit_type = None
                     exit_price = None
 
+                    # Break-even: move SL to entry when profit >= be_r * sl_dist
+                    be_enabled = bool(args.be_enabled)
+                    if be_enabled and not active_trade.get('be_triggered'):
+                        entry_p = active_trade['entry']
+                        sl_dist = abs(entry_p - active_trade['sl'])
+                        if active_trade['direction'] == "BUY" and h >= entry_p + args.be_r * sl_dist:
+                            active_trade['sl'] = entry_p
+                            active_trade['be_triggered'] = True
+                            log(f"BE triggered — SL moved to entry {entry_p:.2f}")
+                        elif active_trade['direction'] == "SELL" and l <= entry_p - args.be_r * sl_dist:
+                            active_trade['sl'] = entry_p
+                            active_trade['be_triggered'] = True
+                            log(f"BE triggered — SL moved to entry {entry_p:.2f}")
+
                     # Check exit conditions
                     if active_trade['direction'] == "BUY":
                         if h >= active_trade['tp']:
@@ -515,9 +533,10 @@ def run_feg_bot(args, strategy, params, credentials,
         mt5_tmp.shutdown()
 
     lot_log = f"flex({risk_mode} {risk_percent}%/{risk_amount}$)" if lot_mode == "flex" else f"fixed={lot_size}"
+    be_log = f"BE=ON(r={args.be_r})" if args.be_enabled else "BE=OFF"
     log(f"FEG params: EMA{ema_period}, RR={rr_ratio}, buffer_k={buffer_k}, "
         f"lot={lot_log}, max_candles={max_candles or 'unlimited'}, "
-        f"h2_exceed={h2_exceed_pips}p, c2_gap={c2_gap_pips}p, ema_margin={ema_margin_pips}p")
+        f"h2_exceed={h2_exceed_pips}p, c2_gap={c2_gap_pips}p, ema_margin={ema_margin_pips}p, {be_log}")
 
     send_telegram(f"FEG Bot Started\nSymbol: {args.symbol}\nUser: {args.user}\n"
                   f"Test: {'Yes' if args.test else 'No'}")
@@ -595,9 +614,22 @@ def run_feg_bot(args, strategy, params, credentials,
                 pending_orders = still_pending
 
                 # 2. Check active trades — exit
+                feg_be_enabled = bool(args.be_enabled)
                 still_active = []
                 for trade in active_trades:
                     trade["candles"] += 1
+                    # Break-even: move SL to entry when profit >= be_r * sl_dist
+                    if feg_be_enabled and not trade.get('be_triggered'):
+                        entry_p = trade["entry"]
+                        sl_dist = abs(entry_p - trade["sl"])
+                        if trade["direction"] == "BUY" and candle["high"] >= entry_p + args.be_r * sl_dist:
+                            trade["sl"] = entry_p
+                            trade["be_triggered"] = True
+                            log(f"[{trade.get('order_id','')}] BE triggered — SL → {entry_p:.2f}")
+                        elif trade["direction"] == "SELL" and candle["low"] <= entry_p - args.be_r * sl_dist:
+                            trade["sl"] = entry_p
+                            trade["be_triggered"] = True
+                            log(f"[{trade.get('order_id','')}] BE triggered — SL → {entry_p:.2f}")
                     exit_type, exit_price = check_exit(
                         trade["direction"], candle, trade["tp"], trade["sl"], tp_type, sl_type,
                     )

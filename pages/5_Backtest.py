@@ -219,6 +219,15 @@ def main():
                                    format_func=lambda x: "Price-based (wick)" if x == "price_based" else "Close-based",
                                    horizontal=True,
                                    help="Price: wick touches SL | Close: candle closes past SL")
+            bc1, bc2 = st.columns(2)
+            with bc1:
+                be_enabled = st.checkbox("Break-Even (BE)", value=False,
+                                         help="Dời SL về entry khi lời đủ be_r × SL distance")
+            with bc2:
+                be_r = st.number_input("BE Trigger (R)", value=1.0, min_value=0.1, max_value=10.0,
+                                       step=0.1, format="%.1f",
+                                       help="BE kích hoạt khi lời đạt be_r × SL distance",
+                                       disabled=not be_enabled)
             st.divider()
             if lot_mode == "fixed":
                 lc1, _ = st.columns(2)
@@ -395,6 +404,15 @@ def main():
                 st.caption("SL triggers when High/Low touches SL level (exits at SL price)")
             else:
                 st.caption("SL triggers when candle CLOSES beyond SL (exits at close price)")
+        bcol1, bcol2 = st.columns(2)
+        with bcol1:
+            be_enabled = st.checkbox("Break-Even (BE)", value=False,
+                                     help="Dời SL về entry khi lời đủ be_r × SL distance")
+        with bcol2:
+            be_r = st.number_input("BE Trigger (R)", value=1.0, min_value=0.1, max_value=10.0,
+                                   step=0.1, format="%.1f",
+                                   help="BE kích hoạt khi lời đạt be_r × SL distance",
+                                   disabled=not be_enabled)
         st.divider()
 
         st.subheader("Lot Size")
@@ -491,6 +509,8 @@ def main():
                 entry_start_time=entry_start_time,
                 entry_end_time=entry_end_time,
                 limit_order_candles=int(limit_order_candles),
+                be_enabled=be_enabled,
+                be_r=be_r,
             )
 
         # Build config dict for export/history

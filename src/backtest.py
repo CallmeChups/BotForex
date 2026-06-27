@@ -187,11 +187,14 @@ def _compute_lot_size(lot_mode, current_equity, risk_mode, risk_percent, risk_am
     return fixed_lot
 
 
-def _simulate_exit(df, entry_pos, direction, tp, sl, max_candles, tp_type, sl_type):
+def _simulate_exit(df, entry_pos, direction, tp, sl, max_candles, tp_type, sl_type,
+                   be_enabled: bool = False, be_r: float = 1.0, entry_price: float = None):
     """
     Mô phỏng exit từ vị trí entry_pos (integer position). Trả:
         (exit_type, exit_price, exit_time, candles_held, exit_pos)
     exit_type None khi hết data mà không có TP/SL và max_candles=0.
+
+    BE (Break-Even): khi giá đạt entry ± be_r * SL_distance, dời SL về entry.
     """
     if max_candles > 0:
         next_candles = df.iloc[entry_pos + 1: entry_pos + 1 + max_candles]
@@ -202,11 +205,31 @@ def _simulate_exit(df, entry_pos, direction, tp, sl, max_candles, tp_type, sl_ty
     candles_held = 0
     exit_pos = entry_pos
 
+    # BE: tính ngưỡng trigger và SL động
+    current_sl = sl
+    be_triggered = False
+    if be_enabled and entry_price is not None:
+        sl_distance = abs(entry_price - sl)
+        be_trigger_price = (entry_price + be_r * sl_distance) if direction == "BUY" else (entry_price - be_r * sl_distance)
+    else:
+        be_trigger_price = None
+        sl_distance = 0
+
     for offset, (_, row) in enumerate(next_candles.iterrows(), start=1):
         candles_held += 1
         exit_pos = entry_pos + offset
+
+        # Check BE trigger trước khi check exit
+        if be_enabled and not be_triggered and be_trigger_price is not None:
+            if direction == "BUY" and row["high"] >= be_trigger_price:
+                current_sl = entry_price
+                be_triggered = True
+            elif direction == "SELL" and row["low"] <= be_trigger_price:
+                current_sl = entry_price
+                be_triggered = True
+
         candle = {"high": row["high"], "low": row["low"], "close": row["close"]}
-        exit_type, exit_price = check_exit(direction, candle, tp, sl, tp_type, sl_type)
+        exit_type, exit_price = check_exit(direction, candle, tp, current_sl, tp_type, sl_type)
         if exit_type:
             exit_time = row["time"]
             break
@@ -278,6 +301,8 @@ def run_backtest(
     entry_start_time: _time = _time(0, 0),
     entry_end_time: _time = _time(23, 59),
     limit_order_candles: int = 1,
+    be_enabled: bool = False,
+    be_r: float = 1.0,
 ) -> dict:
     """
     Run backtest on historical data
@@ -321,6 +346,7 @@ def run_backtest(
             h2_exceed_pips=h2_exceed_pips, c2_gap_pips=c2_gap_pips, ema_margin_pips=ema_margin_pips,
             entry_start_time=entry_start_time, entry_end_time=entry_end_time,
             limit_order_candles=limit_order_candles,
+            be_enabled=be_enabled, be_r=be_r,
         )
         result["run_id"] = run_id
         return result
@@ -367,6 +393,7 @@ def run_backtest(
         exit_type, exit_price, exit_time, candles_held, _ = _simulate_exit(
             df, entry_pos, direction, levels["take_profit"], levels["stop_loss"],
             max_candles, tp_type, sl_type,
+            be_enabled=be_enabled, be_r=be_r, entry_price=levels["entry_price"],
         )
         if not exit_type:
             continue
@@ -403,6 +430,8 @@ def _run_feg_backtest(
     entry_start_time: _time = _time(0, 0),
     entry_end_time: _time = _time(23, 59),
     limit_order_candles: int = 1,
+    be_enabled: bool = False,
+    be_r: float = 1.0,
 ):
     """Backtest FEG: nhiều pending limit orders + nhiều trade active cùng lúc."""
     pip_value = get_pip_value(symbol)
@@ -435,6 +464,7 @@ def _run_feg_backtest(
                 exit_type, exit_price, exit_time, candles_held, exit_pos = _simulate_exit(
                     df, i, direction, order["levels"]["take_profit"],
                     order["levels"]["stop_loss"], max_candles, tp_type, sl_type,
+                    be_enabled=be_enabled, be_r=be_r, entry_price=order["levels"]["entry_price"],
                 )
                 if exit_type:
                     trade, pnl_pips, pnl_usd = _make_trade(

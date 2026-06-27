@@ -316,6 +316,15 @@ def show_create_bot():
                                    index=0 if params.get('sl_type', 'price_based') == 'price_based' else 1,
                                    format_func=lambda x: "Price-based (wick)" if x == "price_based" else "Close-based",
                                    horizontal=True, key=f"{sk}_sl_type")
+            bec1, bec2 = st.columns(2)
+            with bec1:
+                be_enabled = st.checkbox("Break-Even (BE)", value=False, key=f"{sk}_be_enabled",
+                                         help="Dời SL về entry khi lời đủ be_r × SL distance")
+            with bec2:
+                be_r = st.number_input("BE Trigger (R)", value=1.0, min_value=0.1, max_value=10.0,
+                                       step=0.1, format="%.1f", key=f"{sk}_be_r",
+                                       help="BE kích hoạt khi lời đạt be_r × SL distance",
+                                       disabled=not be_enabled)
             st.divider()
             if lot_mode == "fixed":
                 fc1, _ = st.columns(2)
@@ -460,6 +469,16 @@ def show_create_bot():
                                format_func=lambda x: "Price-based (Immediate)" if x == "price_based" else "Close-based (Delayed)",
                                horizontal=True, key=f"{sk}_sl_type")
 
+        becol1, becol2 = st.columns(2)
+        with becol1:
+            be_enabled = st.checkbox("Break-Even (BE)", value=False, key=f"{sk}_be_enabled",
+                                     help="Dời SL về entry khi lời đủ be_r × SL distance")
+        with becol2:
+            be_r = st.number_input("BE Trigger (R)", value=1.0, min_value=0.1, max_value=10.0,
+                                   step=0.1, format="%.1f", key=f"{sk}_be_r",
+                                   help="BE kích hoạt khi lời đạt be_r × SL distance",
+                                   disabled=not be_enabled)
+
         st.divider()
         st.subheader("Lot Size")
         lot_mode = st.radio("Lot Size Mode", options=["fixed", "flex"],
@@ -531,6 +550,8 @@ def show_create_bot():
                 entry_start_time=entry_start_time.strftime('%H:%M'),
                 entry_end_time=entry_end_time.strftime('%H:%M'),
                 limit_order_candles=int(limit_order_candles),
+                be_enabled=be_enabled,
+                be_r=be_r,
             )
 
             if success:
