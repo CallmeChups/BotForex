@@ -171,6 +171,8 @@ def history_to_dataframe(history: list) -> pd.DataFrame:
 
             # Config - Optional
             'Date Range': f"{config.get('start_date', '')} ~ {config.get('end_date', '')}",
+            'Start Time': config.get('entry_start_time', '00:00'),
+            'End Time': config.get('entry_end_time', '23:59'),
             'Entry Mode': config.get('entry_mode', ''),
             'Entry %': config.get('entry_percent', ''),
             'Max Candles': config.get('max_candles', '') or 'Off',
@@ -214,25 +216,37 @@ def history_to_dataframe(history: list) -> pd.DataFrame:
 
 # Column definitions for UI
 HISTORY_COLUMNS = {
-    # Always shown (core)
-    'core': ['Date', 'Strategy', 'Symbol', 'Trades', 'Win Rate %', 'P/F', 'Total Pips'],
+    # Always shown (core) -- in this exact order
+    'core': [
+        'Date Range',
+        'Start Time',
+        'End Time',
+        'Trades',
+        'Win Rate %',
+        'Total Pips',
+        'Total USD',
+        'Lot Mode',
+        'RR Ratio',
+    ],
 
-    # Config columns (optional)
+    # Config columns (optional, shown/hidden via multiselect)
     'config': [
-        'Timeframe', 'Entry Time', 'Entry Type', 'EMA Period', 'EMA Dist', 'Lot Mode', 'RR Ratio', 'Date Range',
+        'Strategy', 'Symbol', 'Timeframe',
+        'Entry Time', 'Entry Type', 'EMA Period', 'EMA Dist',
         'Entry Mode', 'Entry %', 'Max Candles', 'Buffer K',
         'TP Type', 'SL Type', 'Fixed Lot', 'Start Equity',
-        'Risk Mode', 'Risk %', 'Risk $'
+        'Risk Mode', 'Risk %', 'Risk $',
     ],
 
     # Summary columns (optional)
     'summary': [
-        'Wins', 'Losses', 'Avg Pips', 'Total USD', 'Best', 'Worst',
-        'Max Wins', 'Max Losses', 'TP Exits', 'SL Exits', 'Time Exits', 'Final Equity'
+        'Wins', 'Losses', 'Avg Pips', 'Best', 'Worst',
+        'Max Wins', 'Max Losses', 'TP Exits', 'SL Exits', 'Time Exits',
+        'Final Equity',
     ],
 
-    # Default optional columns to show
-    'default_optional': ['Timeframe', 'Lot Mode', 'RR Ratio']
+    # Default optional columns to show in multiselect
+    'default_optional': ['Strategy', 'Symbol', 'Timeframe', 'Entry Type'],
 }
 
 
