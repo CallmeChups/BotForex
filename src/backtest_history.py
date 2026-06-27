@@ -167,38 +167,38 @@ def history_to_dataframe(history: list) -> pd.DataFrame:
             'Timeframe': config.get('timeframe', ''),
             'Entry Time': config.get('entry_time', ''),
             'Lot Mode': config.get('lot_mode', ''),
-            'RR Ratio': config.get('rr_ratio', ''),
+            'RR': round(float(config.get('rr_ratio', 0) or 0), 1),
 
             # Config - Optional
             'Date Range': f"{config.get('start_date', '')} ~ {config.get('end_date', '')}",
             'Start Time': config.get('entry_start_time', '00:00'),
             'End Time': config.get('entry_end_time', '23:59'),
             'Entry Mode': config.get('entry_mode', ''),
-            'Entry %': config.get('entry_percent', ''),
+            'Entry %': round(float(config.get('entry_percent', 0) or 0), 1),
             'Max Candles': config.get('max_candles', '') or 'Off',
-            'Buffer K': config.get('buffer_k', ''),
+            'K': round(float(config.get('buffer_k', 0) or 0), 1),
             'Entry Type': config.get('entry_type', 'time'),
             'EMA Period': config.get('ema_period', ''),
             'EMA Dist': (f"{config.get('ema_dist_pips', 0)}p" if config.get('ema_dist_enabled') else 'Off'),
             'TP Type': config.get('tp_type', ''),
             'SL Type': config.get('sl_type', ''),
-            'Fixed Lot': config.get('fixed_lot', ''),
+            'Fixed Lot': round(float(config.get('fixed_lot', 0) or 0), 2),
             'Start Equity': config.get('starting_equity', ''),
             'Risk Mode': config.get('risk_mode', ''),
-            'Risk %': config.get('risk_percent', ''),
+            'Risk %': round(float(config.get('risk_percent', 0) or 0), 1),
             'Risk $': config.get('risk_amount', ''),
 
             # Summary - Core
             'Trades': summary.get('total_trades', 0),
             'Wins': summary.get('wins', 0),
             'Losses': summary.get('losses', 0),
-            'Win Rate %': summary.get('win_rate', 0),
+            'Win %': round(float(summary.get('win_rate', 0) or 0), 1),
             'P/F': summary.get('profit_factor', 0),
             'Total Pips': summary.get('total_pnl', 0),
 
             # Summary - Optional
             'Avg Pips': summary.get('avg_pnl', 0),
-            'Total USD': summary.get('total_pnl_usd', 0),
+            'Total USD': round(float(summary.get('total_pnl_usd', 0) or 0), 1),
             'Best': summary.get('best_trade', 0),
             'Worst': summary.get('worst_trade', 0),
             'Max Wins': summary.get('max_consecutive_wins', 0),
@@ -222,34 +222,38 @@ HISTORY_COLUMNS = {
         'Start Time',
         'End Time',
         'Trades',
-        'Win Rate %',
+        'Win %',
         'Total USD',
-        'RR Ratio',
+        'RR',
         'Max Candles',
         'Entry %',
-        'SL Type',
         'Risk %',
-        'Buffer K',
+        'K',
         'Risk $',
+        'Fixed Lot',
+        'Risk Mode',
+        'TP Exits',
+        'SL Exits',
+        'Time Exits',
+        'Final Equity',
     ],
 
     # Config columns (optional, shown/hidden via multiselect)
     'config': [
         'Strategy', 'Symbol', 'Timeframe',
         'Entry Time', 'Entry Type', 'EMA Period', 'EMA Dist',
-        'Entry Mode', 'Total Pips', 'Lot Mode', 'Fixed Lot', 'Start Equity',
-        'TP Type', 'Risk Mode',
+        'Entry Mode', 'Total Pips', 'Lot Mode', 'Start Equity',
+        'TP Type', 'SL Type',
     ],
 
     # Summary columns (optional)
     'summary': [
         'Wins', 'Losses', 'Avg Pips', 'Best', 'Worst',
-        'Max Wins', 'Max Losses', 'TP Exits', 'SL Exits', 'Time Exits',
-        'Final Equity',
+        'Max Wins', 'Max Losses', 'P/F',
     ],
 
     # Default optional columns to show in multiselect
-    'default_optional': ['Strategy', 'Symbol', 'Timeframe', 'Entry Type'],
+    'default_optional': ['Strategy', 'Symbol', 'Timeframe', 'Entry Type', 'SL Type'],
 }
 
 

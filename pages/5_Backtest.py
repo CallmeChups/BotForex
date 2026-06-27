@@ -1067,7 +1067,7 @@ def show_history_section():
     with col3:
         sort_by = st.selectbox(
             "Sort by",
-            options=['Date', 'Win Rate %', 'Total Pips', 'P/F', 'Trades'],
+            options=['Date', 'Win %', 'Total USD', 'Trades'],
             index=0,
             key="history_sort"
         )
@@ -1146,8 +1146,8 @@ def show_history_section():
 
     # Apply styling
     style_subsets = []
-    if 'Win Rate %' in display_df.columns:
-        style_subsets.append(('Win Rate %', color_win_rate))
+    if 'Win %' in display_df.columns:
+        style_subsets.append(('Win %', color_win_rate))
     if 'Total Pips' in display_df.columns:
         style_subsets.append(('Total Pips', color_pips))
     if 'Total USD' in display_df.columns:
