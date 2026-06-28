@@ -218,7 +218,11 @@ def show_create_bot():
                 _rid = _reuse_opts[_sel]
                 _rec = get_history_record(_rid)
                 if _rec:
-                    _cfg = _rec['config']
+                    _cfg = dict(_rec['config'])
+                    # migrate legacy keys
+                    if 'ema_dist_pips' in _cfg and 'ema_margin_pips' not in _cfg:
+                        _cfg['ema_margin_pips'] = _cfg.pop('ema_dist_pips')
+                    _cfg.pop('ema_dist_enabled', None)
                     # Map config → bot widget session state keys (sk prefix)
                     _map = {
                         f"{sk}_rr": float(_cfg.get('rr_ratio', params.get('rr_ratio', 2.0))),
