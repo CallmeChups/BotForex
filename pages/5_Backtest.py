@@ -1231,7 +1231,12 @@ def show_history_section():
             with col_load:
                 if st.button("Load Config", type="primary", key="btn_reuse_config"):
                     if record:
-                        st.session_state['backtest_prefill'] = record['config']
+                        cfg = dict(record['config'])
+                        # migrate legacy keys
+                        if 'ema_dist_pips' in cfg and 'ema_margin_pips' not in cfg:
+                            cfg['ema_margin_pips'] = cfg.pop('ema_dist_pips')
+                        cfg.pop('ema_dist_enabled', None)
+                        st.session_state['backtest_prefill'] = cfg
                         st.success(f"Đã load config từ {record_id} — scroll lên để xem params.")
                         st.rerun()
             with col_dl:
