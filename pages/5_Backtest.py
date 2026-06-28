@@ -1239,8 +1239,8 @@ def show_history_section():
                     import json as _json
                     st.download_button(
                         label="Download JSON",
-                        data=_json.dumps(record['config'], indent=2, ensure_ascii=False),
-                        file_name=f"config_{record_id}.json",
+                        data=_json.dumps(record, indent=2, ensure_ascii=False),
+                        file_name=f"record_{record_id}.json",
                         mime="application/json",
                         key="btn_download_config",
                     )
