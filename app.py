@@ -71,6 +71,17 @@ def show_dashboard():
 
         authenticator.logout("Logout", "sidebar")
 
+        # Version ID (git commit hash)
+        try:
+            import subprocess
+            _hash = subprocess.check_output(
+                ["git", "rev-parse", "--short", "HEAD"],
+                stderr=subprocess.DEVNULL, text=True
+            ).strip()
+        except Exception:
+            _hash = "unknown"
+        st.sidebar.markdown(f"<div style='position:fixed;bottom:12px;left:12px;font-size:11px;color:#888;'>v {_hash}</div>", unsafe_allow_html=True)
+
     # Main content
     st.title("📈 BotForex Dashboard")
     st.caption(f"Multi-Strategy Trading | {SYMBOL}")
