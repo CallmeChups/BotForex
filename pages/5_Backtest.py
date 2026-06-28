@@ -1223,14 +1223,27 @@ def show_history_section():
         if reuse_options:
             selected_reuse = st.selectbox("Chọn backtest để load config", options=list(reuse_options.keys()),
                                           key="reuse_record_select")
-            if st.button("Load Config", type="primary", key="btn_reuse_config"):
-                record_id = reuse_options[selected_reuse]
-                from src.backtest_history import get_history_record
-                record = get_history_record(record_id)
+            record_id = reuse_options[selected_reuse]
+            from src.backtest_history import get_history_record
+            record = get_history_record(record_id)
+
+            col_load, col_dl = st.columns([1, 1])
+            with col_load:
+                if st.button("Load Config", type="primary", key="btn_reuse_config"):
+                    if record:
+                        st.session_state['backtest_prefill'] = record['config']
+                        st.success(f"Đã load config từ {record_id} — scroll lên để xem params.")
+                        st.rerun()
+            with col_dl:
                 if record:
-                    st.session_state['backtest_prefill'] = record['config']
-                    st.success(f"Đã load config từ {record_id} — scroll lên để xem params.")
-                    st.rerun()
+                    import json as _json
+                    st.download_button(
+                        label="Download JSON",
+                        data=_json.dumps(record['config'], indent=2, ensure_ascii=False),
+                        file_name=f"config_{record_id}.json",
+                        mime="application/json",
+                        key="btn_download_config",
+                    )
         else:
             st.info("Không có record nào để reuse.")
 
