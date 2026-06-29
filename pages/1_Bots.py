@@ -25,6 +25,7 @@ from src.bot_manager import (
     stop_bot,
     stop_all_bots,
     restart_all_bots,
+    switch_bot_mode,
     list_bots,
     restart_bot,
     get_bot_stats
@@ -131,7 +132,7 @@ def show_running_bots():
     # Display bots
     for bot in bots:
         with st.container():
-            col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+            col1, col2, col3, col4, col5 = st.columns([3, 1, 1, 1, 1])
 
             with col1:
                 mode_badge = "🧪 TEST" if bot.get('test', True) else "🔴 LIVE"
@@ -149,6 +150,7 @@ def show_running_bots():
                     st.caption(" | ".join(params))
 
             can_control = admin or bot['user'] == username
+            is_test = bot.get('test', True)
 
             with col2:
                 if can_control:
@@ -175,6 +177,20 @@ def show_running_bots():
                     st.button("Restart", key=f"restart_{bot['pid']}", disabled=True)
 
             with col4:
+                if can_control:
+                    switch_label = "→ Live" if is_test else "→ Test"
+                    switch_type = "primary" if is_test else "secondary"
+                    if st.button(switch_label, key=f"switch_{bot['pid']}", type=switch_type):
+                        success, msg, _ = switch_bot_mode(bot['pid'], live=is_test)
+                        if success:
+                            st.success(msg)
+                        else:
+                            st.error(msg)
+                        st.rerun()
+                else:
+                    st.button("→ Live", key=f"switch_{bot['pid']}", disabled=True)
+
+            with col5:
                 status_color = "green" if bot.get('status') == 'running' else "red"
                 st.markdown(f":{status_color}[● {bot.get('status', 'unknown').upper()}]")
 

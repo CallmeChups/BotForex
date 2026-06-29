@@ -300,6 +300,32 @@ def stop_all_bots(user: str = None) -> tuple:
     return stopped, f"Stopped {stopped} bot(s)"
 
 
+def switch_bot_mode(pid: int, live: bool) -> tuple:
+    """Switch bot between test/live mode by restarting with flipped test flag."""
+    bot = get_bot(pid)
+    if not bot:
+        return False, f"Bot not found: {pid}", None
+    stop_bot(pid)
+    return start_bot(
+        strategy=bot['strategy'],
+        symbol=bot['symbol'],
+        user=bot['user'],
+        test=not live,
+        lot_size=bot.get('lot_size'),
+        sl_pips=bot.get('sl_pips'),
+        rr_ratio=bot.get('rr_ratio'),
+        max_candles=bot.get('max_candles'),
+        interval=bot.get('interval', 60),
+        ema_period=bot.get('ema_period'),
+        h2_exceed_pips=bot.get('h2_exceed_pips', 0.0),
+        c2_gap_pips=bot.get('c2_gap_pips', 0.0),
+        ema_margin_pips=bot.get('ema_margin_pips', 0.0),
+        limit_order_candles=bot.get('limit_order_candles', 1),
+        be_enabled=bot.get('be_enabled', False),
+        be_r=bot.get('be_r', 1.0),
+    )
+
+
 def restart_all_bots(user: str = None) -> tuple:
     """Restart all bots (optionally filtered by user). Returns (restarted_count, message)."""
     bots = load_bots()
