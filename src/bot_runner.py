@@ -668,7 +668,8 @@ def run_feg_bot(args, strategy, params, credentials,
                                 signal["entry_price"], signal["stop_loss"],
                             )
                         import uuid as _uuid
-                        order_id = f"ORD-{last['time'].strftime('%y%m%d-%H%M%S')}-{args.symbol}-{_uuid.uuid4().hex[:4].upper()}"
+                        _candle_dt = datetime.fromtimestamp(int(last['time']), tz=TIMEZONE)
+                        order_id = f"ORD-{_candle_dt.strftime('%y%m%d-%H%M%S')}-{args.symbol}-{_uuid.uuid4().hex[:4].upper()}"
                         log(f"[{order_id}] FEG Signal: {signal['direction']} @ {signal['entry_price']:.2f}, "
                             f"SL={signal['stop_loss']:.2f}, TP={signal['take_profit']:.2f}, lot={trade_lot}, "
                             f"limit_timeout={limit_order_candles}c")
