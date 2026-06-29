@@ -17,7 +17,7 @@ st.set_page_config(
 )
 
 # Auth check
-from src.auth import require_auth, has_mt5_credentials
+from src.auth import require_auth, has_mt5_credentials, is_admin
 username, name = require_auth()
 
 from src.bot_manager import (
@@ -82,43 +82,41 @@ def show_running_bots():
     """Show list of running bots"""
     st.subheader("Running Bots")
 
-    # Refresh button
+    admin = is_admin(username)
+
+    # Toolbar: refresh | stop all | mode filter
     col1, col2, col3 = st.columns([1, 1, 2])
     with col1:
         if st.button("Refresh", type="primary", use_container_width=True):
             st.rerun()
     with col2:
-        if st.button("Stop All My Bots", type="secondary", use_container_width=True):
-            stopped, msg = stop_all_bots(user=username)
+        stop_label = "Stop All Bots" if admin else "Stop All My Bots"
+        if st.button(stop_label, type="secondary", use_container_width=True):
+            stopped, msg = stop_all_bots(user=None if admin else username)
             st.success(msg)
             st.rerun()
+    with col3:
+        filter_mode = st.radio("Mode", ["All", "Live Only", "Test Only"],
+                               horizontal=True, key="bot_filter_mode")
 
-    # List bots
+    # Load & scope bots
     bots = list_bots(refresh=True)
 
     if not bots:
         st.info("No bots running. Create one in the 'Create Bot' tab.")
         return
 
-    # Filter options
-    with st.expander("Filters"):
-        col1, col2 = st.columns(2)
-        with col1:
-            filter_user = st.checkbox("Only my bots", value=True)
-        with col2:
-            filter_test = st.selectbox("Mode", ["All", "Test Only", "Live Only"])
-
-    # Apply filters
-    if filter_user:
+    # Admin sees all; regular user sees only own bots
+    if not admin:
         bots = [b for b in bots if b['user'] == username]
 
-    if filter_test == "Test Only":
-        bots = [b for b in bots if b.get('test', True)]
-    elif filter_test == "Live Only":
+    if filter_mode == "Live Only":
         bots = [b for b in bots if not b.get('test', True)]
+    elif filter_mode == "Test Only":
+        bots = [b for b in bots if b.get('test', True)]
 
     if not bots:
-        st.info("No bots match the filters")
+        st.info("No bots match the filter.")
         return
 
     st.success(f"Found {len(bots)} bot(s)")
@@ -133,7 +131,6 @@ def show_running_bots():
                 st.markdown(f"**{bot['strategy']}** | {bot['symbol']} | {mode_badge}")
                 st.caption(f"PID: {bot['pid']} | User: {bot['user']} | Started: {bot.get('started_at', 'N/A')}")
 
-                # Parameters
                 params = []
                 if bot.get('lot_size'):
                     params.append(f"Lot: {bot['lot_size']}")
@@ -144,9 +141,10 @@ def show_running_bots():
                 if params:
                     st.caption(" | ".join(params))
 
+            can_control = admin or bot['user'] == username
+
             with col2:
-                # Only allow control if user owns the bot
-                if bot['user'] == username:
+                if can_control:
                     if st.button("Stop", key=f"stop_{bot['pid']}", type="secondary"):
                         success, msg = stop_bot(bot['pid'])
                         if success:
@@ -158,7 +156,7 @@ def show_running_bots():
                     st.button("Stop", key=f"stop_{bot['pid']}", disabled=True)
 
             with col3:
-                if bot['user'] == username:
+                if can_control:
                     if st.button("Restart", key=f"restart_{bot['pid']}", type="secondary"):
                         success, msg, _ = restart_bot(bot['pid'])
                         if success:
