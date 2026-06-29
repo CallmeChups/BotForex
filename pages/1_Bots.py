@@ -24,6 +24,7 @@ from src.bot_manager import (
     start_bot,
     stop_bot,
     stop_all_bots,
+    restart_all_bots,
     list_bots,
     restart_bot,
     get_bot_stats
@@ -84,8 +85,8 @@ def show_running_bots():
 
     admin = is_admin(username)
 
-    # Toolbar: refresh | stop all | mode filter
-    col1, col2, col3 = st.columns([1, 1, 2])
+    # Toolbar: refresh | stop all | restart all | mode filter
+    col1, col2, col3, col4 = st.columns([1, 1, 1, 2])
     with col1:
         if st.button("Refresh", type="primary", use_container_width=True):
             st.rerun()
@@ -96,6 +97,12 @@ def show_running_bots():
             st.success(msg)
             st.rerun()
     with col3:
+        restart_label = "Restart All Bots" if admin else "Restart All My Bots"
+        if st.button(restart_label, type="secondary", use_container_width=True):
+            restarted, msg = restart_all_bots(user=None if admin else username)
+            st.success(msg)
+            st.rerun()
+    with col4:
         filter_mode = st.radio("Mode", ["All", "Live Only", "Test Only"],
                                horizontal=True, key="bot_filter_mode")
 

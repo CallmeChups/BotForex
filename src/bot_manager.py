@@ -300,6 +300,26 @@ def stop_all_bots(user: str = None) -> tuple:
     return stopped, f"Stopped {stopped} bot(s)"
 
 
+def restart_all_bots(user: str = None) -> tuple:
+    """Restart all bots (optionally filtered by user). Returns (restarted_count, message)."""
+    bots = load_bots()
+    restarted = 0
+    errors = []
+
+    for bot in list(bots):
+        if user and bot['user'] != user:
+            continue
+        success, msg, _ = restart_bot(bot['pid'])
+        if success:
+            restarted += 1
+        else:
+            errors.append(msg)
+
+    if errors:
+        return restarted, f"Restarted {restarted}, Errors: {'; '.join(errors)}"
+    return restarted, f"Restarted {restarted} bot(s)"
+
+
 def list_bots(user: str = None, refresh: bool = True) -> list:
     """
     List running bots
