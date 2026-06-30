@@ -234,6 +234,28 @@ def show_running_bots():
                 status_color = "green" if bot.get('status') == 'running' else "red"
                 st.markdown(f":{status_color}[● {bot.get('status', 'unknown').upper()}]")
 
+            # Log viewer
+            log_path = bot.get('log_path')
+            if log_path and os.path.exists(log_path):
+                with st.expander(f"📋 Log — {os.path.basename(log_path)}"):
+                    try:
+                        with open(log_path, 'r', encoding='utf-8', errors='replace') as _lf:
+                            _lines = _lf.readlines()
+                        _tail = _lines[-100:] if len(_lines) > 100 else _lines
+                        st.code("".join(_tail), language=None)
+                        with open(log_path, 'rb') as _dl:
+                            st.download_button(
+                                "⬇ Download log",
+                                data=_dl.read(),
+                                file_name=os.path.basename(log_path),
+                                mime="text/plain",
+                                key=f"dl_log_{bot['pid']}",
+                            )
+                    except Exception as _e:
+                        st.error(f"Không đọc được log: {_e}")
+            elif log_path:
+                st.caption(f"Log: {os.path.basename(log_path)} (chưa có nội dung)")
+
             st.divider()
 
 
