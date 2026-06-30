@@ -39,7 +39,7 @@ jobs:
               Write-Host 'CWD:' (Get-Location); \
               Write-Host 'Remote:' (git remote -v); \
               Write-Host 'Pulling latest code...'; \
-              \$result = git pull https://github.com/CallmeChups/BotForex.git main 2>&1; \
+              \$result = git pull https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/CallmeChups/BotForex.git main 2>&1; \
               Write-Host \$result; \
               if (\$LASTEXITCODE -ne 0) { Write-Error 'git pull failed'; exit 1 }; \
               Write-Host 'Installing dependencies...'; \
