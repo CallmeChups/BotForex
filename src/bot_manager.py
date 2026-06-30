@@ -10,6 +10,7 @@ import sys
 import subprocess
 import json
 import signal
+import time as time_mod
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Optional
@@ -195,7 +196,7 @@ def start_bot(
                 cmd,
                 stdout=log_file,
                 stderr=log_file,
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
             )
         else:
             process = subprocess.Popen(
@@ -257,16 +258,29 @@ def stop_bot(pid: int) -> tuple:
 
     try:
         if platform.system() == "Windows":
-            # Windows: use taskkill
-            subprocess.run(
-                f'taskkill /PID {pid} /F',
-                shell=True,
-                check=True,
-                capture_output=True
-            )
+            # Send CTRL_BREAK_EVENT so the process can catch KeyboardInterrupt and send Telegram before dying
+            import ctypes
+            try:
+                ctypes.windll.kernel32.GenerateConsoleCtrlEvent(1, pid)  # 1 = CTRL_BREAK_EVENT
+            except Exception:
+                pass
+            # Give it up to 8s to clean up gracefully
+            for _ in range(8):
+                time_mod.sleep(1)
+                if not is_process_running(pid):
+                    break
+            else:
+                # Still alive — force kill
+                subprocess.run(f'taskkill /PID {pid} /F', shell=True, capture_output=True)
         else:
-            # Unix: send SIGTERM
+            # Unix: SIGTERM allows cleanup; fallback SIGKILL after 8s
             os.kill(pid, signal.SIGTERM)
+            for _ in range(8):
+                time_mod.sleep(1)
+                if not is_process_running(pid):
+                    break
+            else:
+                os.kill(pid, signal.SIGKILL)
 
         # Remove from list
         bots = load_bots()

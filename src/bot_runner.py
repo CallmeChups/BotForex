@@ -722,4 +722,5 @@ if __name__ == "__main__":
         except Exception as e:
             import traceback
             log(f"Bot crashed, restarting in {RESTART_DELAY}s: {e}", "ERROR")
+            send_telegram(f"🔄 <b>Bot restart sau crash</b>\nSymbol: {args.symbol}\nLý do: {e}\nRestart sau {RESTART_DELAY}s...", is_error=True)
             time.sleep(RESTART_DELAY)
