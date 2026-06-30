@@ -56,8 +56,9 @@ jobs:
               New-Item -ItemType Directory -Force D:\\BotForex\\logs | Out-Null; \
               \$port = Get-NetTCPConnection -LocalPort 8501 -ErrorAction SilentlyContinue; \
               if (\$port) { \
-                Write-Host 'Port 8501 in use, stopping existing process...'; \
-                Get-Process -Name 'streamlit' -ErrorAction SilentlyContinue | Stop-Process -Force; \
+                Write-Host 'Port 8501 in use, killing owning process...'; \
+                \$pid8501 = (Get-NetTCPConnection -LocalPort 8501 -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess; \
+                if (\$pid8501) { Stop-Process -Id \$pid8501 -Force -ErrorAction SilentlyContinue }; \
                 Start-Sleep -Seconds 3; \
               } else { \
                 Write-Host 'Port 8501 free, starting fresh...'; \
