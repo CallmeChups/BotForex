@@ -183,21 +183,25 @@ def start_bot(
     )
 
     try:
+        # Log file per bot — named by strategy/symbol/start time for easy traceback
+        os.makedirs("logs", exist_ok=True)
+        started_tag = datetime.now(TIMEZONE).strftime('%Y%m%d_%H%M%S')
+        log_path = os.path.abspath(f"logs/bot_{strategy}_{symbol}_{started_tag}.log")
+        log_file = open(log_path, 'a', encoding='utf-8', buffering=1)  # line-buffered
+
         # Start process
         if platform.system() == "Windows":
-            # Windows: use CREATE_NEW_PROCESS_GROUP
             process = subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=log_file,
+                stderr=log_file,
                 creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
             )
         else:
-            # Unix: use nohup-like behavior
             process = subprocess.Popen(
                 cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=log_file,
+                stderr=log_file,
                 start_new_session=True
             )
 
@@ -224,6 +228,7 @@ def start_bot(
             'be_enabled': be_enabled,
             'be_r': be_r,
             'started_at': datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M:%S'),
+            'log_path': log_path,
             'command': ' '.join(cmd)
         }
 
