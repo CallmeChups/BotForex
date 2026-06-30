@@ -611,6 +611,15 @@ def run_feg_bot(args, strategy, params, credentials,
                             still_pending.append(order)
                         else:
                             log(f"[{order['order_id']}] Limit order expired (no fill)")
+                            _sig = order['signal']
+                            send_telegram(
+                                f"⏰ <b>Limit order hết hạn (không khớp)</b>\n"
+                                f"ID: <code>{order['order_id']}</code>\n"
+                                f"Symbol: {args.symbol}\n"
+                                f"Direction: {_sig['direction']}\n"
+                                f"Entry: {_sig['entry_price']:.2f}\n"
+                                f"SL: {_sig['stop_loss']:.2f} TP: {_sig['take_profit']:.2f}"
+                            )
                 pending_orders = still_pending
 
                 # 2. Check active trades — exit
