@@ -305,11 +305,34 @@ def stop_all_bots(user: str = None) -> tuple:
     return stopped, f"Stopped {stopped} bot(s)"
 
 
+def _has_open_position(bot: dict) -> bool:
+    """Check if the bot's symbol has any open MT5 positions (only relevant for live bots)."""
+    if bot.get('test', True):
+        return False
+    try:
+        from src.auth import get_user_mt5_credentials
+        from src.orders import fetch_open_positions
+        credentials = get_user_mt5_credentials(bot['user'])
+        positions, _ = fetch_open_positions(credentials)
+        symbol = bot['symbol']
+        return any(p['symbol'] == symbol for p in positions)
+    except Exception:
+        return False
+
+
 def switch_bot_mode(pid: int, live: bool) -> tuple:
-    """Switch bot between test/live mode by restarting with flipped test flag."""
+    """Switch bot between test/live mode. Blocks Live→Test when symbol has open positions."""
     bot = get_bot(pid)
     if not bot:
         return False, f"Bot not found: {pid}", None
+
+    # Chặn chuyển từ Live → Test nếu đang có lệnh mở
+    if not live and _has_open_position(bot):
+        return False, (
+            f"Không thể chuyển sang Test — bot {bot['symbol']} đang có lệnh mở trên MT5. "
+            "Vui lòng đóng lệnh trước khi chuyển chế độ."
+        ), None
+
     stop_bot(pid)
     return start_bot(
         strategy=bot['strategy'],

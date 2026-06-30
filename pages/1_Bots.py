@@ -86,24 +86,64 @@ def show_running_bots():
 
     admin = is_admin(username)
 
-    # Toolbar: refresh | stop all | restart all | mode filter
-    col1, col2, col3, col4 = st.columns([1, 1, 1, 2])
+    # Toolbar: refresh | stop all | restart all | →Live all | →Test all | mode filter
+    col1, col2, col3, col4, col5, col6 = st.columns([1, 1, 1, 1, 1, 2])
     with col1:
         if st.button("Refresh", type="primary", use_container_width=True):
             st.rerun()
     with col2:
-        stop_label = "Stop All Bots" if admin else "Stop All My Bots"
+        stop_label = "Stop All" if admin else "Stop All Mine"
         if st.button(stop_label, type="secondary", use_container_width=True):
             stopped, msg = stop_all_bots(user=None if admin else username)
             st.success(msg)
             st.rerun()
     with col3:
-        restart_label = "Restart All Bots" if admin else "Restart All My Bots"
+        restart_label = "Restart All" if admin else "Restart Mine"
         if st.button(restart_label, type="secondary", use_container_width=True):
             restarted, msg = restart_all_bots(user=None if admin else username)
             st.success(msg)
             st.rerun()
     with col4:
+        if st.button("Tất cả → Live", type="primary", use_container_width=True,
+                     key="btn_all_live"):
+            _all_bots = list_bots(refresh=True)
+            if not admin:
+                _all_bots = [b for b in _all_bots if b['user'] == username]
+            _switched, _blocked_msgs = 0, []
+            for _b in _all_bots:
+                if _b.get('test', True):  # only switch test → live
+                    _ok, _msg, _ = switch_bot_mode(_b['pid'], live=True)
+                    if _ok:
+                        _switched += 1
+                    else:
+                        _blocked_msgs.append(_msg)
+            if _switched:
+                st.success(f"Đã chuyển {_switched} bot sang Live.")
+            if _blocked_msgs:
+                for _m in _blocked_msgs:
+                    st.error(_m)
+            st.rerun()
+    with col5:
+        if st.button("Tất cả → Test", type="secondary", use_container_width=True,
+                     key="btn_all_test"):
+            _all_bots = list_bots(refresh=True)
+            if not admin:
+                _all_bots = [b for b in _all_bots if b['user'] == username]
+            _switched, _blocked_msgs = 0, []
+            for _b in _all_bots:
+                if not _b.get('test', True):  # only switch live → test
+                    _ok, _msg, _ = switch_bot_mode(_b['pid'], live=False)
+                    if _ok:
+                        _switched += 1
+                    else:
+                        _blocked_msgs.append(_msg)
+            if _switched:
+                st.success(f"Đã chuyển {_switched} bot sang Test.")
+            if _blocked_msgs:
+                for _m in _blocked_msgs:
+                    st.warning(_m)
+            st.rerun()
+    with col6:
         filter_mode = st.radio("Mode", ["All", "Live Only", "Test Only"],
                                horizontal=True, key="bot_filter_mode")
 
