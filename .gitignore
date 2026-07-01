@@ -6,6 +6,7 @@
 data/orders.csv
 data/running_bots.json
 logs/
+data/
 
 *.txt
 !requirements.txt
