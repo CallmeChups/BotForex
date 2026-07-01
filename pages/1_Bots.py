@@ -83,13 +83,29 @@ def main():
         show_bot_history()
 
 
+def _confirm_key(action: str) -> str:
+    return f"confirm_pending_{action}"
+
+
+def _request_confirm(action: str):
+    st.session_state[_confirm_key(action)] = True
+
+
+def _clear_confirm(action: str):
+    st.session_state.pop(_confirm_key(action), None)
+
+
+def _is_confirming(action: str) -> bool:
+    return st.session_state.get(_confirm_key(action), False)
+
+
 def show_running_bots():
     """Show list of running bots"""
     st.subheader("Running Bots")
 
     admin = is_admin(username)
 
-    # Toolbar: refresh | stop all | restart all | →Live all | →Test all | mode filter
+    # ── Toolbar ───────────────────────────────────────────────────────────────
     col1, col2, col3, col4, col5, col6 = st.columns([1, 1, 1, 1, 1, 2])
     with col1:
         if st.button("Refresh", type="primary", use_container_width=True):
@@ -97,67 +113,111 @@ def show_running_bots():
     with col2:
         stop_label = "Stop All" if admin else "Stop All Mine"
         if st.button(stop_label, type="secondary", use_container_width=True):
-            stopped, msg = stop_all_bots(user=None if admin else username)
-            st.success(msg)
-            st.rerun()
+            _request_confirm("stop_all")
     with col3:
         restart_label = "Restart All" if admin else "Restart Mine"
         if st.button(restart_label, type="secondary", use_container_width=True):
-            restarted, msg = restart_all_bots(user=None if admin else username)
-            st.success(msg)
-            st.rerun()
+            _request_confirm("restart_all")
     with col4:
-        if st.button("Tất cả → Live", type="primary", use_container_width=True,
-                     key="btn_all_live"):
-            _all_bots = list_bots(refresh=True)
-            if not admin:
-                _all_bots = [b for b in _all_bots if b['user'] == username]
-            _switched, _blocked_msgs = 0, []
-            for _b in _all_bots:
-                if _b.get('test', True):  # only switch test → live
-                    _ok, _msg, _ = switch_bot_mode(_b['pid'], live=True)
-                    if _ok:
-                        _switched += 1
-                    else:
-                        _blocked_msgs.append(_msg)
-            if _switched:
-                st.success(f"Đã chuyển {_switched} bot sang Live.")
-            if _blocked_msgs:
-                for _m in _blocked_msgs:
-                    st.error(_m)
-            st.rerun()
+        if st.button("Tất cả → Live", type="primary", use_container_width=True, key="btn_all_live"):
+            _request_confirm("all_live")
     with col5:
-        if st.button("Tất cả → Test", type="secondary", use_container_width=True,
-                     key="btn_all_test"):
-            _all_bots = list_bots(refresh=True)
-            if not admin:
-                _all_bots = [b for b in _all_bots if b['user'] == username]
-            _switched, _blocked_msgs = 0, []
-            for _b in _all_bots:
-                if not _b.get('test', True):  # only switch live → test
-                    _ok, _msg, _ = switch_bot_mode(_b['pid'], live=False)
-                    if _ok:
-                        _switched += 1
-                    else:
-                        _blocked_msgs.append(_msg)
-            if _switched:
-                st.success(f"Đã chuyển {_switched} bot sang Test.")
-            if _blocked_msgs:
-                for _m in _blocked_msgs:
-                    st.warning(_m)
-            st.rerun()
+        if st.button("Tất cả → Test", type="secondary", use_container_width=True, key="btn_all_test"):
+            _request_confirm("all_test")
     with col6:
         filter_mode = st.radio("Mode", ["All", "Live Only", "Test Only"],
                                horizontal=True, key="bot_filter_mode")
 
-    # Load & scope bots
+    # ── Confirm dialogs for toolbar actions ───────────────────────────────────
+    if _is_confirming("stop_all"):
+        st.warning(f"⚠️ Bạn có chắc muốn **dừng tất cả bot**?")
+        cc1, cc2 = st.columns(2)
+        with cc1:
+            if st.button("✅ Xác nhận Stop All", type="primary"):
+                stopped, msg = stop_all_bots(user=None if admin else username)
+                st.success(msg)
+                _clear_confirm("stop_all")
+                st.rerun()
+        with cc2:
+            if st.button("❌ Hủy"):
+                _clear_confirm("stop_all")
+                st.rerun()
+
+    if _is_confirming("restart_all"):
+        st.warning(f"⚠️ Bạn có chắc muốn **restart tất cả bot**?")
+        cc1, cc2 = st.columns(2)
+        with cc1:
+            if st.button("✅ Xác nhận Restart All", type="primary"):
+                restarted, msg = restart_all_bots(user=None if admin else username)
+                st.success(msg)
+                _clear_confirm("restart_all")
+                st.rerun()
+        with cc2:
+            if st.button("❌ Hủy", key="cancel_restart_all"):
+                _clear_confirm("restart_all")
+                st.rerun()
+
+    if _is_confirming("all_live"):
+        st.warning("⚠️ Bạn có chắc muốn chuyển **tất cả bot sang Live**? Bot sẽ đặt lệnh thật!")
+        cc1, cc2 = st.columns(2)
+        with cc1:
+            if st.button("✅ Xác nhận → Live", type="primary"):
+                _all_bots = list_bots(refresh=True)
+                if not admin:
+                    _all_bots = [b for b in _all_bots if b['user'] == username]
+                _switched, _blocked_msgs = 0, []
+                for _b in _all_bots:
+                    if _b.get('test', True):
+                        _ok, _msg, _ = switch_bot_mode(_b['pid'], live=True)
+                        if _ok:
+                            _switched += 1
+                        else:
+                            _blocked_msgs.append(_msg)
+                if _switched:
+                    st.success(f"Đã chuyển {_switched} bot sang Live.")
+                for _m in _blocked_msgs:
+                    st.error(_m)
+                _clear_confirm("all_live")
+                st.rerun()
+        with cc2:
+            if st.button("❌ Hủy", key="cancel_all_live"):
+                _clear_confirm("all_live")
+                st.rerun()
+
+    if _is_confirming("all_test"):
+        st.warning("⚠️ Bạn có chắc muốn chuyển **tất cả bot sang Test**?")
+        cc1, cc2 = st.columns(2)
+        with cc1:
+            if st.button("✅ Xác nhận → Test", type="primary"):
+                _all_bots = list_bots(refresh=True)
+                if not admin:
+                    _all_bots = [b for b in _all_bots if b['user'] == username]
+                _switched, _blocked_msgs = 0, []
+                for _b in _all_bots:
+                    if not _b.get('test', True):
+                        _ok, _msg, _ = switch_bot_mode(_b['pid'], live=False)
+                        if _ok:
+                            _switched += 1
+                        else:
+                            _blocked_msgs.append(_msg)
+                if _switched:
+                    st.success(f"Đã chuyển {_switched} bot sang Test.")
+                for _m in _blocked_msgs:
+                    st.warning(_m)
+                _clear_confirm("all_test")
+                st.rerun()
+        with cc2:
+            if st.button("❌ Hủy", key="cancel_all_test"):
+                _clear_confirm("all_test")
+                st.rerun()
+
+    # ── Load & scope bots ─────────────────────────────────────────────────────
     bots = list_bots(refresh=True)
 
     if not bots:
         st.info("No bots running. Create one in the 'Create Bot' tab.")
         return
 
-    # Admin sees all; regular user sees only own bots
     if not admin:
         bots = [b for b in bots if b['user'] == username]
 
@@ -172,16 +232,16 @@ def show_running_bots():
 
     st.success(f"Found {len(bots)} bot(s)")
 
-    # Display bots
+    # ── Per-bot rows ──────────────────────────────────────────────────────────
     for bot in bots:
+        pid = bot['pid']
         with st.container():
             col1, col2, col3, col4, col5 = st.columns([3, 1, 1, 1, 1])
 
             with col1:
                 mode_badge = "🧪 TEST" if bot.get('test', True) else "🔴 LIVE"
                 st.markdown(f"**{bot['strategy']}** | {bot['symbol']} | {mode_badge}")
-                st.caption(f"PID: {bot['pid']} | User: {bot['user']} | Started: {bot.get('started_at', 'N/A')}")
-
+                st.caption(f"PID: {pid} | User: {bot['user']} | Started: {bot.get('started_at', 'N/A')}")
                 params = []
                 if bot.get('lot_size'):
                     params.append(f"Lot: {bot['lot_size']}")
@@ -197,50 +257,81 @@ def show_running_bots():
 
             with col2:
                 if can_control:
-                    if st.button("Stop", key=f"stop_{bot['pid']}", type="secondary"):
-                        success, msg = stop_bot(bot['pid'])
-                        if success:
-                            st.success(msg)
-                        else:
-                            st.error(msg)
-                        st.rerun()
+                    if st.button("Stop", key=f"stop_{pid}", type="secondary"):
+                        _request_confirm(f"stop_{pid}")
                 else:
-                    st.button("Stop", key=f"stop_{bot['pid']}", disabled=True)
+                    st.button("Stop", key=f"stop_{pid}", disabled=True)
 
             with col3:
                 if can_control:
-                    if st.button("Restart", key=f"restart_{bot['pid']}", type="secondary"):
-                        success, msg, _ = restart_bot(bot['pid'])
-                        if success:
-                            st.success(msg)
-                        else:
-                            st.error(msg)
-                        st.rerun()
+                    if st.button("Restart", key=f"restart_{pid}", type="secondary"):
+                        _request_confirm(f"restart_{pid}")
                 else:
-                    st.button("Restart", key=f"restart_{bot['pid']}", disabled=True)
+                    st.button("Restart", key=f"restart_{pid}", disabled=True)
 
             with col4:
                 if can_control:
                     switch_label = "→ Live" if is_test else "→ Test"
                     switch_type = "primary" if is_test else "secondary"
-                    if st.button(switch_label, key=f"switch_{bot['pid']}", type=switch_type):
-                        success, msg, _ = switch_bot_mode(bot['pid'], live=is_test)
-                        if success:
-                            st.success(msg)
-                        else:
-                            st.error(msg)
-                        st.rerun()
+                    if st.button(switch_label, key=f"switch_{pid}", type=switch_type):
+                        _request_confirm(f"switch_{pid}")
                 else:
-                    st.button("→ Live", key=f"switch_{bot['pid']}", disabled=True)
+                    st.button("→ Live", key=f"switch_{pid}", disabled=True)
 
             with col5:
                 status_color = "green" if bot.get('status') == 'running' else "red"
                 st.markdown(f":{status_color}[● {bot.get('status', 'unknown').upper()}]")
 
-            # Log viewer
+            # ── Per-bot confirm dialogs ────────────────────────────────────────
+            if _is_confirming(f"stop_{pid}"):
+                st.warning(f"⚠️ Dừng bot **{bot['symbol']}** (PID {pid})?")
+                dc1, dc2 = st.columns(2)
+                with dc1:
+                    if st.button("✅ Xác nhận", key=f"confirm_stop_{pid}", type="primary"):
+                        success, msg = stop_bot(pid)
+                        st.success(msg) if success else st.error(msg)
+                        _clear_confirm(f"stop_{pid}")
+                        st.rerun()
+                with dc2:
+                    if st.button("❌ Hủy", key=f"cancel_stop_{pid}"):
+                        _clear_confirm(f"stop_{pid}")
+                        st.rerun()
+
+            if _is_confirming(f"restart_{pid}"):
+                st.warning(f"⚠️ Restart bot **{bot['symbol']}** (PID {pid})?")
+                dc1, dc2 = st.columns(2)
+                with dc1:
+                    if st.button("✅ Xác nhận", key=f"confirm_restart_{pid}", type="primary"):
+                        success, msg, _ = restart_bot(pid)
+                        st.success(msg) if success else st.error(msg)
+                        _clear_confirm(f"restart_{pid}")
+                        st.rerun()
+                with dc2:
+                    if st.button("❌ Hủy", key=f"cancel_restart_{pid}"):
+                        _clear_confirm(f"restart_{pid}")
+                        st.rerun()
+
+            if _is_confirming(f"switch_{pid}"):
+                target = "Live 🔴" if is_test else "Test 🧪"
+                st.warning(f"⚠️ Chuyển bot **{bot['symbol']}** sang **{target}**?")
+                dc1, dc2 = st.columns(2)
+                with dc1:
+                    if st.button("✅ Xác nhận", key=f"confirm_switch_{pid}", type="primary"):
+                        success, msg, _ = switch_bot_mode(pid, live=is_test)
+                        st.success(msg) if success else st.error(msg)
+                        _clear_confirm(f"switch_{pid}")
+                        st.rerun()
+                with dc2:
+                    if st.button("❌ Hủy", key=f"cancel_switch_{pid}"):
+                        _clear_confirm(f"switch_{pid}")
+                        st.rerun()
+
+            # ── Log viewer ────────────────────────────────────────────────────
             log_path = bot.get('log_path')
             if log_path and os.path.exists(log_path):
                 with st.expander(f"📋 Log — {os.path.basename(log_path)}"):
+                    if st.button("🔄 Refresh log", key=f"refresh_log_{pid}"):
+                        st.rerun()
                     try:
                         with open(log_path, 'r', encoding='utf-8', errors='replace') as _lf:
                             _lines = _lf.readlines()
@@ -248,11 +339,9 @@ def show_running_bots():
                         st.code("".join(_tail), language=None)
                         with open(log_path, 'rb') as _dl:
                             st.download_button(
-                                "⬇ Download log",
-                                data=_dl.read(),
+                                "⬇ Download log", data=_dl.read(),
                                 file_name=os.path.basename(log_path),
-                                mime="text/plain",
-                                key=f"dl_log_{bot['pid']}",
+                                mime="text/plain", key=f"dl_log_{pid}",
                             )
                     except Exception as _e:
                         st.error(f"Không đọc được log: {_e}")
@@ -844,6 +933,8 @@ def show_bot_history():
             log_path = s.get("log_path", "")
             if log_path and os.path.exists(log_path):
                 with st.expander(f"📋 Log — {os.path.basename(log_path)}"):
+                    if st.button("🔄 Refresh log", key=f"bh_refresh_{s['id']}"):
+                        st.rerun()
                     with open(log_path, "r", encoding="utf-8", errors="replace") as _lf:
                         _lines = _lf.readlines()
                     st.code("".join(_lines[-100:]), language=None)

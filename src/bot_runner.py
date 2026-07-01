@@ -586,6 +586,12 @@ def run_feg_bot(args, strategy, params, credentials,
             candle_time = datetime.fromtimestamp(int(last["time"]), tz=TIMEZONE)
             is_new_candle = (last_candle_time is None) or (candle_time > last_candle_time)
 
+            log(f"Tick check @ {datetime.now(TIMEZONE).strftime('%H:%M:%S')} | "
+                f"last candle: {candle_time.strftime('%H:%M')} "
+                f"O={last['open']:.2f} H={last['high']:.2f} L={last['low']:.2f} C={last['close']:.2f} | "
+                f"EMA={ema[-1]:.2f} | new_candle={is_new_candle} | "
+                f"pending={len(pending_orders)} active={len(active_trades)}")
+
             if is_new_candle:
                 from src.utils import check_exit
                 candle = {"high": last["high"], "low": last["low"], "close": last["close"]}
@@ -688,7 +694,12 @@ def run_feg_bot(args, strategy, params, credentials,
 
                 # 3. Scan FEG signal → tạo pending order mới
                 now_hcm = datetime.now(TIMEZONE)
-                if _in_time_window(now_hcm, entry_start_time, entry_end_time):
+                in_window = _in_time_window(now_hcm, entry_start_time, entry_end_time)
+                log(f"New candle {candle_time.strftime('%H:%M')} | "
+                    f"C1: O={prev['open']:.2f} H={prev['high']:.2f} L={prev['low']:.2f} C={prev['close']:.2f} | "
+                    f"C2: O={last['open']:.2f} H={last['high']:.2f} L={last['low']:.2f} C={last['close']:.2f} | "
+                    f"EMA={ema[-1]:.2f} | in_window={in_window}")
+                if in_window:
                     c1 = {"open": prev["open"], "high": prev["high"], "low": prev["low"], "close": prev["close"]}
                     c2 = {"open": last["open"], "high": last["high"], "low": last["low"], "close": last["close"]}
                     signal = feg_entry_decision(
@@ -696,6 +707,8 @@ def run_feg_bot(args, strategy, params, credentials,
                         rr_ratio, buffer_k, lot_size, entry_mode, entry_percent,
                         h2_exceed_pips, c2_gap_pips, ema_margin_pips,
                     )
+                    log(f"Signal scan: {signal['direction'] if signal else 'NO SIGNAL'}"
+                        + (f" entry={signal['entry_price']:.2f} sl={signal['stop_loss']:.2f} tp={signal['take_profit']:.2f}" if signal else ""))
                     if signal:
                         trade_lot = lot_size
                         if lot_mode == "flex":
@@ -750,7 +763,8 @@ if __name__ == "__main__":
     _sh.setFormatter(_fmt)
     _logger.addHandler(_sh)
     if args.log_file:
-        os.makedirs(os.path.dirname(args.log_file), exist_ok=True)
+        _log_dir = os.path.dirname(os.path.abspath(args.log_file))
+        os.makedirs(_log_dir, exist_ok=True)
         _fh = _logging.FileHandler(args.log_file, encoding="utf-8")
         _fh.setFormatter(_fmt)
         _logger.addHandler(_fh)
@@ -763,7 +777,8 @@ if __name__ == "__main__":
         except KeyboardInterrupt:
             break
         except Exception as e:
-            import traceback
-            log(f"Bot crashed, restarting in {RESTART_DELAY}s: {e}", "ERROR")
+            import traceback as _tb
+            _trace = _tb.format_exc()
+            log(f"Bot crashed, restarting in {RESTART_DELAY}s: {e}\n{_trace}", "ERROR")
             send_telegram(f"🔄 <b>Bot restart sau crash</b>\nSymbol: {args.symbol}\nLý do: {e}\nRestart sau {RESTART_DELAY}s...", is_error=True)
             time.sleep(RESTART_DELAY)
