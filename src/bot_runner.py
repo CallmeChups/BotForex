@@ -89,14 +89,21 @@ def get_args():
                         help='Break-even: 1=enabled, 0=disabled (default 0)')
     parser.add_argument('--be_r', type=float, default=1.0,
                         help='Break-even trigger at be_r * SL_distance profit (default 1.0)')
+    parser.add_argument('--log_file', type=str, default=None,
+                        help='Path to log file (default: stderr only)')
 
     return parser.parse_args()
 
 
+# Module-level logger — configured in __main__ after args parsed
+import logging as _logging
+_logger = _logging.getLogger("bot_runner")
+
+
 def log(message: str, level: str = "INFO"):
-    """Log message with timestamp"""
-    timestamp = datetime.now(TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{timestamp}] [{level}] {message}")
+    """Log message with timestamp via logging module (writes to file + stderr)."""
+    lvl = getattr(_logging, level.upper(), _logging.INFO)
+    _logger.log(lvl, message)
 
 
 def send_telegram(text: str, is_error: bool = False) -> bool:
@@ -717,6 +724,20 @@ def run_feg_bot(args, strategy, params, credentials,
 
 if __name__ == "__main__":
     args = get_args()
+
+    # Setup logger: write to --log-file (if given) + stderr, not stdout
+    _fmt = _logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s",
+                               datefmt="%Y-%m-%d %H:%M:%S")
+    _logger.setLevel(_logging.DEBUG)
+    _sh = _logging.StreamHandler(sys.stderr)
+    _sh.setFormatter(_fmt)
+    _logger.addHandler(_sh)
+    if args.log_file:
+        os.makedirs(os.path.dirname(args.log_file), exist_ok=True)
+        _fh = _logging.FileHandler(args.log_file, encoding="utf-8")
+        _fh.setFormatter(_fmt)
+        _logger.addHandler(_fh)
+
     RESTART_DELAY = 30
     while True:
         try:

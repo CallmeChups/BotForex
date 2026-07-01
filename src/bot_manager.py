@@ -188,21 +188,25 @@ def start_bot(
         os.makedirs("logs", exist_ok=True)
         started_tag = datetime.now(TIMEZONE).strftime('%Y%m%d_%H%M%S')
         log_path = os.path.abspath(f"logs/bot_{strategy}_{symbol}_{started_tag}.log")
-        log_file = open(log_path, 'a', encoding='utf-8', buffering=1)  # line-buffered
+
+        # Pass log path as arg so bot_runner writes via logging module (not stdout redirect)
+        cmd = cmd + ["--log_file", log_path]
+
+        devnull = open(os.devnull, 'wb')
 
         # Start process
         if platform.system() == "Windows":
             process = subprocess.Popen(
                 cmd,
-                stdout=log_file,
-                stderr=log_file,
+                stdout=devnull,
+                stderr=devnull,
                 creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
             )
         else:
             process = subprocess.Popen(
                 cmd,
-                stdout=log_file,
-                stderr=log_file,
+                stdout=devnull,
+                stderr=devnull,
                 start_new_session=True
             )
 
