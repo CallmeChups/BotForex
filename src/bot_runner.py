@@ -651,10 +651,15 @@ def run_feg_bot(args, strategy, params, credentials,
                         log(f"[{oid}] FEG Exit: {exit_type} @ {exit_price:.2f}, P&L: {pnl:.1f} pips")
                         send_telegram(f"<b>FEG Exit: {exit_type}</b>\nID: <code>{oid}</code>\nPrice: {exit_price:.2f}\nP&L: {pnl:.1f} pips")
                         if not args.test and trade.get("ticket"):
-                            closed_ok, close_msg = close_position(trade["ticket"], credentials=credentials)
-                            if not closed_ok:
-                                log(f"[{oid}] Close failed: {close_msg}", "ERROR")
-                                send_telegram(f"❌ Close failed\nID: <code>{oid}</code>\nReason: {close_msg}", is_error=True)
+                            # Check if position still exists — broker may have already closed it via TP/SL
+                            _pos = mt5.positions_get(ticket=trade["ticket"])
+                            if not _pos:
+                                log(f"[{oid}] Position already closed by broker (TP/SL hit server-side)")
+                            else:
+                                closed_ok, close_msg = close_position(trade["ticket"], credentials=credentials)
+                                if not closed_ok:
+                                    log(f"[{oid}] Close failed: {close_msg}", "ERROR")
+                                    send_telegram(f"❌ Close failed\nID: <code>{oid}</code>\nReason: {close_msg}", is_error=True)
                     else:
                         still_active.append(trade)
                 active_trades = still_active
