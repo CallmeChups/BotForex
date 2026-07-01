@@ -548,6 +548,15 @@ def run_feg_bot(args, strategy, params, credentials,
     send_telegram(f"FEG Bot Started\nSymbol: {args.symbol}\nUser: {args.user}\n"
                   f"Test: {'Yes' if args.test else 'No'}")
 
+    from src.bot_history_manager import create_session, close_session, record_trade as _record_trade
+    _session_id = create_session(
+        strategy=args.strategy,
+        symbol=args.symbol,
+        mode="test" if args.test else "live",
+        user=args.user,
+        log_path=args.log_file or "",
+    )
+
     # pending_orders: list of {signal, trade_lot, candles_left, order_id}
     # active_trades: list of {direction, entry, sl, tp, ticket, candles, order_id}
     pending_orders = []
@@ -608,6 +617,7 @@ def run_feg_bot(args, strategy, params, credentials,
                                 "sl": order["signal"]["stop_loss"],
                                 "tp": order["signal"]["take_profit"],
                                 "ticket": ticket, "candles": 0, "order_id": oid,
+                                "lot": order.get("trade_lot", lot_size),
                             })
                         else:
                             send_telegram(f"❌ Order failed\nID: <code>{oid}</code>\nReason: {msg}", is_error=True)
@@ -654,9 +664,14 @@ def run_feg_bot(args, strategy, params, credentials,
                     if exit_type:
                         pv = get_pip_value(args.symbol)
                         pnl = (exit_price - trade["entry"]) / pv if trade["direction"] == "BUY" else (trade["entry"] - exit_price) / pv
+                        trade_lot = trade.get("lot", lot_size)
+                        pnl_usd = pnl * pv * trade_lot * 100000  # pips → USD
                         oid = trade.get("order_id", "")
-                        log(f"[{oid}] FEG Exit: {exit_type} @ {exit_price:.2f}, P&L: {pnl:.1f} pips")
-                        send_telegram(f"<b>FEG Exit: {exit_type}</b>\nID: <code>{oid}</code>\nPrice: {exit_price:.2f}\nP&L: {pnl:.1f} pips")
+                        log(f"[{oid}] FEG Exit: {exit_type} @ {exit_price:.2f}, P&L: {pnl:.1f} pips (${pnl_usd:.2f})")
+                        send_telegram(f"<b>FEG Exit: {exit_type}</b>\nID: <code>{oid}</code>\nPrice: {exit_price:.2f}\nP&L: {pnl:.1f} pips (${pnl_usd:.2f})")
+                        _record_trade(_session_id, oid, trade["direction"],
+                                      trade["entry"], exit_price, exit_type,
+                                      pnl_usd, trade_lot)
                         if not args.test and trade.get("ticket"):
                             # Check if position still exists — broker may have already closed it via TP/SL
                             _pos = mt5.positions_get(ticket=trade["ticket"])
@@ -713,11 +728,13 @@ def run_feg_bot(args, strategy, params, credentials,
 
     except KeyboardInterrupt:
         log("FEG Bot stopped by user")
+        close_session(_session_id)
         send_telegram("FEG Bot Stopped (manual)")
     except Exception as e:
         import traceback
         tb = traceback.format_exc()
         log(f"FEG Bot error: {e}", "ERROR")
+        close_session(_session_id)
         send_telegram(f"❌ FEG Bot crashed\nSymbol: {args.symbol}\nError: {e}\n\n<pre>{tb[-800:]}</pre>", is_error=True)
         raise
 

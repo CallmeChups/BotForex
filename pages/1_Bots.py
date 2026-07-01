@@ -71,13 +71,16 @@ def main():
     st.divider()
 
     # Tabs
-    tab1, tab2 = st.tabs(["Running Bots", "Create Bot"])
+    tab1, tab2, tab3 = st.tabs(["Running Bots", "Create Bot", "Bot History"])
 
     with tab1:
         show_running_bots()
 
     with tab2:
         show_create_bot()
+
+    with tab3:
+        show_bot_history()
 
 
 def show_running_bots():
@@ -740,6 +743,124 @@ def show_create_bot():
                 st.rerun()
             else:
                 st.error(msg)
+
+
+def show_bot_history():
+    """Tab 3: xem, tìm kiếm, đổi tên, xóa các session bot đã chạy."""
+    from src.bot_history_manager import get_sessions, rename_session, delete_session
+
+    st.subheader("Bot History")
+    admin = is_admin(username)
+
+    # ── Filters ──────────────────────────────────────────────────────────────
+    fc1, fc2, fc3, fc4 = st.columns([2, 1, 1, 1])
+    with fc1:
+        search = st.text_input("Tìm theo tên / ID", placeholder="Nhập tên hoặc symbol...",
+                               key="bh_search")
+    with fc2:
+        sym_filter = st.text_input("Symbol", placeholder="XAUUSDm", key="bh_sym")
+    with fc3:
+        mode_filter = st.radio("Mode", ["Tất cả", "Live", "Test"],
+                               horizontal=True, key="bh_mode")
+    with fc4:
+        show_deleted = st.checkbox("Hiện đã xóa", value=False, key="bh_deleted")
+
+    sessions = get_sessions(include_deleted=show_deleted,
+                            user=None if admin else username)
+
+    # Apply filters
+    if search:
+        kw = search.lower()
+        sessions = [s for s in sessions
+                    if kw in (s.get("name") or "").lower()
+                    or kw in s["id"].lower()
+                    or kw in s["symbol"].lower()]
+    if sym_filter:
+        sessions = [s for s in sessions
+                    if sym_filter.lower() in s["symbol"].lower()]
+    if mode_filter != "Tất cả":
+        sessions = [s for s in sessions
+                    if s["mode"] == mode_filter.lower()]
+
+    if not sessions:
+        st.info("Không có session nào.")
+        return
+
+    st.caption(f"{len(sessions)} session(s)")
+
+    # ── Session list ──────────────────────────────────────────────────────────
+    for s in sessions:
+        is_deleted = s.get("deleted", False)
+        stats = s.get("stats", {})
+        pnl = stats.get("pnl_usd", 0.0)
+        pnl_color = "green" if pnl >= 0 else "red"
+        mode_badge = "🔴 LIVE" if s["mode"] == "live" else "🧪 TEST"
+        status_badge = "~~xóa~~" if is_deleted else ("🟢 running" if not s.get("stopped_at") else "⏹ stopped")
+        display_name = s.get("name") or s["id"]
+
+        with st.expander(f"{mode_badge} **{display_name}** | {s['symbol']} | "
+                         f"W{stats.get('win',0)}/L{stats.get('loss',0)} | "
+                         f":{pnl_color}[${pnl:+.2f}] | {status_badge}",
+                         expanded=False):
+
+            # Info row
+            ic1, ic2, ic3 = st.columns(3)
+            with ic1:
+                st.markdown(f"**Strategy:** {s['strategy']}")
+                st.markdown(f"**Symbol:** {s['symbol']} | {mode_badge}")
+                st.markdown(f"**User:** {s['user']}")
+            with ic2:
+                st.markdown(f"**Start:** {s['started_at']}")
+                st.markdown(f"**Stop:** {s.get('stopped_at') or '(đang chạy)'}")
+            with ic3:
+                st.metric("Tổng lệnh", stats.get("total", 0))
+                st.metric("PNL (USD)", f"${pnl:+.2f}")
+                wr = (stats.get("win", 0) / stats.get("total", 1) * 100) if stats.get("total") else 0
+                st.metric("Win rate", f"{wr:.0f}%")
+
+            # Rename
+            if not is_deleted:
+                with st.form(key=f"rename_{s['id']}"):
+                    new_name = st.text_input("Đổi tên session",
+                                             value=s.get("name") or "",
+                                             key=f"rn_{s['id']}")
+                    if st.form_submit_button("Lưu tên"):
+                        rename_session(s["id"], new_name)
+                        st.success("Đã đổi tên.")
+                        st.rerun()
+
+            # Trades table
+            trades = s.get("trades", [])
+            if trades:
+                st.markdown("**Danh sách lệnh:**")
+                import pandas as pd
+                df_t = pd.DataFrame(trades)[
+                    ["order_id", "direction", "entry", "exit_price", "exit_type", "lot", "pnl_usd", "closed_at"]
+                ]
+                df_t.columns = ["Order ID", "Dir", "Entry", "Exit", "Type", "Lot", "PNL ($)", "Closed At"]
+                st.dataframe(df_t, use_container_width=True, hide_index=True)
+
+            # Log viewer
+            log_path = s.get("log_path", "")
+            if log_path and os.path.exists(log_path):
+                with st.expander(f"📋 Log — {os.path.basename(log_path)}"):
+                    with open(log_path, "r", encoding="utf-8", errors="replace") as _lf:
+                        _lines = _lf.readlines()
+                    st.code("".join(_lines[-100:]), language=None)
+                    with open(log_path, "rb") as _dl:
+                        st.download_button("⬇ Download log", data=_dl.read(),
+                                           file_name=os.path.basename(log_path),
+                                           mime="text/plain",
+                                           key=f"bh_dl_{s['id']}")
+
+            # Delete / restore
+            if not is_deleted:
+                if st.button("🗑 Xóa session này", key=f"del_{s['id']}", type="secondary"):
+                    delete_session(s["id"])
+                    st.success("Đã xóa (soft delete).")
+                    st.rerun()
+            else:
+                st.caption("Session này đã bị xóa.")
 
 
 if __name__ == "__main__":
