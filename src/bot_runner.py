@@ -822,6 +822,8 @@ def run_feg_bot(args, strategy, params, credentials,
         _write_bot_state(os.getpid(), args.symbol, args.strategy, 0, 0)
         close_session(_session_id)
         send_telegram("FEG Bot Stopped (manual)")
+    except _GracefulRestart:
+        raise
     except Exception as e:
         import traceback
         tb = traceback.format_exc()
