@@ -530,17 +530,22 @@ def _write_bot_state(pid: int, symbol: str, strategy: str, active: int, pending:
     os.replace(tmp, state_path)
 
 
+def _flag_path(pid: int) -> str:
+    """Absolute path to the pending_restart flag file for this pid."""
+    return os.path.normpath(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "logs", "pending_restart", f"{pid}.flag")
+    )
+
+
 def _check_pending_restart(pid: int) -> bool:
     """Return True if a pending_restart flag file exists for this PID."""
-    flag_path = os.path.join("logs", "pending_restart", f"{pid}.flag")
-    return os.path.exists(flag_path)
+    return os.path.exists(_flag_path(pid))
 
 
 def _clear_pending_restart(pid: int):
     """Remove the pending_restart flag file."""
-    flag_path = os.path.join("logs", "pending_restart", f"{pid}.flag")
     try:
-        os.remove(flag_path)
+        os.remove(_flag_path(pid))
     except FileNotFoundError:
         pass
 
@@ -787,6 +792,7 @@ def run_feg_bot(args, strategy, params, credentials,
                     log("Pending restart flag detected and bot is idle — restarting with new code")
                     _clear_pending_restart(os.getpid())
                     close_session(_session_id)
+                    mt5.shutdown()
                     raise _GracefulRestart()
 
             mt5.shutdown()
