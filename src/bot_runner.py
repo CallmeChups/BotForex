@@ -26,6 +26,10 @@ from src.utils import _in_time_window
 TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
 
 
+class _GracefulRestart(Exception):
+    """Raised when bot should restart gracefully (pending_restart flag detected while idle)."""
+
+
 def get_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description="BotForex Trading Bot")
@@ -778,12 +782,12 @@ def run_feg_bot(args, strategy, params, credentials,
                 _write_bot_state(os.getpid(), args.symbol, args.strategy,
                                  len(active_trades), len(pending_orders))
 
-                # Graceful restart: if flagged and idle, exit cleanly so __main__ restarts with new code
+                # Graceful restart: if flagged and idle, raise sentinel so __main__ re-runs bot
                 if _check_pending_restart(os.getpid()) and not active_trades and not pending_orders:
-                    log("Pending restart flag detected and bot is idle - restarting with new code")
+                    log("Pending restart flag detected and bot is idle — restarting with new code")
                     _clear_pending_restart(os.getpid())
                     close_session(_session_id)
-                    sys.exit(0)
+                    raise _GracefulRestart()
 
             mt5.shutdown()
             time.sleep(args.interval)
@@ -826,6 +830,9 @@ if __name__ == "__main__":
             break  # clean exit (KeyboardInterrupt bên trong đã xử lý)
         except KeyboardInterrupt:
             break
+        except _GracefulRestart:
+            log("Restarting bot with new code after graceful restart...")
+            # loop continues — run_bot(args) called again with fresh state
         except Exception as e:
             import traceback as _tb
             _trace = _tb.format_exc()
