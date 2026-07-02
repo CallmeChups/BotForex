@@ -8,6 +8,7 @@ Each bot runs as a separate process.
 """
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -505,6 +506,41 @@ def _calc_flex_lot(mt5, symbol: str, risk_mode: str, risk_percent: float, risk_a
     return round(lot, 2)
 
 
+def _write_bot_state(pid: int, symbol: str, strategy: str, active: int, pending: int):
+    """Write this bot runtime state to data/bot_state.json for CI/CD graceful deploy."""
+    state_path = os.path.normpath(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "bot_state.json")
+    )
+    os.makedirs(os.path.dirname(state_path), exist_ok=True)
+    entry = {"pid": pid, "symbol": symbol, "strategy": strategy, "active": active, "pending": pending}
+    try:
+        with open(state_path, "r", encoding="utf-8") as f:
+            all_states = json.load(f)
+    except Exception:
+        all_states = []
+    all_states = [s for s in all_states if s.get("pid") != pid]
+    all_states.append(entry)
+    tmp = state_path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(all_states, f)
+    os.replace(tmp, state_path)
+
+
+def _check_pending_restart(pid: int) -> bool:
+    """Return True if a pending_restart flag file exists for this PID."""
+    flag_path = os.path.join("logs", "pending_restart", f"{pid}.flag")
+    return os.path.exists(flag_path)
+
+
+def _clear_pending_restart(pid: int):
+    """Remove the pending_restart flag file."""
+    flag_path = os.path.join("logs", "pending_restart", f"{pid}.flag")
+    try:
+        os.remove(flag_path)
+    except FileNotFoundError:
+        pass
+
+
 def run_feg_bot(args, strategy, params, credentials,
                 entry_start_time: _time = _time(0, 0),
                 entry_end_time: _time = _time(23, 59)):
@@ -738,6 +774,16 @@ def run_feg_bot(args, strategy, params, credentials,
                         })
 
                 last_candle_time = candle_time
+
+                _write_bot_state(os.getpid(), args.symbol, args.strategy,
+                                 len(active_trades), len(pending_orders))
+
+                # Graceful restart: if flagged and idle, exit cleanly so __main__ restarts with new code
+                if _check_pending_restart(os.getpid()) and not active_trades and not pending_orders:
+                    log("Pending restart flag detected and bot is idle - restarting with new code")
+                    _clear_pending_restart(os.getpid())
+                    close_session(_session_id)
+                    sys.exit(0)
 
             mt5.shutdown()
             time.sleep(args.interval)
