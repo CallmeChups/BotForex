@@ -446,7 +446,7 @@ def place_limit_order(
             "magic": magic,
             "comment": comment,
             "type_time": mt5_module.ORDER_TIME_GTC,
-            "type_filling": mt5_module.ORDER_FILLING_RETURN,
+            "type_filling": mt5_module.ORDER_FILLING_IOC,
         }
 
         if sl is not None and sl > 0:

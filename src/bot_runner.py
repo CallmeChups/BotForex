@@ -710,15 +710,18 @@ def run_feg_bot(args, strategy, params, credentials,
                             log(f"[{oid}] Limit order timed out (ticket={mt5_ticket}) — cancelling")
                             ok_cancel, cancel_msg = cancel_pending_order(mt5_ticket, credentials=credentials)
                             if not ok_cancel:
-                                log(f"[{oid}] Cancel FAILED: {cancel_msg}", "ERROR")
+                                log(f"[{oid}] Cancel FAILED: {cancel_msg} — retrying next candle", "ERROR")
+                                send_telegram(f"❌ Cancel failed — order still live\nID: <code>{oid}</code>\nReason: {cancel_msg}", is_error=True)
+                                # Keep in still_pending so next candle retries the cancel
+                                still_pending.append(order)
                             else:
                                 log(f"[{oid}] Cancel result: {cancel_msg}")
-                            send_telegram(
-                                f"⏰ <b>Limit order hết hạn (không khớp)</b>\n"
-                                f"ID: <code>{oid}</code>\nSymbol: {args.symbol}\n"
-                                f"Direction: {_sig['direction']}\nEntry: {_sig['entry_price']:.2f}\n"
-                                f"SL: {_sig['stop_loss']:.2f} TP: {_sig['take_profit']:.2f}"
-                            )
+                                send_telegram(
+                                    f"⏰ <b>Limit order hết hạn (không khớp)</b>\n"
+                                    f"ID: <code>{oid}</code>\nSymbol: {args.symbol}\n"
+                                    f"Direction: {_sig['direction']}\nEntry: {_sig['entry_price']:.2f}\n"
+                                    f"SL: {_sig['stop_loss']:.2f} TP: {_sig['take_profit']:.2f}"
+                                )
                     else:
                         # Order gone from MT5 pending list — check if it became a position (filled)
                         pos = mt5.positions_get(ticket=mt5_ticket)
