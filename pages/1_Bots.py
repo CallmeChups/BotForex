@@ -854,6 +854,9 @@ def show_bot_history():
     with fc4:
         show_deleted = st.checkbox("Hiện đã xóa", value=False, key="bh_deleted")
 
+    from src.bot_history_manager import cleanup_orphaned_sessions
+    cleanup_orphaned_sessions()
+
     sessions = get_sessions(include_deleted=show_deleted,
                             user=None if admin else username)
 

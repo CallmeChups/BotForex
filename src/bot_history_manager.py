@@ -142,6 +142,79 @@ def delete_session(session_id: str):
     _save(sessions)
 
 
+def cleanup_orphaned_sessions():
+    """Mark sessions as stopped if their bot PID is no longer running.
+
+    Called on UI load. Sessions with stopped_at=None are checked against
+    running_bots.json — if the PID is gone, we stamp stopped_at now.
+    """
+    import platform as _platform
+    import subprocess as _subprocess
+
+    sessions = _load()
+    open_sessions = [s for s in sessions if not s.get("stopped_at") and not s.get("deleted")]
+    if not open_sessions:
+        return
+
+    # Load running PIDs from running_bots.json
+    bots_file = os.path.join("data", "running_bots.json")
+    running_pids: set = set()
+    if os.path.exists(bots_file):
+        try:
+            with open(bots_file, "r", encoding="utf-8") as f:
+                bots = json.load(f)
+            running_pids = {b["pid"] for b in bots if "pid" in b}
+        except Exception:
+            pass
+
+    def _is_running(pid: int) -> bool:
+        if pid in running_pids:
+            return True
+        # Double-check OS process table (handles stale running_bots.json)
+        if _platform.system() == "Windows":
+            try:
+                out = _subprocess.check_output(
+                    f'tasklist /FI "PID eq {pid}"',
+                    shell=True, stderr=_subprocess.DEVNULL,
+                ).decode()
+                return str(pid) in out
+            except Exception:
+                return False
+        else:
+            try:
+                os.kill(pid, 0)
+                return True
+            except OSError:
+                return False
+
+    # Session ID encodes strategy_symbol_YYYYMMDD_HHMMSS — no PID.
+    # Match by checking all running_bots entries: a session is alive if
+    # any running bot's started_at matches the session's started_at.
+    running_start_times: set = set()
+    if os.path.exists(bots_file):
+        try:
+            with open(bots_file, "r", encoding="utf-8") as f:
+                bots = json.load(f)
+            for b in bots:
+                if "started_at" in b and _is_running(b.get("pid", -1)):
+                    running_start_times.add(b["started_at"])
+        except Exception:
+            pass
+
+    now = datetime.now(TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
+    changed = False
+    for s in sessions:
+        if s.get("stopped_at") or s.get("deleted"):
+            continue
+        # Session is live only if a running bot started at the same time
+        if s.get("started_at") not in running_start_times:
+            s["stopped_at"] = now
+            changed = True
+
+    if changed:
+        _save(sessions)
+
+
 def get_sessions(include_deleted: bool = False, user: str = None) -> list:
     """Return sessions, newest first. Optionally filter by user."""
     sessions = _load()
