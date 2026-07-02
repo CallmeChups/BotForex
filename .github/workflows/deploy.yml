@@ -61,6 +61,43 @@ jobs:
               Write-Host 'API server restarted on port 8502' \
             \""
 
+      - name: Smart restart bots
+        if: ${{ github.event.inputs.restart_streamlit == 'true' }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            hyperion@100.110.182.114 \
+            "powershell -NonInteractive -Command \"\
+              Set-Location D:\\BotForex; \
+              \$flagDir = 'D:\\BotForex\\logs\\pending_restart'; \
+              New-Item -ItemType Directory -Force \$flagDir | Out-Null; \
+              \$stateFile = 'D:\\BotForex\\data\\bot_state.json'; \
+              if (Test-Path \$stateFile) { \
+                \$states = Get-Content \$stateFile | ConvertFrom-Json; \
+              } else { \
+                \$states = @(); \
+              }; \
+              \$botsFile = 'D:\\BotForex\\data\\running_bots.json'; \
+              if (Test-Path \$botsFile) { \
+                \$bots = Get-Content \$botsFile | ConvertFrom-Json; \
+              } else { \
+                \$bots = @(); \
+              }; \
+              foreach (\$bot in \$bots) { \
+                \$pid = \$bot.pid; \
+                \$state = \$states | Where-Object { \$_.pid -eq \$pid } | Select-Object -First 1; \
+                \$busy = \$state -and (\$state.active -gt 0 -or \$state.pending -gt 0); \
+                if (\$busy) { \
+                  Write-Host \"Bot PID \$pid (\$(\$bot.symbol)) busy (active=\$(\$state.active) pending=\$(\$state.pending)) - flagging for deferred restart\"; \
+                  New-Item -ItemType File -Force \"\$flagDir\\\$pid.flag\" | Out-Null; \
+                } else { \
+                  Write-Host \"Bot PID \$pid (\$(\$bot.symbol)) idle - stopping now (will be restarted by Streamlit UI)\"; \
+                  try { Stop-Process -Id \$pid -Force -ErrorAction SilentlyContinue } catch {}; \
+                  Start-Sleep -Seconds 1; \
+                } \
+              }; \
+              Write-Host 'Smart bot restart complete' \
+            \""
+
       - name: Restart Streamlit
         if: ${{ github.event.inputs.restart_streamlit == 'true' }}
         run: |
