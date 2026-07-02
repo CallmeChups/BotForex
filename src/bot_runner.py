@@ -572,7 +572,7 @@ def run_feg_bot(args, strategy, params, credentials,
                 entry_start_time: _time = _time(0, 0),
                 entry_end_time: _time = _time(23, 59)):
     """Vòng lặp live cho strategy FEG (pattern + EMA21, nhiều pending orders + trades cùng lúc)."""
-    from src.orders import place_order, close_position
+    from src.orders import place_order, close_position, place_limit_order, cancel_pending_order
 
     timeframe = params.get('timeframe', 'M5')
     ema_period = args.ema_period or params.get('ema_period', 21)
@@ -660,53 +660,85 @@ def run_feg_bot(args, strategy, params, credentials,
                 from src.utils import check_exit
                 candle = {"high": last["high"], "low": last["low"], "close": last["close"]}
 
-                # 1. Check pending orders — khớp nếu giá nến chạm entry price
+                # 1. Check pending orders — poll MT5 ticket each candle
                 still_pending = []
                 for order in pending_orders:
-                    entry_price = order["signal"]["entry_price"]
-                    filled = candle["low"] <= entry_price <= candle["high"]
-                    if filled:
-                        import uuid as _uuid
-                        oid = order["order_id"]
-                        log(f"[{oid}] Limit order filled @ {entry_price:.2f}")
-                        send_telegram(f"<b>FEG Limit Filled: {order['signal']['direction']}</b>\n"
-                                      f"ID: <code>{oid}</code>\nEntry: {entry_price:.2f}\n"
-                                      f"SL: {order['signal']['stop_loss']:.2f} TP: {order['signal']['take_profit']:.2f}\n"
-                                      f"Lot: {order['trade_lot']}")
-                        ok, msg, ticket = place_order(
-                            args.symbol, order["signal"]["direction"], order["trade_lot"],
-                            sl=order["signal"]["stop_loss"], tp=order["signal"]["take_profit"],
-                            credentials=credentials, test=bool(args.test),
-                            magic=212100, comment=f"FEG-{oid[-4:]}",
-                        )
-                        log(f"[{oid}] Order result: {msg}")
-                        if ok:
+                    oid = order["order_id"]
+                    mt5_ticket = order.get("mt5_ticket")
+                    _sig = order["signal"]
+
+                    # Test mode: simulate fill by candle low/high (unchanged behaviour)
+                    if args.test or mt5_ticket is None:
+                        filled = candle["low"] <= _sig["entry_price"] <= candle["high"]
+                        if filled:
+                            log(f"[{oid}] [TEST] Limit order filled @ {_sig['entry_price']:.2f}")
+                            send_telegram(f"<b>FEG Limit Filled (TEST): {_sig['direction']}</b>\n"
+                                          f"ID: <code>{oid}</code>\nEntry: {_sig['entry_price']:.2f}\n"
+                                          f"SL: {_sig['stop_loss']:.2f} TP: {_sig['take_profit']:.2f}\n"
+                                          f"Lot: {order['trade_lot']}")
                             active_trades.append({
-                                "direction": order["signal"]["direction"],
-                                "entry": entry_price,
-                                "sl": order["signal"]["stop_loss"],
-                                "tp": order["signal"]["take_profit"],
-                                "ticket": ticket, "candles": 0, "order_id": oid,
+                                "direction": _sig["direction"],
+                                "entry": _sig["entry_price"],
+                                "sl": _sig["stop_loss"],
+                                "tp": _sig["take_profit"],
+                                "ticket": None, "candles": 0, "order_id": oid,
                                 "lot": order.get("trade_lot", lot_size),
                             })
                         else:
-                            send_telegram(f"❌ Order failed\nID: <code>{oid}</code>\nReason: {msg}", is_error=True)
-                        # filled → không giữ lại
-                    else:
+                            order["candles_left"] -= 1
+                            if order["candles_left"] > 0:
+                                still_pending.append(order)
+                            else:
+                                log(f"[{oid}] [TEST] Limit order expired (no fill)")
+                                send_telegram(
+                                    f"⏰ <b>Limit order hết hạn (không khớp) [TEST]</b>\n"
+                                    f"ID: <code>{oid}</code>\nSymbol: {args.symbol}\n"
+                                    f"Direction: {_sig['direction']}\nEntry: {_sig['entry_price']:.2f}\n"
+                                    f"SL: {_sig['stop_loss']:.2f} TP: {_sig['take_profit']:.2f}"
+                                )
+                        continue  # skip live logic below
+
+                    # Live: poll MT5 pending orders by ticket
+                    pending_on_mt5 = mt5.orders_get(ticket=mt5_ticket)
+                    if pending_on_mt5:
+                        # Still pending on broker — decrement counter
                         order["candles_left"] -= 1
                         if order["candles_left"] > 0:
                             still_pending.append(order)
                         else:
-                            log(f"[{order['order_id']}] Limit order expired (no fill)")
-                            _sig = order['signal']
+                            # Timeout — cancel the pending order on MT5
+                            log(f"[{oid}] Limit order timed out (ticket={mt5_ticket}) — cancelling")
+                            ok_cancel, cancel_msg = cancel_pending_order(mt5_ticket, credentials=credentials)
+                            log(f"[{oid}] Cancel result: {cancel_msg}")
                             send_telegram(
                                 f"⏰ <b>Limit order hết hạn (không khớp)</b>\n"
-                                f"ID: <code>{order['order_id']}</code>\n"
-                                f"Symbol: {args.symbol}\n"
-                                f"Direction: {_sig['direction']}\n"
-                                f"Entry: {_sig['entry_price']:.2f}\n"
+                                f"ID: <code>{oid}</code>\nSymbol: {args.symbol}\n"
+                                f"Direction: {_sig['direction']}\nEntry: {_sig['entry_price']:.2f}\n"
                                 f"SL: {_sig['stop_loss']:.2f} TP: {_sig['take_profit']:.2f}"
                             )
+                    else:
+                        # Order gone from MT5 pending list — check if it became a position (filled)
+                        pos = mt5.positions_get(ticket=mt5_ticket)
+                        if pos:
+                            position = pos[0]
+                            fill_price = position.price_open
+                            log(f"[{oid}] Limit order filled by broker @ {fill_price:.5f} (ticket={mt5_ticket})")
+                            send_telegram(f"<b>FEG Limit Filled: {_sig['direction']}</b>\n"
+                                          f"ID: <code>{oid}</code>\nFill: {fill_price:.2f}\n"
+                                          f"SL: {_sig['stop_loss']:.2f} TP: {_sig['take_profit']:.2f}\n"
+                                          f"Lot: {order['trade_lot']} | Ticket: {mt5_ticket}")
+                            active_trades.append({
+                                "direction": _sig["direction"],
+                                "entry": fill_price,          # actual fill price from MT5
+                                "sl": _sig["stop_loss"],
+                                "tp": _sig["take_profit"],
+                                "ticket": mt5_ticket, "candles": 0, "order_id": oid,
+                                "lot": order.get("trade_lot", lot_size),
+                            })
+                        else:
+                            # Disappeared without becoming a position — cancelled externally or rejected
+                            log(f"[{oid}] Pending order {mt5_ticket} no longer on MT5 (cancelled externally or rejected)")
+                            send_telegram(f"⚠️ Pending order removed externally\nID: <code>{oid}</code>\nTicket: {mt5_ticket}")
                 pending_orders = still_pending
 
                 # 2. Check active trades — exit
@@ -788,17 +820,30 @@ def run_feg_bot(args, strategy, params, credentials,
                         log(f"[{order_id}] FEG Signal: {signal['direction']} @ {signal['entry_price']:.2f}, "
                             f"SL={signal['stop_loss']:.2f}, TP={signal['take_profit']:.2f}, lot={trade_lot}, "
                             f"limit_timeout={limit_order_candles}c")
-                        send_telegram(f"<b>FEG Signal (pending): {signal['direction']}</b>\n"
-                                      f"ID: <code>{order_id}</code>\n"
-                                      f"Symbol: {args.symbol}\nEntry: {signal['entry_price']:.2f}\n"
-                                      f"SL: {signal['stop_loss']:.2f} TP: {signal['take_profit']:.2f}\n"
-                                      f"Lot: {trade_lot} | Chờ: {limit_order_candles} nến")
-                        pending_orders.append({
-                            "signal": signal,
-                            "trade_lot": trade_lot,
-                            "candles_left": limit_order_candles,
-                            "order_id": order_id,
-                        })
+                        # Place real MT5 pending limit order
+                        ok_limit, msg_limit, mt5_ticket = place_limit_order(
+                            args.symbol, signal["direction"], trade_lot, signal["entry_price"],
+                            sl=signal["stop_loss"], tp=signal["take_profit"],
+                            credentials=credentials, test=bool(args.test),
+                            magic=212100, comment=f"FEG-{order_id[-4:]}",
+                        )
+                        if not ok_limit:
+                            log(f"[{order_id}] Failed to place limit order: {msg_limit}", "ERROR")
+                            send_telegram(f"❌ Limit order failed\nID: <code>{order_id}</code>\nReason: {msg_limit}", is_error=True)
+                        else:
+                            log(f"[{order_id}] Limit order placed on MT5 ticket={mt5_ticket}")
+                            send_telegram(f"<b>FEG Signal (pending): {signal['direction']}</b>\n"
+                                          f"ID: <code>{order_id}</code>\n"
+                                          f"Symbol: {args.symbol}\nEntry: {signal['entry_price']:.2f}\n"
+                                          f"SL: {signal['stop_loss']:.2f} TP: {signal['take_profit']:.2f}\n"
+                                          f"Lot: {trade_lot} | Ticket: {mt5_ticket} | Chờ: {limit_order_candles} nến")
+                            pending_orders.append({
+                                "signal": signal,
+                                "trade_lot": trade_lot,
+                                "candles_left": limit_order_candles,
+                                "order_id": order_id,
+                                "mt5_ticket": mt5_ticket,
+                            })
 
                 last_candle_time = candle_time
 
