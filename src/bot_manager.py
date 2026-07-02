@@ -46,6 +46,23 @@ def save_bots(bots: list):
         json.dump(bots, f, indent=2)
 
 
+def _remove_bot_state(pid: int):
+    """Remove pid entry from data/bot_state.json when bot stops."""
+    state_path = os.path.join("data", "bot_state.json")
+    if not os.path.exists(state_path):
+        return
+    try:
+        with open(state_path, "r", encoding="utf-8") as f:
+            states = json.load(f)
+        states = [s for s in states if s.get("pid") != pid]
+        tmp = state_path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(states, f)
+        os.replace(tmp, state_path)
+    except Exception:
+        pass
+
+
 def is_process_running(pid: int) -> bool:
     """Check if process is running"""
     if platform.system() == "Windows":
@@ -258,6 +275,7 @@ def stop_bot(pid: int) -> tuple:
         bots = load_bots()
         bots = [b for b in bots if b['pid'] != pid]
         save_bots(bots)
+        _remove_bot_state(pid)
         return True, f"Process {pid} not running (removed from list)"
 
     try:
@@ -290,6 +308,7 @@ def stop_bot(pid: int) -> tuple:
         bots = load_bots()
         bots = [b for b in bots if b['pid'] != pid]
         save_bots(bots)
+        _remove_bot_state(pid)
 
         return True, f"Bot stopped (PID {pid})"
 

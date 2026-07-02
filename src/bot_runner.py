@@ -800,12 +800,14 @@ def run_feg_bot(args, strategy, params, credentials,
 
     except KeyboardInterrupt:
         log("FEG Bot stopped by user")
+        _write_bot_state(os.getpid(), args.symbol, args.strategy, 0, 0)
         close_session(_session_id)
         send_telegram("FEG Bot Stopped (manual)")
     except Exception as e:
         import traceback
         tb = traceback.format_exc()
         log(f"FEG Bot error: {e}", "ERROR")
+        _write_bot_state(os.getpid(), args.symbol, args.strategy, 0, 0)
         close_session(_session_id)
         send_telegram(f"❌ FEG Bot crashed\nSymbol: {args.symbol}\nError: {e}\n\n<pre>{tb[-800:]}</pre>", is_error=True)
         raise
