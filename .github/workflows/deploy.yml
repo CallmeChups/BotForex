@@ -47,6 +47,20 @@ jobs:
               Write-Host 'Deploy complete.' \
             \""
 
+      - name: Restart API Server
+        if: ${{ github.event.inputs.restart_streamlit == 'true' }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            hyperion@100.110.182.114 \
+            "powershell -NonInteractive -Command \"\
+              \$pid8502 = (Get-NetTCPConnection -LocalPort 8502 -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess; \
+              if (\$pid8502) { Stop-Process -Id \$pid8502 -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2 }; \
+              schtasks /Delete /TN 'ApiServerRestart' /F 2>null; \
+              schtasks /Create /TN 'ApiServerRestart' /TR 'D:\\BotForex\\scripts\\start_api.bat' /SC ONCE /ST 00:00 /RL HIGHEST /F; \
+              schtasks /Run /TN 'ApiServerRestart'; \
+              Write-Host 'API server restarted on port 8502' \
+            \""
+
       - name: Restart Streamlit
         if: ${{ github.event.inputs.restart_streamlit == 'true' }}
         run: |
