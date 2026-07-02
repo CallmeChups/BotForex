@@ -78,7 +78,7 @@ jobs:
               }; \
               \$botsFile = 'D:\\BotForex\\data\\running_bots.json'; \
               if (Test-Path \$botsFile) { \
-                \$bots = Get-Content \$botsFile | ConvertFrom-Json; \
+                try { \$bots = Get-Content \$botsFile | ConvertFrom-Json } catch { \$bots = @() }; \
               } else { \
                 \$bots = @(); \
               }; \
@@ -90,7 +90,7 @@ jobs:
                   Write-Host \"Bot PID \$botPid (\$(\$bot.symbol)) busy (active=\$(\$state.active) pending=\$(\$state.pending)) - flagging for deferred restart\"; \
                   New-Item -ItemType File -Force \"\$flagDir\\\$botPid.flag\" | Out-Null; \
                 } else { \
-                  Write-Host \"Bot PID \$botPid (\$(\$bot.symbol)) idle - stopping now (will be restarted by Streamlit UI)\"; \
+                  Write-Host \"Bot PID \$botPid (\$(\$bot.symbol)) idle - stopping now (bot will not auto-restart; restart from Streamlit UI if needed)\"; \
                   try { Stop-Process -Id \$botPid -Force -ErrorAction SilentlyContinue } catch {}; \
                   Start-Sleep -Seconds 1; \
                 } \

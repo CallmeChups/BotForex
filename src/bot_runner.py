@@ -423,16 +423,30 @@ def run_bot(args):
 
                 mt5.shutdown()
 
+            # Write idle state — run_bot doesn't track active/pending, always 0
+            _write_bot_state(os.getpid(), args.symbol,
+                             args.strategy, 1 if active_trade else 0, 0)
+            # Graceful restart: exit when idle and flagged
+            if _check_pending_restart(os.getpid()) and not active_trade:
+                log("Pending restart flag detected and bot is idle — restarting with new code")
+                _clear_pending_restart(os.getpid())
+                _write_bot_state(os.getpid(), args.symbol, args.strategy, 0, 0)
+                raise _GracefulRestart()
+
             # Sleep before next check
             time.sleep(args.interval)
 
     except KeyboardInterrupt:
         log("Bot stopped by user")
+        _write_bot_state(os.getpid(), args.symbol, args.strategy, 0, 0)
         send_telegram("Bot Stopped (manual)")
+    except _GracefulRestart:
+        raise
     except Exception as e:
         import traceback
         tb = traceback.format_exc()
         log(f"Bot error: {e}", "ERROR")
+        _write_bot_state(os.getpid(), args.symbol, args.strategy, 0, 0)
         send_telegram(f"❌ Bot crashed\nStrategy: {args.strategy}\nSymbol: {args.symbol}\nError: {e}\n\n<pre>{tb[-800:]}</pre>", is_error=True)
         raise
 
@@ -511,7 +525,11 @@ def _calc_flex_lot(mt5, symbol: str, risk_mode: str, risk_percent: float, risk_a
 
 
 def _write_bot_state(pid: int, symbol: str, strategy: str, active: int, pending: int):
-    """Write this bot runtime state to data/bot_state.json for CI/CD graceful deploy."""
+    """Write this bot runtime state to data/bot_state.json for CI/CD graceful deploy.
+
+    NOTE: read-modify-write is not atomic across concurrent bots; at candle frequency
+    with few bots, lost updates are unlikely but possible.
+    """
     state_path = os.path.normpath(
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "bot_state.json")
     )
@@ -791,6 +809,7 @@ def run_feg_bot(args, strategy, params, credentials,
                 if _check_pending_restart(os.getpid()) and not active_trades and not pending_orders:
                     log("Pending restart flag detected and bot is idle — restarting with new code")
                     _clear_pending_restart(os.getpid())
+                    _write_bot_state(os.getpid(), args.symbol, args.strategy, 0, 0)
                     close_session(_session_id)
                     mt5.shutdown()
                     raise _GracefulRestart()

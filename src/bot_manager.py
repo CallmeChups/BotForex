@@ -48,7 +48,9 @@ def save_bots(bots: list):
 
 def _remove_bot_state(pid: int):
     """Remove pid entry from data/bot_state.json when bot stops."""
-    state_path = os.path.join("data", "bot_state.json")
+    state_path = os.path.normpath(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "bot_state.json")
+    )
     if not os.path.exists(state_path):
         return
     try:
