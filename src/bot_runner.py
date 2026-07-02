@@ -709,7 +709,10 @@ def run_feg_bot(args, strategy, params, credentials,
                             # Timeout — cancel the pending order on MT5
                             log(f"[{oid}] Limit order timed out (ticket={mt5_ticket}) — cancelling")
                             ok_cancel, cancel_msg = cancel_pending_order(mt5_ticket, credentials=credentials)
-                            log(f"[{oid}] Cancel result: {cancel_msg}")
+                            if not ok_cancel:
+                                log(f"[{oid}] Cancel FAILED: {cancel_msg}", "ERROR")
+                            else:
+                                log(f"[{oid}] Cancel result: {cancel_msg}")
                             send_telegram(
                                 f"⏰ <b>Limit order hết hạn (không khớp)</b>\n"
                                 f"ID: <code>{oid}</code>\nSymbol: {args.symbol}\n"
