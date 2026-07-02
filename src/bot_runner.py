@@ -674,13 +674,8 @@ def run_feg_bot(args, strategy, params, credentials,
                         trade_lot = trade.get("lot", lot_size)
                         pnl_usd = pnl * pv * trade_lot * 100000  # pips → USD
                         oid = trade.get("order_id", "")
-                        log(f"[{oid}] FEG Exit: {exit_type} @ {exit_price:.2f}, P&L: {pnl:.1f} pips (${pnl_usd:.2f})")
-                        send_telegram(f"<b>FEG Exit: {exit_type}</b>\nID: <code>{oid}</code>\nPrice: {exit_price:.2f}\nP&L: {pnl:.1f} pips (${pnl_usd:.2f})")
-                        _record_trade(_session_id, oid, trade["direction"],
-                                      trade["entry"], exit_price, exit_type,
-                                      pnl_usd, trade_lot)
+                        # If live, attempt to close position — skip if broker already closed it (TP/SL server-side)
                         if not args.test and trade.get("ticket"):
-                            # Check if position still exists — broker may have already closed it via TP/SL
                             _pos = mt5.positions_get(ticket=trade["ticket"])
                             if not _pos:
                                 log(f"[{oid}] Position already closed by broker (TP/SL hit server-side)")
@@ -689,6 +684,13 @@ def run_feg_bot(args, strategy, params, credentials,
                                 if not closed_ok:
                                     log(f"[{oid}] Close failed: {close_msg}", "ERROR")
                                     send_telegram(f"❌ Close failed\nID: <code>{oid}</code>\nReason: {close_msg}", is_error=True)
+                                    still_active.append(trade)
+                                    continue
+                        log(f"[{oid}] FEG Exit: {exit_type} @ {exit_price:.2f}, P&L: {pnl:.1f} pips (${pnl_usd:.2f})")
+                        send_telegram(f"<b>FEG Exit: {exit_type}</b>\nID: <code>{oid}</code>\nPrice: {exit_price:.2f}\nP&L: {pnl:.1f} pips (${pnl_usd:.2f})")
+                        _record_trade(_session_id, oid, trade["direction"],
+                                      trade["entry"], exit_price, exit_type,
+                                      pnl_usd, trade_lot)
                     else:
                         still_active.append(trade)
                 active_trades = still_active
