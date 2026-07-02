@@ -586,11 +586,12 @@ def run_feg_bot(args, strategy, params, credentials,
             candle_time = datetime.fromtimestamp(int(last["time"]), tz=TIMEZONE)
             is_new_candle = (last_candle_time is None) or (candle_time > last_candle_time)
 
-            log(f"Tick check @ {datetime.now(TIMEZONE).strftime('%H:%M:%S')} | "
-                f"last candle: {candle_time.strftime('%H:%M')} "
-                f"O={last['open']:.2f} H={last['high']:.2f} L={last['low']:.2f} C={last['close']:.2f} | "
-                f"EMA={ema[-1]:.2f} | new_candle={is_new_candle} | "
-                f"pending={len(pending_orders)} active={len(active_trades)}")
+            if pending_orders or active_trades:
+                log(f"Tick check @ {datetime.now(TIMEZONE).strftime('%H:%M:%S')} | "
+                    f"last candle: {candle_time.strftime('%H:%M')} "
+                    f"O={last['open']:.2f} H={last['high']:.2f} L={last['low']:.2f} C={last['close']:.2f} | "
+                    f"EMA={ema[-1]:.2f} | new_candle={is_new_candle} | "
+                    f"pending={len(pending_orders)} active={len(active_trades)}")
 
             if is_new_candle:
                 from src.utils import check_exit
@@ -765,7 +766,8 @@ if __name__ == "__main__":
     if args.log_file:
         _log_dir = os.path.dirname(os.path.abspath(args.log_file))
         os.makedirs(_log_dir, exist_ok=True)
-        _fh = _logging.FileHandler(args.log_file, encoding="utf-8")
+        from logging.handlers import RotatingFileHandler as _RFH
+        _fh = _RFH(args.log_file, maxBytes=5*1024*1024, backupCount=3, encoding="utf-8")
         _fh.setFormatter(_fmt)
         _logger.addHandler(_fh)
 
