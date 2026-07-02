@@ -90,7 +90,7 @@ jobs:
                   Write-Host \"Bot PID \$botPid (\$(\$bot.symbol)) busy (active=\$(\$state.active) pending=\$(\$state.pending)) - flagging for deferred restart\"; \
                   New-Item -ItemType File -Force \"\$flagDir\\\$botPid.flag\" | Out-Null; \
                 } else { \
-                  Write-Host \"Bot PID \$botPid (\$(\$bot.symbol)) idle - stopping now (bot will not auto-restart; restart from Streamlit UI if needed)\"; \
+                  Write-Host \"Bot PID \$botPid (\$(\$bot.symbol)) idle - stopping now\"; \
                   try { Stop-Process -Id \$botPid -Force -ErrorAction SilentlyContinue } catch {}; \
                   Start-Sleep -Seconds 1; \
                 } \
