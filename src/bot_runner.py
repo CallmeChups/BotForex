@@ -783,10 +783,14 @@ def run_feg_bot(args, strategy, params, credentials,
                             else:
                                 closed_ok, close_msg = close_position(trade["ticket"], credentials=credentials)
                                 if not closed_ok:
-                                    log(f"[{oid}] Close failed: {close_msg}", "ERROR")
-                                    send_telegram(f"❌ Close failed\nID: <code>{oid}</code>\nReason: {close_msg}", is_error=True)
-                                    still_active.append(trade)
-                                    continue
+                                    # "Position not found" means broker closed it between our check and close call
+                                    if "not found" in close_msg.lower():
+                                        log(f"[{oid}] Position closed by broker between check and close (race) — treating as broker-closed")
+                                    else:
+                                        log(f"[{oid}] Close failed: {close_msg}", "ERROR")
+                                        send_telegram(f"❌ Close failed\nID: <code>{oid}</code>\nReason: {close_msg}", is_error=True)
+                                        still_active.append(trade)
+                                        continue
                         log(f"[{oid}] FEG Exit: {exit_type} @ {exit_price:.2f}, P&L: {pnl:.1f} pips (${pnl_usd:.2f})")
                         send_telegram(f"<b>FEG Exit: {exit_type}</b>\nID: <code>{oid}</code>\nPrice: {exit_price:.2f}\nP&L: {pnl:.1f} pips (${pnl_usd:.2f})")
                         _record_trade(_session_id, oid, trade["direction"],
