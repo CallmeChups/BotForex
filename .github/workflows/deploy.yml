@@ -72,7 +72,7 @@ jobs:
               New-Item -ItemType Directory -Force \$flagDir | Out-Null; \
               \$stateFile = 'D:\\BotForex\\data\\bot_state.json'; \
               if (Test-Path \$stateFile) { \
-                \$states = Get-Content \$stateFile | ConvertFrom-Json; \
+                try { \$states = Get-Content \$stateFile | ConvertFrom-Json } catch { \$states = @() }; \
               } else { \
                 \$states = @(); \
               }; \
@@ -83,15 +83,15 @@ jobs:
                 \$bots = @(); \
               }; \
               foreach (\$bot in \$bots) { \
-                \$pid = \$bot.pid; \
-                \$state = \$states | Where-Object { \$_.pid -eq \$pid } | Select-Object -First 1; \
+                \$botPid = \$bot.pid; \
+                \$state = \$states | Where-Object { \$_.pid -eq \$botPid } | Select-Object -First 1; \
                 \$busy = \$state -and (\$state.active -gt 0 -or \$state.pending -gt 0); \
                 if (\$busy) { \
-                  Write-Host \"Bot PID \$pid (\$(\$bot.symbol)) busy (active=\$(\$state.active) pending=\$(\$state.pending)) - flagging for deferred restart\"; \
-                  New-Item -ItemType File -Force \"\$flagDir\\\$pid.flag\" | Out-Null; \
+                  Write-Host \"Bot PID \$botPid (\$(\$bot.symbol)) busy (active=\$(\$state.active) pending=\$(\$state.pending)) - flagging for deferred restart\"; \
+                  New-Item -ItemType File -Force \"\$flagDir\\\$botPid.flag\" | Out-Null; \
                 } else { \
-                  Write-Host \"Bot PID \$pid (\$(\$bot.symbol)) idle - stopping now (will be restarted by Streamlit UI)\"; \
-                  try { Stop-Process -Id \$pid -Force -ErrorAction SilentlyContinue } catch {}; \
+                  Write-Host \"Bot PID \$botPid (\$(\$bot.symbol)) idle - stopping now (will be restarted by Streamlit UI)\"; \
+                  try { Stop-Process -Id \$botPid -Force -ErrorAction SilentlyContinue } catch {}; \
                   Start-Sleep -Seconds 1; \
                 } \
               }; \
