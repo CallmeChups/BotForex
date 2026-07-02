@@ -90,8 +90,12 @@ def close_session(session_id: str):
 
 def record_trade(session_id: str, order_id: str, direction: str,
                  entry: float, exit_price: float, exit_type: str,
-                 pnl_usd: float, lot: float):
-    """Append a completed trade to the session and update stats."""
+                 pnl_usd: float, lot: float, verified: bool = True):
+    """Append a completed trade to the session and update stats.
+
+    verified=True means exit_price and pnl_usd came from MT5 deal history (broker-confirmed).
+    verified=False means they are candle-based estimates (deal history unavailable).
+    """
     sessions = _load()
     now = datetime.now(TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
     for s in sessions:
@@ -105,6 +109,7 @@ def record_trade(session_id: str, order_id: str, direction: str,
                 "pnl_usd": round(pnl_usd, 2),
                 "lot": lot,
                 "closed_at": now,
+                "verified": verified,  # False = estimated, not confirmed from broker deal history
             }
             s["trades"].append(trade)
             s["stats"]["total"] += 1

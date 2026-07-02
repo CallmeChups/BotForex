@@ -568,6 +568,29 @@ def _clear_pending_restart(pid: int):
         pass
 
 
+def _get_exit_deal(mt5, ticket: int, retries: int = 3, delay: float = 1.0):
+    """Tìm deal đóng lệnh (DEAL_ENTRY_OUT=1) từ history theo position ticket.
+
+    Retry vì deal history có thể delay vài giây sau khi broker close.
+    Returns dict {price, profit, swap, commission} hoặc None nếu không tìm được.
+    """
+    import time as _time
+    for attempt in range(retries):
+        deals = mt5.history_deals_get(position=ticket)
+        if deals:
+            exit_deal = next((d for d in deals if d.entry == 1), None)  # 1 = DEAL_ENTRY_OUT
+            if exit_deal:
+                return {
+                    "price": exit_deal.price,
+                    "profit": exit_deal.profit,
+                    "swap": exit_deal.swap,
+                    "commission": exit_deal.commission,
+                }
+        if attempt < retries - 1:
+            _time.sleep(delay)
+    return None
+
+
 def run_feg_bot(args, strategy, params, credentials,
                 entry_start_time: _time = _time(0, 0),
                 entry_end_time: _time = _time(23, 59)):
@@ -771,31 +794,65 @@ def run_feg_bot(args, strategy, params, credentials,
                         exit_type, exit_price = "TIME", last["close"]
                     if exit_type:
                         pv = get_pip_value(args.symbol)
-                        pnl = (exit_price - trade["entry"]) / pv if trade["direction"] == "BUY" else (trade["entry"] - exit_price) / pv
                         trade_lot = trade.get("lot", lot_size)
-                        pnl_usd = pnl * pv * trade_lot * 100000  # pips → USD
                         oid = trade.get("order_id", "")
-                        # If live, attempt to close position — skip if broker already closed it (TP/SL server-side)
-                        if not args.test and trade.get("ticket"):
-                            _pos = mt5.positions_get(ticket=trade["ticket"])
+                        ticket = trade.get("ticket")
+
+                        # Step 1: Close position if still open (live mode only)
+                        if not args.test and ticket:
+                            _pos = mt5.positions_get(ticket=ticket)
                             if not _pos:
                                 log(f"[{oid}] Position already closed by broker (TP/SL hit server-side)")
                             else:
-                                closed_ok, close_msg = close_position(trade["ticket"], credentials=credentials)
+                                closed_ok, close_msg = close_position(ticket, credentials=credentials)
                                 if not closed_ok:
-                                    # "Position not found" means broker closed it between our check and close call
                                     if "not found" in close_msg.lower():
-                                        log(f"[{oid}] Position closed by broker between check and close (race) — treating as broker-closed")
+                                        # Race: broker closed between positions_get check and close call
+                                        log(f"[{oid}] Position closed by broker between check and close (race)")
                                     else:
                                         log(f"[{oid}] Close failed: {close_msg}", "ERROR")
                                         send_telegram(f"❌ Close failed\nID: <code>{oid}</code>\nReason: {close_msg}", is_error=True)
                                         still_active.append(trade)
                                         continue
-                        log(f"[{oid}] FEG Exit: {exit_type} @ {exit_price:.2f}, P&L: {pnl:.1f} pips (${pnl_usd:.2f})")
-                        send_telegram(f"<b>FEG Exit: {exit_type}</b>\nID: <code>{oid}</code>\nPrice: {exit_price:.2f}\nP&L: {pnl:.1f} pips (${pnl_usd:.2f})")
+
+                        # Step 2: Verify exit from MT5 deal history (live mode only)
+                        # deal.profit = net P&L from broker (after spread); swap = overnight fee
+                        deal = None
+                        if not args.test and ticket:
+                            deal = _get_exit_deal(mt5, ticket)
+                            if deal is None:
+                                log(f"[{oid}] Could not verify exit from deal history — using estimated price", "WARN")
+
+                        # Step 3: Use verified data if available, else fall back to candle estimate
+                        if deal:
+                            actual_price = deal["price"]
+                            actual_pnl_usd = deal["profit"] + deal["swap"]  # net USD after overnight
+                            verified = True
+                        else:
+                            actual_price = exit_price  # candle-based estimate
+                            actual_pnl_usd = (
+                                (exit_price - trade["entry"]) / pv if trade["direction"] == "BUY"
+                                else (trade["entry"] - exit_price) / pv
+                            ) * pv * trade_lot * 100000
+                            verified = False
+
+                        actual_pips = (
+                            (actual_price - trade["entry"]) / pv if trade["direction"] == "BUY"
+                            else (trade["entry"] - actual_price) / pv
+                        )
+
+                        # Step 4: Log, Telegram, record — mark estimated data clearly
+                        price_str = f"{actual_price:.2f}"
+                        pnl_str = f"{actual_pips:.1f} pips (${actual_pnl_usd:.2f})"
+                        if not verified:
+                            price_str += " ~est"
+                            pnl_str = "~" + pnl_str + " ⚠️"
+
+                        log(f"[{oid}] FEG Exit: {exit_type} @ {price_str}, P&L: {pnl_str}")
+                        send_telegram(f"<b>FEG Exit: {exit_type}</b>\nID: <code>{oid}</code>\nPrice: {price_str}\nP&L: {pnl_str}")
                         _record_trade(_session_id, oid, trade["direction"],
-                                      trade["entry"], exit_price, exit_type,
-                                      pnl_usd, trade_lot)
+                                      trade["entry"], actual_price, exit_type,
+                                      actual_pnl_usd, trade_lot, verified=verified)
                     else:
                         still_active.append(trade)
                 active_trades = still_active
