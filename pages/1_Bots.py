@@ -28,7 +28,8 @@ from src.bot_manager import (
     switch_bot_mode,
     list_bots,
     restart_bot,
-    get_bot_stats
+    get_bot_stats,
+    is_process_running,
 )
 from src.strategy_manager import list_strategies, get_strategy_parameters
 from src.utils import get_pip_value
@@ -210,6 +211,28 @@ def show_running_bots():
             if st.button("❌ Hủy", key="cancel_all_test"):
                 _clear_confirm("all_test")
                 st.rerun()
+
+    # ── Process Scanner — reads bot_state.json, truth independent of running_bots.json ──
+    _state_path = os.path.join("data", "bot_state.json")
+    if os.path.exists(_state_path):
+        try:
+            import json as _json
+            with open(_state_path, "r", encoding="utf-8") as _f:
+                _states = _json.load(_f)
+            _live_states = [s for s in _states if is_process_running(s["pid"])]
+            if _live_states:
+                with st.expander(f"🔍 Process Scanner — {len(_live_states)} bot process(es) detected in bot_state.json", expanded=True):
+                    st.caption("Bots được detect trực tiếp qua OS process table, độc lập với running_bots.json")
+                    for _s in _live_states:
+                        _col1, _col2, _col3 = st.columns([2, 2, 3])
+                        with _col1:
+                            st.markdown(f"**PID {_s['pid']}** — {_s['symbol']}")
+                        with _col2:
+                            st.markdown(f"Strategy: `{_s['strategy']}`")
+                        with _col3:
+                            st.markdown(f"Active trades: `{_s.get('active', '?')}` | Pending: `{_s.get('pending', '?')}`")
+        except Exception:
+            pass
 
     # ── Load & scope bots ─────────────────────────────────────────────────────
     bots = list_bots(refresh=True)
