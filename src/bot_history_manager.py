@@ -143,34 +143,20 @@ def delete_session(session_id: str):
 
 
 def cleanup_orphaned_sessions():
-    """Mark sessions as stopped if their bot PID is no longer running.
+    """Mark sessions as stopped if no live bot process corresponds to them.
 
-    Called on UI load. Sessions with stopped_at=None are checked against
-    running_bots.json — if the PID is gone, we stamp stopped_at now.
+    Called on UI load. Uses running_bots.json (written by bot_runner itself)
+    + OS process table as the source of truth. Sessions with stopped_at=None
+    that have no matching live process are stamped stopped_at=now.
     """
     import platform as _platform
     import subprocess as _subprocess
 
     sessions = _load()
-    open_sessions = [s for s in sessions if not s.get("stopped_at") and not s.get("deleted")]
-    if not open_sessions:
+    if not any(not s.get("stopped_at") and not s.get("deleted") for s in sessions):
         return
 
-    # Load running PIDs from running_bots.json
-    bots_file = os.path.join("data", "running_bots.json")
-    running_pids: set = set()
-    if os.path.exists(bots_file):
-        try:
-            with open(bots_file, "r", encoding="utf-8") as f:
-                bots = json.load(f)
-            running_pids = {b["pid"] for b in bots if "pid" in b}
-        except Exception:
-            pass
-
     def _is_running(pid: int) -> bool:
-        if pid in running_pids:
-            return True
-        # Double-check OS process table (handles stale running_bots.json)
         if _platform.system() == "Windows":
             try:
                 out = _subprocess.check_output(
@@ -187,17 +173,20 @@ def cleanup_orphaned_sessions():
             except OSError:
                 return False
 
-    # Session ID encodes strategy_symbol_YYYYMMDD_HHMMSS — no PID.
-    # Match by checking all running_bots entries: a session is alive if
-    # any running bot's started_at matches the session's started_at.
-    running_start_times: set = set()
+    # Build set of (strategy, symbol, started_at_minute) for all live bots.
+    # started_at_minute = first 16 chars "YYYY-MM-DD HH:MM" — tolerates ±1s clock skew.
+    live_keys: set = set()
+    bots_file = os.path.join("data", "running_bots.json")
     if os.path.exists(bots_file):
         try:
             with open(bots_file, "r", encoding="utf-8") as f:
                 bots = json.load(f)
             for b in bots:
-                if "started_at" in b and _is_running(b.get("pid", -1)):
-                    running_start_times.add(b["started_at"])
+                pid = b.get("pid", -1)
+                if pid > 0 and _is_running(pid):
+                    key = (b.get("strategy", ""), b.get("symbol", ""),
+                           (b.get("started_at") or "")[:16])
+                    live_keys.add(key)
         except Exception:
             pass
 
@@ -206,8 +195,9 @@ def cleanup_orphaned_sessions():
     for s in sessions:
         if s.get("stopped_at") or s.get("deleted"):
             continue
-        # Session is live only if a running bot started at the same time
-        if s.get("started_at") not in running_start_times:
+        key = (s.get("strategy", ""), s.get("symbol", ""),
+               (s.get("started_at") or "")[:16])
+        if key not in live_keys:
             s["stopped_at"] = now
             changed = True
 

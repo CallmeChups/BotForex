@@ -549,6 +549,58 @@ def _write_bot_state(pid: int, symbol: str, strategy: str, active: int, pending:
     os.replace(tmp, state_path)
 
 
+def _register_in_running_bots(pid: int, symbol: str, strategy: str, user: str,
+                               test: bool, log_path: str, started_at: str):
+    """Upsert this process into data/running_bots.json so the UI can see it.
+
+    Called at bot startup — handles bots launched via run_bots.ps1 or any
+    path that bypasses bot_manager.start_bot().
+    """
+    bots_path = os.path.normpath(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "running_bots.json")
+    )
+    os.makedirs(os.path.dirname(bots_path), exist_ok=True)
+    tmp = bots_path + f".{pid}.tmp"
+    try:
+        with open(bots_path, "r", encoding="utf-8") as f:
+            bots = json.load(f)
+    except Exception:
+        bots = []
+    bots = [b for b in bots if b.get("pid") != pid]
+    bots.append({
+        "id": f"{strategy}_{symbol}_{user}_{pid}",
+        "pid": pid,
+        "strategy": strategy,
+        "symbol": symbol,
+        "user": user,
+        "test": test,
+        "started_at": started_at,
+        "log_path": log_path,
+    })
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(bots, f, indent=2)
+    os.replace(tmp, bots_path)
+
+
+def _unregister_from_running_bots(pid: int):
+    """Remove this process from data/running_bots.json on clean exit."""
+    bots_path = os.path.normpath(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "running_bots.json")
+    )
+    if not os.path.exists(bots_path):
+        return
+    tmp = bots_path + f".{pid}.tmp"
+    try:
+        with open(bots_path, "r", encoding="utf-8") as f:
+            bots = json.load(f)
+        bots = [b for b in bots if b.get("pid") != pid]
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(bots, f, indent=2)
+        os.replace(tmp, bots_path)
+    except Exception:
+        pass
+
+
 def _flag_path(pid: int) -> str:
     """Absolute path to the pending_restart flag file for this pid."""
     return os.path.normpath(
@@ -636,12 +688,22 @@ def run_feg_bot(args, strategy, params, credentials,
                   f"Test: {'Yes' if args.test else 'No'}")
 
     from src.bot_history_manager import create_session, close_session, record_trade as _record_trade
+    _now_str = datetime.now(TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
     _session_id = create_session(
         strategy=args.strategy,
         symbol=args.symbol,
         mode="test" if args.test else "live",
         user=args.user,
         log_path=args.log_file or "",
+    )
+    _register_in_running_bots(
+        pid=os.getpid(),
+        symbol=args.symbol,
+        strategy=args.strategy,
+        user=args.user,
+        test=bool(args.test),
+        log_path=args.log_file or "",
+        started_at=_now_str,
     )
 
     # pending_orders: list of {signal, trade_lot, candles_left, order_id}
@@ -923,6 +985,7 @@ def run_feg_bot(args, strategy, params, credentials,
                     log("Pending restart flag detected and bot is idle — restarting with new code")
                     _clear_pending_restart(os.getpid())
                     _write_bot_state(os.getpid(), args.symbol, args.strategy, 0, 0)
+                    _unregister_from_running_bots(os.getpid())
                     close_session(_session_id)
                     mt5.shutdown()
                     raise _GracefulRestart()
@@ -933,6 +996,7 @@ def run_feg_bot(args, strategy, params, credentials,
     except KeyboardInterrupt:
         log("FEG Bot stopped by user")
         _write_bot_state(os.getpid(), args.symbol, args.strategy, 0, 0)
+        _unregister_from_running_bots(os.getpid())
         close_session(_session_id)
         send_telegram("FEG Bot Stopped (manual)")
     except _GracefulRestart:
@@ -942,6 +1006,7 @@ def run_feg_bot(args, strategy, params, credentials,
         tb = traceback.format_exc()
         log(f"FEG Bot error: {e}", "ERROR")
         _write_bot_state(os.getpid(), args.symbol, args.strategy, 0, 0)
+        _unregister_from_running_bots(os.getpid())
         close_session(_session_id)
         send_telegram(f"❌ FEG Bot crashed\nSymbol: {args.symbol}\nError: {e}\n\n<pre>{tb[-800:]}</pre>", is_error=True)
         raise
