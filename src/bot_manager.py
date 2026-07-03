@@ -57,7 +57,7 @@ def _remove_bot_state(pid: int):
         with open(state_path, "r", encoding="utf-8") as f:
             states = json.load(f)
         states = [s for s in states if s.get("pid") != pid]
-        tmp = state_path + ".tmp"
+        tmp = state_path + f".{pid}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(states, f)
         os.replace(tmp, state_path)

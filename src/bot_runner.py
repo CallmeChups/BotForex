@@ -542,7 +542,8 @@ def _write_bot_state(pid: int, symbol: str, strategy: str, active: int, pending:
         all_states = []
     all_states = [s for s in all_states if s.get("pid") != pid]
     all_states.append(entry)
-    tmp = state_path + ".tmp"
+    # Per-PID tmp file prevents concurrent bots from colliding on Windows file locks
+    tmp = state_path + f".{pid}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(all_states, f)
     os.replace(tmp, state_path)
