@@ -962,11 +962,40 @@ def run_feg_bot(args, strategy, params, credentials,
                             send_telegram(f"❌ Limit order failed\nID: <code>{order_id}</code>\nReason: {msg_limit}", is_error=True)
                         else:
                             log(f"[{order_id}] Limit order placed on MT5 ticket={mt5_ticket}")
+                            _pv = get_pip_value(args.symbol)
+                            _sym_tag = "BTC" if "BTC" in args.symbol else "ETH" if "ETH" in args.symbol else "XAU" if "XAU" in args.symbol else "FX"
+                            _o, _h, _l, _c = c2["open"], c2["high"], c2["low"], c2["close"]
+                            _body = abs(_c - _o)
+                            _buf_offset = buffer_k * _pv
+                            _em_str = f"Body {entry_percent:.0f}%" if entry_mode == "range_percent" else "Close"
+                            _ep = signal["entry_price"]
+                            _sl = signal["stop_loss"]
+                            _tp = signal["take_profit"]
+                            _sl_pips = signal["sl_pips"]
+                            if signal["direction"] == "SELL":
+                                _entry_calc = f"Entry = C + {entry_percent:.0f}%×body = {_c:.2f} + {(entry_percent/100*_body):.2f} = {_ep:.2f}" if entry_mode == "range_percent" else f"Entry = C = {_ep:.2f}"
+                                _sl_calc   = f"SL    = H + buffer   = {_h:.2f} + {_buf_offset:.2f} = {_sl:.2f}"
+                                _tp_calc   = f"TP    = Entry - Risk×{rr_ratio:.1f} = {_tp:.2f}"
+                            else:
+                                _entry_calc = f"Entry = C - {entry_percent:.0f}%×body = {_c:.2f} - {(entry_percent/100*_body):.2f} = {_ep:.2f}" if entry_mode == "range_percent" else f"Entry = C = {_ep:.2f}"
+                                _sl_calc   = f"SL    = L - buffer   = {_l:.2f} - {_buf_offset:.2f} = {_sl:.2f}"
+                                _tp_calc   = f"TP    = Entry + Risk×{rr_ratio:.1f} = {_tp:.2f}"
+                            _calc_block = (
+                                f"C2: O={_o:.2f} H={_h:.2f} L={_l:.2f} C={_c:.2f}\n"
+                                f"Entry Mode: {_em_str}\n"
+                                f"pip_value = {_pv} ({_sym_tag})\n"
+                                f"Buffer_k = {buffer_k} → buffer_offset = Buffer_k × pip_value = ${_buf_offset:.2f}\n"
+                                f"---\n"
+                                f"Body = |C - O| = |{_c:.2f} - {_o:.2f}| = {_body:.2f}\n"
+                                f"{_entry_calc}\n"
+                                f"{_sl_calc}\n"
+                                f"Risk  = {_sl_pips:.2f} pips\n"
+                                f"{_tp_calc}"
+                            )
                             send_telegram(f"<b>FEG Signal (pending): {signal['direction']}</b>\n"
                                           f"ID: <code>{order_id}</code>\n"
-                                          f"Symbol: {args.symbol}\nEntry: {signal['entry_price']:.2f}\n"
-                                          f"SL: {signal['stop_loss']:.2f} TP: {signal['take_profit']:.2f}\n"
-                                          f"Lot: {trade_lot} | Ticket: {mt5_ticket} | Chờ: {limit_order_candles} nến")
+                                          f"Symbol: {args.symbol} | Lot: {trade_lot} | Ticket: {mt5_ticket} | Chờ: {limit_order_candles} nến\n\n"
+                                          f"<pre>{_calc_block}</pre>")
                             pending_orders.append({
                                 "signal": signal,
                                 "trade_lot": trade_lot,
