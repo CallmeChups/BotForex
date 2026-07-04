@@ -470,14 +470,16 @@ def show_create_bot():
                                     help="No real trades, simulation only")
 
         with r1c3:
-            rr_ratio = st.number_input("RR Ratio", value=float(params.get('rr_ratio', 2.0)),
+            rr_ratio = st.number_input("RR Ratio",
+                                       value=float(st.session_state.get(f"{sk}_rr", params.get('rr_ratio', 2.0))),
                                        min_value=0.5, max_value=10.0, step=0.5, key=f"{sk}_rr")
 
         with r1c4:
             use_max_candles = st.checkbox("Max Candles", value=True, key=f"{sk}_use_mc",
                                           help="Uncheck = exit on TP/SL only")
             if use_max_candles:
-                max_candles = st.number_input("", value=int(params.get('max_candles', 7)),
+                max_candles = st.number_input("",
+                                              value=int(st.session_state.get(f"{sk}_mc", params.get('max_candles', 7))),
                                               min_value=1, max_value=50, key=f"{sk}_mc",
                                               label_visibility="collapsed")
             else:
@@ -493,20 +495,24 @@ def show_create_bot():
 
         with r2c1:
             if is_pattern:
-                ema_period = st.number_input("EMA Period", value=int(params.get('ema_period', 21)),
+                ema_period = st.number_input("EMA Period",
+                                             value=int(st.session_state.get(f"{sk}_ema", params.get('ema_period', 21))),
                                              min_value=2, max_value=200, key=f"{sk}_ema")
                 h2_exceed_pips = st.number_input(
-                    "H2 > H1 + N pips", value=float(params.get('h2_exceed_pips', 0.0)),
+                    "H2 > H1 + N pips",
+                    value=float(st.session_state.get(f"{sk}_h2x", params.get('h2_exceed_pips', 0.0))),
                     min_value=0.0, step=1.0, key=f"{sk}_h2x",
                     help="SELL: H2 phải vượt H1 thêm N pips | BUY: L2 phải thấp hơn L1 thêm N pips")
                 st.caption(_pip_caption(h2_exceed_pips, symbol))
                 c2_gap_pips = st.number_input(
-                    "C2 vượt L1/H1 + N pips", value=float(params.get('c2_gap_pips', 0.0)),
+                    "C2 vượt L1/H1 + N pips",
+                    value=float(st.session_state.get(f"{sk}_c2g", params.get('c2_gap_pips', 0.0))),
                     min_value=0.0, step=1.0, key=f"{sk}_c2g",
                     help="SELL: C2 phải đóng thấp hơn L1 thêm N pips | BUY: C2 phải đóng cao hơn H1 thêm N pips")
                 st.caption(_pip_caption(c2_gap_pips, symbol))
                 ema_margin_pips = st.number_input(
-                    "L2/H2 cách EMA + N pips", value=float(params.get('ema_margin_pips', 0.0)),
+                    "L2/H2 cách EMA + N pips",
+                    value=float(st.session_state.get(f"{sk}_emam", params.get('ema_margin_pips', 0.0))),
                     min_value=0.0, step=1.0, key=f"{sk}_emam",
                     help="SELL: L2 phải cách EMA ≥ N pips | BUY: H2 phải cách EMA ≥ N pips")
                 st.caption(_pip_caption(ema_margin_pips, symbol))
@@ -526,27 +532,34 @@ def show_create_bot():
                                            help="Gate entries until this time. 23:59 = no filter.")
 
         with r2c3:
-            entry_mode = st.radio("Entry Mode", options=["close", "range_percent"],
-                                  index=0 if params.get('entry_mode', 'close') == 'close' else 1,
+            _em_opts = ["close", "range_percent"]
+            _em_default = st.session_state.get(f"{sk}_entry_mode", params.get('entry_mode', 'close'))
+            entry_mode = st.radio("Entry Mode", options=_em_opts,
+                                  index=_em_opts.index(_em_default) if _em_default in _em_opts else 0,
                                   format_func=lambda x: "Close" if x == "close" else "Body %",
                                   key=f"{sk}_entry_mode")
             if entry_mode == "range_percent":
                 entry_percent = st.number_input("Entry %",
-                                                value=float(params.get('entry_percent', 10.0) or 10.0),
+                                                value=float(st.session_state.get(f"{sk}_entry_pct", params.get('entry_percent', 10.0) or 10.0)),
                                                 min_value=0.0, max_value=100.0, step=5.0,
                                                 key=f"{sk}_entry_pct")
             else:
                 entry_percent = 0.0
             limit_order_candles = st.number_input(
-                "Chờ khớp lệnh (nến)", value=1, min_value=1, max_value=100,
-                key=f"{sk}_loc",
+                "Chờ khớp lệnh (nến)",
+                value=int(st.session_state.get(f"{sk}_loc", 1)),
+                min_value=1, max_value=100, key=f"{sk}_loc",
                 help="Số nến tối đa chờ limit order khớp. 1 = khớp ngay nến tiếp theo nếu giá chạm entry.")
 
         with r2c4:
-            buffer_k = st.number_input("Buffer K (pips)", value=float(params.get('buffer_k', 5)),
+            buffer_k = st.number_input("Buffer K (pips)",
+                                       value=float(st.session_state.get(f"{sk}_buffer_k", params.get('buffer_k', 5))),
                                        min_value=0.0, max_value=200.0, step=1.0,
                                        key=f"{sk}_buffer_k", help="SL = candle extreme + K pips")
-            lot_mode = st.radio("Lot Mode", options=["fixed", "flex"],
+            _lm_opts = ["fixed", "flex"]
+            _lm_default = st.session_state.get(f"{sk}_lot_mode", "fixed")
+            lot_mode = st.radio("Lot Mode", options=_lm_opts,
+                                index=_lm_opts.index(_lm_default) if _lm_default in _lm_opts else 0,
                                 format_func=lambda x: "Fixed" if x == "fixed" else "Flex (Risk)",
                                 key=f"{sk}_lot_mode")
 
@@ -554,21 +567,29 @@ def show_create_bot():
         with st.expander("Exit Types & Lot Size", expanded=False):
             xc1, xc2 = st.columns(2)
             with xc1:
-                tp_type = st.radio("TP Exit", options=["price_based", "close_based"],
-                                   index=0 if params.get('tp_type', 'price_based') == 'price_based' else 1,
+                _tp_opts = ["price_based", "close_based"]
+                _tp_default = st.session_state.get(f"{sk}_tp_type", params.get('tp_type', 'price_based'))
+                tp_type = st.radio("TP Exit", options=_tp_opts,
+                                   index=_tp_opts.index(_tp_default) if _tp_default in _tp_opts else 0,
                                    format_func=lambda x: "Price-based (wick)" if x == "price_based" else "Close-based",
                                    horizontal=True, key=f"{sk}_tp_type")
             with xc2:
-                sl_type = st.radio("SL Exit", options=["price_based", "close_based"],
-                                   index=0 if params.get('sl_type', 'price_based') == 'price_based' else 1,
+                _sl_opts = ["price_based", "close_based"]
+                _sl_default = st.session_state.get(f"{sk}_sl_type", params.get('sl_type', 'price_based'))
+                sl_type = st.radio("SL Exit", options=_sl_opts,
+                                   index=_sl_opts.index(_sl_default) if _sl_default in _sl_opts else 0,
                                    format_func=lambda x: "Price-based (wick)" if x == "price_based" else "Close-based",
                                    horizontal=True, key=f"{sk}_sl_type")
             bec1, bec2 = st.columns(2)
             with bec1:
-                be_enabled = st.checkbox("Break-Even (BE)", value=False, key=f"{sk}_be_enabled",
+                be_enabled = st.checkbox("Break-Even (BE)",
+                                         value=bool(st.session_state.get(f"{sk}_be_enabled", False)),
+                                         key=f"{sk}_be_enabled",
                                          help="Dời SL về entry khi lời đủ be_r × SL distance")
             with bec2:
-                be_r = st.number_input("BE Trigger (R)", value=1.0, min_value=0.1, max_value=10.0,
+                be_r = st.number_input("BE Trigger (R)",
+                                       value=float(st.session_state.get(f"{sk}_be_r", 1.0)),
+                                       min_value=0.1, max_value=10.0,
                                        step=0.1, format="%.1f", key=f"{sk}_be_r",
                                        help="BE kích hoạt khi lời đạt be_r × SL distance",
                                        disabled=not be_enabled)
@@ -576,7 +597,8 @@ def show_create_bot():
             if lot_mode == "fixed":
                 fc1, _ = st.columns(2)
                 with fc1:
-                    lot_size = st.number_input("Lot Size", value=float(params.get('lot_size', 0.01)),
+                    lot_size = st.number_input("Lot Size",
+                                               value=float(st.session_state.get(f"{sk}_lot", params.get('lot_size', 0.01))),
                                                min_value=0.01, max_value=10.0, step=0.01, format="%.2f",
                                                key=f"{sk}_lot")
                 risk_mode = "percent"
@@ -585,19 +607,24 @@ def show_create_bot():
             else:
                 fc1, fc2, fc3 = st.columns(3)
                 with fc1:
-                    risk_mode = st.radio("Risk Mode", options=["percent", "fixed_amount"],
+                    _rm_opts = ["percent", "fixed_amount"]
+                    _rm_default = st.session_state.get(f"{sk}_risk_mode", "percent")
+                    risk_mode = st.radio("Risk Mode", options=_rm_opts,
+                                         index=_rm_opts.index(_rm_default) if _rm_default in _rm_opts else 0,
                                          format_func=lambda x: "%" if x == "percent" else "Fixed $",
                                          horizontal=True, key=f"{sk}_risk_mode")
                 with fc2:
                     if risk_mode == "percent":
-                        risk_percent = st.number_input("Risk %", value=0.5, min_value=0.1,
-                                                       max_value=5.0, step=0.1, format="%.1f",
+                        risk_percent = st.number_input("Risk %",
+                                                       value=float(st.session_state.get(f"{sk}_risk_pct", 0.5)),
+                                                       min_value=0.1, max_value=5.0, step=0.1, format="%.1f",
                                                        key=f"{sk}_risk_pct")
                         risk_amount = 0.0
                         st.caption(f"Lot tự động = equity MT5 × {risk_percent}%")
                     else:
-                        risk_amount = st.number_input("Risk $", value=5.0, min_value=1.0,
-                                                      max_value=1000.0, step=1.0, format="%.2f",
+                        risk_amount = st.number_input("Risk $",
+                                                      value=float(st.session_state.get(f"{sk}_risk_amt", 5.0)),
+                                                      min_value=1.0, max_value=1000.0, step=1.0, format="%.2f",
                                                       key=f"{sk}_risk_amt")
                         risk_percent = 0.0
                 lot_size = 0.01
