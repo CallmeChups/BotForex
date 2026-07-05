@@ -232,7 +232,9 @@ def history_to_dataframe(history: list) -> pd.DataFrame:
 HISTORY_COLUMNS = {
     # Always shown (core) -- in this exact order
     'core': [
-        'ID',
+        'Date',
+        'Strategy',
+        'Symbol',
         'Date Range',
         'Start Time',
         'End Time',
@@ -241,9 +243,9 @@ HISTORY_COLUMNS = {
         'Total USD',
         'RR',
         'Max Candles',
+        'K',
         'Entry %',
         'Risk %',
-        'K',
         'Risk $',
         'Fixed Lot',
         'Risk Mode',
@@ -255,7 +257,8 @@ HISTORY_COLUMNS = {
 
     # Config columns (optional, shown/hidden via multiselect)
     'config': [
-        'Strategy', 'Symbol', 'Timeframe',
+        'ID',
+        'Timeframe',
         'Entry Time', 'Entry Type', 'EMA Period', 'EMA Dist',
         'Entry Mode', 'Total Pips', 'Lot Mode', 'Start Equity',
         'TP Type', 'SL Type',
