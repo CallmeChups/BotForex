@@ -148,34 +148,34 @@ def fetch_historical_data(symbol: str, start_date: datetime, end_date: datetime,
     # Get MT5 timeframe constant
     mt5_timeframe = get_mt5_timeframe(timeframe)
 
-    # Fetch candles
+    # Fetch candles — use copy_rates_from_pos (more reliable than copy_rates_range on some brokers)
+    # then filter by date range in Python
     try:
-        rates = mt5.copy_rates_range(
-            symbol,
-            mt5_timeframe,
-            start_date,
-            end_date
-        )
-
-        if rates is None or len(rates) == 0:
-            # Probe oldest available candle for a helpful hint before shutdown
-            hint = ""
-            try:
-                probe_old = mt5.copy_rates_from_pos(symbol, mt5_timeframe, 0, 99_999)
-                if probe_old is not None and len(probe_old) > 0:
-                    oldest = pd.to_datetime(probe_old[0]['time'], unit='s').strftime('%Y-%m-%d')
-                    hint = f" — {timeframe} oldest available: {oldest}"
-            except Exception:
-                pass
-            mt5.shutdown()
-            return None, f"No data found for {symbol} in selected date range{hint}"
+        # MT5 hard limit: 99,999 candles per request. Fetch all available then filter by date.
+        rates = mt5.copy_rates_from_pos(symbol, mt5_timeframe, 0, 99_999)
 
         mt5.shutdown()
 
-        # Convert to DataFrame
+        if rates is None or len(rates) == 0:
+            return None, f"No data found for {symbol}"
+
+        # Convert to DataFrame and apply timezone
         df = pd.DataFrame(rates)
         df['time'] = pd.to_datetime(df['time'], unit='s', utc=True)
         df['time'] = df['time'].dt.tz_convert(TIMEZONE)
+
+        # Filter to requested date range
+        df = df[(df['time'] >= start_date) & (df['time'] <= end_date)].reset_index(drop=True)
+
+        if df.empty:
+            oldest = df['time'].min() if not df.empty else pd.to_datetime(rates[0]['time'], unit='s', utc=True)
+            # recalc oldest from raw rates
+            oldest_dt = pd.to_datetime(rates[0]['time'], unit='s', utc=True).strftime('%Y-%m-%d')
+            newest_dt = pd.to_datetime(rates[-1]['time'], unit='s', utc=True).strftime('%Y-%m-%d')
+            return None, (
+                f"No data for {symbol} in selected date range — "
+                f"{timeframe} available: {oldest_dt} → {newest_dt}"
+            )
 
         return df, None
 
