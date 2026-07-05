@@ -148,6 +148,12 @@ def main():
                 max_candles = 0
 
         r3c1, r3c2, r3c3, r3c4 = st.columns(4)
+        is_feg_stop_order = (selected_strategy == 'feg_stop_order')
+        # EMA filter defaults — used below and passed to run_backtest
+        ema_filter_enabled = True
+        buy_ema_side = "below_ema"
+        sell_ema_side = "above_ema"
+
         with r3c1:
             if is_pattern:
                 ema_period = st.number_input("EMA Period", value=int(_pf('ema_period', params.get('ema_period', 21))),
@@ -167,6 +173,24 @@ def main():
                     min_value=0.0, step=1.0,
                     help="SELL: L2 phải cách EMA ≥ N pips | BUY: H2 phải cách EMA ≥ N pips")
                 st.caption(_pip_caption(ema_margin_pips, symbol))
+                if is_feg_stop_order:
+                    ema_filter_enabled = st.checkbox(
+                        "EMA Filter", value=bool(_pf('ema_filter_enabled', params.get('ema_filter_enabled', True))),
+                        help="Bật/tắt điều kiện EMA cho tín hiệu entry")
+                    if ema_filter_enabled:
+                        _ema_side_opts = ["above_ema", "below_ema"]
+                        buy_ema_side = st.selectbox(
+                            "BUY EMA side",
+                            options=_ema_side_opts,
+                            index=_ema_side_opts.index(_pf('buy_ema_side', params.get('buy_ema_side', 'below_ema'))),
+                            format_func=lambda x: "H2 > EMA (above)" if x == "above_ema" else "H2 < EMA (below)",
+                            help="BUY: H2 phải nằm trên hay dưới EMA")
+                        sell_ema_side = st.selectbox(
+                            "SELL EMA side",
+                            options=_ema_side_opts,
+                            index=_ema_side_opts.index(_pf('sell_ema_side', params.get('sell_ema_side', 'above_ema'))),
+                            format_func=lambda x: "L2 > EMA (above)" if x == "above_ema" else "L2 < EMA (below)",
+                            help="SELL: L2 phải nằm trên hay dưới EMA")
                 entry_time = datetime.strptime("00:00", "%H:%M").time()
             else:
                 ema_period = int(params.get('ema_period', 21))
@@ -198,19 +222,25 @@ def main():
                                            help="Gate entries until this time. 23:59 = no filter.")
 
         with r3c3:
-            _pf_em = _pf('entry_mode', 'close')
-            entry_mode = st.radio("Entry Mode", options=["close", "range_percent"],
-                                  index=0 if _pf_em == "close" else 1,
-                                  format_func=lambda x: "Close" if x == "close" else "Body %",
-                                  help="Close: entry at close price | Body %: limit inside candle body")
-            if entry_mode == "range_percent":
-                entry_percent = st.number_input("Entry %", value=float(_pf('entry_percent', 30.0)),
-                                                min_value=0.0, max_value=100.0, step=5.0)
-            else:
+            if is_feg_stop_order:
+                # Stop order: entry = H2+buffer / L2-buffer, không có entry_mode/percent
+                entry_mode = "close"
                 entry_percent = 0.0
+                st.caption("Entry: H2+buffer (BUY) / L2-buffer (SELL)")
+            else:
+                _pf_em = _pf('entry_mode', 'close')
+                entry_mode = st.radio("Entry Mode", options=["close", "range_percent"],
+                                      index=0 if _pf_em == "close" else 1,
+                                      format_func=lambda x: "Close" if x == "close" else "Body %",
+                                      help="Close: entry at close price | Body %: limit inside candle body")
+                if entry_mode == "range_percent":
+                    entry_percent = st.number_input("Entry %", value=float(_pf('entry_percent', 30.0)),
+                                                    min_value=0.0, max_value=100.0, step=5.0)
+                else:
+                    entry_percent = 0.0
             limit_order_candles = st.number_input(
                 "Chờ khớp lệnh (nến)", value=int(_pf('limit_order_candles', 1)), min_value=1, max_value=100,
-                help="Số nến tối đa chờ limit order khớp. 1 = khớp ngay nến tiếp theo nếu giá chạm entry.")
+                help="Số nến tối đa chờ stop order khớp. 1 = khớp ngay nến tiếp theo nếu giá chạm entry.")
 
         with r3c4:
             buffer_k = st.number_input("Buffer K (pips)", value=float(_pf('buffer_k', params.get('buffer_k', 5))),
@@ -529,6 +559,10 @@ def main():
                 limit_order_candles=int(limit_order_candles),
                 be_enabled=be_enabled,
                 be_r=be_r,
+                strategy=selected_strategy,
+                ema_filter_enabled=ema_filter_enabled,
+                buy_ema_side=buy_ema_side,
+                sell_ema_side=sell_ema_side,
             )
 
         # Build config dict for export/history

@@ -470,6 +470,85 @@ def place_limit_order(
         return False, str(e), None
 
 
+def place_stop_order(
+    symbol: str,
+    direction: str,
+    volume: float,
+    price: float,
+    sl: float = None,
+    tp: float = None,
+    credentials: dict = None,
+    test: bool = False,
+    magic: int = 123456,
+    comment: str = "StopOrder",
+) -> tuple:
+    """
+    Place a pending stop order (BUY_STOP or SELL_STOP).
+
+    BUY_STOP:  price > current ask — fills when market rises to price (breakout up)
+    SELL_STOP: price < current bid — fills when market falls to price (breakout down)
+
+    Returns (success, message, ticket).
+    """
+    if test:
+        return True, f"[TEST] {direction}_STOP {symbol} vol={volume} price={price} sl={sl} tp={tp} simulated", None
+
+    mt5, error = get_mt5_connection(credentials)
+    if error:
+        return False, error, None
+
+    try:
+        import MetaTrader5 as mt5_module
+
+        symbol_info = mt5.symbol_info(symbol)
+        if symbol_info is None:
+            mt5.shutdown()
+            return False, f"Symbol {symbol} not found", None
+
+        if not symbol_info.visible:
+            if not mt5.symbol_select(symbol, True):
+                mt5.shutdown()
+                return False, f"Failed to select {symbol}", None
+
+        if direction.upper() == "BUY":
+            order_type = mt5_module.ORDER_TYPE_BUY_STOP
+        else:
+            order_type = mt5_module.ORDER_TYPE_SELL_STOP
+
+        request = {
+            "action": mt5_module.TRADE_ACTION_PENDING,
+            "symbol": symbol,
+            "volume": volume,
+            "type": order_type,
+            "price": price,
+            "deviation": 20,
+            "magic": magic,
+            "comment": comment,
+            "type_time": mt5_module.ORDER_TIME_GTC,
+            "type_filling": mt5_module.ORDER_FILLING_IOC,
+        }
+
+        if sl is not None and sl > 0:
+            request["sl"] = sl
+        if tp is not None and tp > 0:
+            request["tp"] = tp
+
+        result = mt5.order_send(request)
+        mt5.shutdown()
+
+        if result is None:
+            return False, "Stop order failed: No response from MT5", None
+
+        if result.retcode != mt5_module.TRADE_RETCODE_DONE:
+            return False, f"Stop order failed: {result.comment} (code: {result.retcode})", None
+
+        return True, f"Stop order placed at {price:.5f}", result.order
+
+    except Exception as e:
+        mt5.shutdown()
+        return False, str(e), None
+
+
 def cancel_pending_order(
     ticket: int,
     credentials: dict = None,

@@ -96,6 +96,7 @@ def build_bot_command(
     entry_start_time='00:00', entry_end_time='23:59',
     limit_order_candles=1,
     be_enabled=False, be_r=1.0,
+    ema_filter_enabled=True, buy_ema_side="below_ema", sell_ema_side="above_ema",
 ):
     """Build command list to run bot_runner (separated for testability)."""
     cmd = [
@@ -142,6 +143,9 @@ def build_bot_command(
     cmd.extend(["--limit_order_candles", str(limit_order_candles)])
     cmd.extend(["--be_enabled", "1" if be_enabled else "0"])
     cmd.extend(["--be_r", str(be_r)])
+    cmd.extend(["--ema_filter_enabled", "1" if ema_filter_enabled else "0"])
+    cmd.extend(["--buy_ema_side", buy_ema_side])
+    cmd.extend(["--sell_ema_side", sell_ema_side])
     return cmd
 
 
@@ -173,6 +177,9 @@ def start_bot(
     limit_order_candles: int = 1,
     be_enabled: bool = False,
     be_r: float = 1.0,
+    ema_filter_enabled: bool = True,
+    buy_ema_side: str = "below_ema",
+    sell_ema_side: str = "above_ema",
 ) -> tuple:
     """
     Start a new bot process
@@ -200,6 +207,7 @@ def start_bot(
         buffer_k, lot_mode, risk_mode, risk_percent, risk_amount,
         entry_start_time, entry_end_time, limit_order_candles,
         be_enabled, be_r,
+        ema_filter_enabled, buy_ema_side, sell_ema_side,
     )
 
     try:

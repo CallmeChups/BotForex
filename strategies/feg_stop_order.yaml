@@ -1,0 +1,48 @@
+id: feg_stop_order
+name: FEG Stop Order Strategy
+version: "1.0"
+description: |
+  FEG 2-candle pattern + Stop pending order (breakout entry).
+  SELL: H2>H1, C2<L1 → Entry = L2 - buffer_k, SL = H2.
+  BUY:  L2<L1, C2>H1 → Entry = H2 + buffer_k, SL = L2.
+  EMA filter optional, configurable per direction (above_ema / below_ema).
+author: admin
+created: "2026-07-05"
+enabled: true
+
+entry:
+  type: pattern
+  timeframe: M1
+  pattern: feg_stop_order
+  ema_period: 21
+  h2_exceed_pips: 0.0
+  c2_gap_pips: 0.0
+  ema_filter_enabled: true
+  buy_ema_side: below_ema     # "above_ema" | "below_ema"
+  sell_ema_side: above_ema    # "above_ema" | "below_ema"
+  ema_margin_pips: 0.0
+
+exit:
+  tp:
+    type: price_based
+  sl:
+    type: price_based
+  time_limit:
+    enabled: true
+    max_candles: 7
+
+parameters:
+  rr_ratio: 2.0
+  buffer_k: 5
+  lot_size: 0.01
+
+symbols:
+  - XAUUSD
+  - BTCUSD
+  - ETHUSD
+  - XAUUSDm
+  - BTCUSDm
+  - ETHUSDm
+  - EURUSDm
+  - GBPUSDm
+  - AUDUSDm

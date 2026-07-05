@@ -71,6 +71,12 @@ def get_args():
                         help="SL exit type: 'close_based' or 'price_based' (default: from strategy)")
     parser.add_argument("--buffer_k", type=float, default=None,
                         help="SL buffer in pips beyond candle extreme (default: from strategy)")
+    parser.add_argument("--ema_filter_enabled", type=int, default=1,
+                        help="EMA filter: 1=enabled, 0=disabled (feg_stop_order only)")
+    parser.add_argument("--buy_ema_side", type=str, default="below_ema",
+                        help="EMA side for BUY: 'above_ema' | 'below_ema' (feg_stop_order only)")
+    parser.add_argument("--sell_ema_side", type=str, default="above_ema",
+                        help="EMA side for SELL: 'above_ema' | 'below_ema' (feg_stop_order only)")
     parser.add_argument("--lot_mode", type=str, default="fixed",
                         help="Lot size mode: 'fixed' or 'flex' (default: fixed)")
     parser.add_argument("--risk_mode", type=str, default="percent",
@@ -238,8 +244,12 @@ def run_bot(args):
             log(msg, "ERROR")
             send_telegram(f"❌ Bot startup failed\n{msg}", is_error=True)
             return
-        run_feg_bot(args, strategy, params, credentials,
-                    entry_start_time=entry_start, entry_end_time=entry_end)
+        if args.strategy == 'feg_stop_order':
+            run_feg_stop_order_bot(args, strategy, params, credentials,
+                                   entry_start_time=entry_start, entry_end_time=entry_end)
+        else:
+            run_feg_bot(args, strategy, params, credentials,
+                        entry_start_time=entry_start, entry_end_time=entry_end)
         return
 
     # Override with command line args if provided
@@ -465,6 +475,27 @@ def feg_entry_decision(
         rr_ratio=rr_ratio, buffer_k=buffer_k, lot_size=lot_size,
         entry_mode=entry_mode, entry_percent=entry_percent,
         h2_exceed_pips=h2_exceed_pips, c2_gap_pips=c2_gap_pips, ema_margin_pips=ema_margin_pips,
+    )
+
+
+def feg_stop_order_entry_decision(
+    active_trade, candle1, candle2, ema2, symbol,
+    rr_ratio, buffer_k, lot_size,
+    h2_exceed_pips=0.0, c2_gap_pips=0.0,
+    ema_filter_enabled=True, buy_ema_side="below_ema", sell_ema_side="above_ema",
+    ema_margin_pips=0.0,
+):
+    """Quyết định vào lệnh FEG Stop Order. None nếu đang có lệnh (1 lệnh/lúc) hoặc không có pattern."""
+    from src.feg_stop_order_strategy import analyze_feg_stop_order
+    if active_trade is not None:
+        return None
+    return analyze_feg_stop_order(
+        symbol, candle1, candle2, ema2,
+        rr_ratio=rr_ratio, buffer_k=buffer_k, lot_size=lot_size,
+        h2_exceed_pips=h2_exceed_pips, c2_gap_pips=c2_gap_pips,
+        ema_filter_enabled=ema_filter_enabled,
+        buy_ema_side=buy_ema_side, sell_ema_side=sell_ema_side,
+        ema_margin_pips=ema_margin_pips,
     )
 
 
@@ -1038,6 +1069,401 @@ def run_feg_bot(args, strategy, params, credentials,
         _unregister_from_running_bots(os.getpid())
         close_session(_session_id)
         send_telegram(f"❌ FEG Bot crashed\nSymbol: {args.symbol}\nError: {e}\n\n<pre>{tb[-800:]}</pre>", is_error=True)
+        raise
+
+
+def run_feg_stop_order_bot(args, strategy, params, credentials,
+                            entry_start_time: _time = _time(0, 0),
+                            entry_end_time: _time = _time(23, 59)):
+    """Vòng lặp live cho strategy FEG Stop Order (pattern + EMA21, nhiều pending orders + trades cùng lúc)."""
+    from src.orders import place_order, close_position, place_limit_order, cancel_pending_order
+
+    timeframe = params.get('timeframe', 'M5')
+    ema_period = args.ema_period or params.get('ema_period', 21)
+    rr_ratio = args.rr_ratio or params.get('rr_ratio', 2.0)
+    buffer_k = args.buffer_k if args.buffer_k is not None else params.get('buffer_k', 5)
+    lot_size = args.lot_size or params.get('lot_size', 0.01)
+    max_candles = args.max_candles if args.max_candles is not None else params.get('max_candles', 7)
+    h2_exceed_pips = args.h2_exceed_pips if args.h2_exceed_pips else params.get('h2_exceed_pips', 0.0)
+    c2_gap_pips    = args.c2_gap_pips    if args.c2_gap_pips    else params.get('c2_gap_pips',    0.0)
+    ema_margin_pips = args.ema_margin_pips if args.ema_margin_pips else params.get('ema_margin_pips', 0.0)
+    ema_filter_enabled = bool(args.ema_filter_enabled)
+    buy_ema_side  = args.buy_ema_side  or params.get('buy_ema_side',  'below_ema')
+    sell_ema_side = args.sell_ema_side or params.get('sell_ema_side', 'above_ema')
+    limit_order_candles = args.limit_order_candles if args.limit_order_candles else params.get('limit_order_candles', 1)
+    tp_type = args.tp_type or params.get('tp_type', 'price_based')
+    sl_type = args.sl_type or params.get('sl_type', 'price_based')
+    lot_mode = args.lot_mode or 'fixed'
+    risk_mode = args.risk_mode or 'percent'
+    risk_percent = args.risk_percent
+    risk_amount = args.risk_amount
+
+    # Auto-detect symbol min lot and clamp (only for fixed mode)
+    mt5_tmp, err_tmp = get_mt5_connection(credentials)
+    if not err_tmp:
+        sym_info = mt5_tmp.symbol_info(args.symbol)
+        if sym_info and lot_mode == "fixed" and lot_size < sym_info.volume_min:
+            log(f"lot_size {lot_size} < symbol min {sym_info.volume_min} — using {sym_info.volume_min}", "WARN")
+            lot_size = sym_info.volume_min
+        mt5_tmp.shutdown()
+
+    ema_filter_str = f"EMA_filter=ON(buy={buy_ema_side},sell={sell_ema_side},margin={ema_margin_pips}p)" if ema_filter_enabled else "EMA_filter=OFF"
+    lot_log = f"flex({risk_mode} {risk_percent}%/{risk_amount}$)" if lot_mode == "flex" else f"fixed={lot_size}"
+    be_log = f"BE=ON(r={args.be_r})" if args.be_enabled else "BE=OFF"
+    log(f"FEG Stop Order params: EMA{ema_period}, RR={rr_ratio}, buffer_k={buffer_k}, "
+        f"lot={lot_log}, max_candles={max_candles or 'unlimited'}, "
+        f"h2_exceed={h2_exceed_pips}p, c2_gap={c2_gap_pips}p, {ema_filter_str}, {be_log}")
+
+    send_telegram(f"FEG Stop Order Bot Started\nSymbol: {args.symbol}\nUser: {args.user}\n"
+                  f"Test: {'Yes' if args.test else 'No'}")
+
+    from src.bot_history_manager import create_session, close_session, record_trade as _record_trade
+    _now_str = datetime.now(TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
+    _session_id = create_session(
+        strategy=args.strategy,
+        symbol=args.symbol,
+        mode="test" if args.test else "live",
+        user=args.user,
+        log_path=args.log_file or "",
+    )
+    _register_in_running_bots(
+        pid=os.getpid(),
+        symbol=args.symbol,
+        strategy=args.strategy,
+        user=args.user,
+        test=bool(args.test),
+        log_path=args.log_file or "",
+        started_at=_now_str,
+    )
+
+    # pending_orders: list of {signal, trade_lot, candles_left, order_id}
+    # active_trades: list of {direction, entry, sl, tp, ticket, candles, order_id}
+    pending_orders = []
+    active_trades  = []
+    last_candle_time = None
+
+    try:
+        while True:
+            mt5, error = get_mt5_connection(credentials)
+            if error:
+                log(f"MT5 connection failed: {error}", "ERROR")
+                send_telegram(f"MT5 Error: {error}", is_error=True)
+                time.sleep(args.interval)
+                continue
+
+            df = get_recent_candles(mt5, args.symbol, timeframe, count=max(120, ema_period * 4))
+            if df is None or len(df) < ema_period + 2:
+                log(f"Insufficient candle data for {args.symbol} (got {len(df) if df is not None else 0})", "ERROR")
+                send_telegram(f"❌ Insufficient candle data\nSymbol: {args.symbol}", is_error=True)
+                mt5.shutdown()
+                time.sleep(args.interval)
+                continue
+
+            ema = df["close"].ewm(span=ema_period, adjust=False).mean().tolist()
+            last = df.iloc[-1]
+            prev = df.iloc[-2]
+            candle_time = datetime.fromtimestamp(int(last["time"]), tz=TIMEZONE)
+            is_new_candle = (last_candle_time is None) or (candle_time > last_candle_time)
+
+            if pending_orders or active_trades:
+                log(f"Tick check @ {datetime.now(TIMEZONE).strftime('%H:%M:%S')} | "
+                    f"last candle: {candle_time.strftime('%H:%M')} "
+                    f"O={last['open']:.2f} H={last['high']:.2f} L={last['low']:.2f} C={last['close']:.2f} | "
+                    f"EMA={ema[-1]:.2f} | new_candle={is_new_candle} | "
+                    f"pending={len(pending_orders)} active={len(active_trades)}")
+
+            if is_new_candle:
+                from src.utils import check_exit
+                candle = {"high": last["high"], "low": last["low"], "close": last["close"]}
+
+                # 1. Check pending orders — poll MT5 ticket each candle
+                still_pending = []
+                for order in pending_orders:
+                    oid = order["order_id"]
+                    mt5_ticket = order.get("mt5_ticket")
+                    _sig = order["signal"]
+
+                    # Test mode: simulate fill by candle low/high (unchanged behaviour)
+                    if args.test or mt5_ticket is None:
+                        filled = candle["low"] <= _sig["entry_price"] <= candle["high"]
+                        if filled:
+                            log(f"[{oid}] [TEST] Limit order filled @ {_sig['entry_price']:.2f}")
+                            send_telegram(f"<b>FEG SO Limit Filled (TEST): {_sig['direction']}</b>\n"
+                                          f"ID: <code>{oid}</code>\nEntry: {_sig['entry_price']:.2f}\n"
+                                          f"SL: {_sig['stop_loss']:.2f} TP: {_sig['take_profit']:.2f}\n"
+                                          f"Lot: {order['trade_lot']}")
+                            active_trades.append({
+                                "direction": _sig["direction"],
+                                "entry": _sig["entry_price"],
+                                "sl": _sig["stop_loss"],
+                                "tp": _sig["take_profit"],
+                                "ticket": None, "candles": 0, "order_id": oid,
+                                "lot": order.get("trade_lot", lot_size),
+                            })
+                        else:
+                            order["candles_left"] -= 1
+                            if order["candles_left"] > 0:
+                                still_pending.append(order)
+                            else:
+                                log(f"[{oid}] [TEST] Limit order expired (no fill)")
+                                send_telegram(
+                                    f"⏰ <b>Limit order hết hạn (không khớp) [TEST]</b>\n"
+                                    f"ID: <code>{oid}</code>\nSymbol: {args.symbol}\n"
+                                    f"Direction: {_sig['direction']}\nEntry: {_sig['entry_price']:.2f}\n"
+                                    f"SL: {_sig['stop_loss']:.2f} TP: {_sig['take_profit']:.2f}"
+                                )
+                        continue  # skip live logic below
+
+                    # Live: poll MT5 pending orders by ticket
+                    pending_on_mt5 = mt5.orders_get(ticket=mt5_ticket)
+                    if pending_on_mt5:
+                        # Still pending on broker — decrement counter
+                        order["candles_left"] -= 1
+                        if order["candles_left"] > 0:
+                            still_pending.append(order)
+                        else:
+                            # Timeout — cancel the pending order on MT5
+                            log(f"[{oid}] Limit order timed out (ticket={mt5_ticket}) — cancelling")
+                            ok_cancel, cancel_msg = cancel_pending_order(mt5_ticket, credentials=credentials)
+                            if not ok_cancel:
+                                log(f"[{oid}] Cancel FAILED: {cancel_msg} — retrying next candle", "ERROR")
+                                send_telegram(f"❌ Cancel failed — order still live\nID: <code>{oid}</code>\nReason: {cancel_msg}", is_error=True)
+                                still_pending.append(order)
+                            else:
+                                log(f"[{oid}] Cancel result: {cancel_msg}")
+                                send_telegram(
+                                    f"⏰ <b>Limit order hết hạn (không khớp)</b>\n"
+                                    f"ID: <code>{oid}</code>\nSymbol: {args.symbol}\n"
+                                    f"Direction: {_sig['direction']}\nEntry: {_sig['entry_price']:.2f}\n"
+                                    f"SL: {_sig['stop_loss']:.2f} TP: {_sig['take_profit']:.2f}"
+                                )
+                    else:
+                        # Order gone from MT5 pending list — check if it became a position (filled)
+                        pos = mt5.positions_get(ticket=mt5_ticket)
+                        if pos:
+                            position = pos[0]
+                            fill_price = position.price_open
+                            log(f"[{oid}] Limit order filled by broker @ {fill_price:.5f} (ticket={mt5_ticket})")
+                            send_telegram(f"<b>FEG SO Limit Filled: {_sig['direction']}</b>\n"
+                                          f"ID: <code>{oid}</code>\nFill: {fill_price:.2f}\n"
+                                          f"SL: {_sig['stop_loss']:.2f} TP: {_sig['take_profit']:.2f}\n"
+                                          f"Lot: {order['trade_lot']} | Ticket: {mt5_ticket}")
+                            active_trades.append({
+                                "direction": _sig["direction"],
+                                "entry": fill_price,
+                                "sl": _sig["stop_loss"],
+                                "tp": _sig["take_profit"],
+                                "ticket": mt5_ticket, "candles": 0, "order_id": oid,
+                                "lot": order.get("trade_lot", lot_size),
+                            })
+                        else:
+                            log(f"[{oid}] Pending order {mt5_ticket} no longer on MT5 (cancelled externally or rejected)")
+                            send_telegram(f"⚠️ Pending order removed externally\nID: <code>{oid}</code>\nTicket: {mt5_ticket}")
+                pending_orders = still_pending
+
+                # 2. Check active trades — exit
+                feg_be_enabled = bool(args.be_enabled)
+                still_active = []
+                for trade in active_trades:
+                    trade["candles"] += 1
+                    # Break-even: move SL to entry when profit >= be_r * sl_dist
+                    if feg_be_enabled and not trade.get('be_triggered'):
+                        entry_p = trade["entry"]
+                        sl_dist = abs(entry_p - trade["sl"])
+                        if trade["direction"] == "BUY" and candle["high"] >= entry_p + args.be_r * sl_dist:
+                            trade["sl"] = entry_p
+                            trade["be_triggered"] = True
+                            log(f"[{trade.get('order_id','')}] BE triggered — SL → {entry_p:.2f}")
+                        elif trade["direction"] == "SELL" and candle["low"] <= entry_p - args.be_r * sl_dist:
+                            trade["sl"] = entry_p
+                            trade["be_triggered"] = True
+                            log(f"[{trade.get('order_id','')}] BE triggered — SL → {entry_p:.2f}")
+                    exit_type, exit_price = check_exit(
+                        trade["direction"], candle, trade["tp"], trade["sl"], tp_type, sl_type,
+                    )
+                    if not exit_type and max_candles > 0 and trade["candles"] >= max_candles:
+                        exit_type, exit_price = "TIME", last["close"]
+                    if exit_type:
+                        pv = get_pip_value(args.symbol)
+                        trade_lot = trade.get("lot", lot_size)
+                        oid = trade.get("order_id", "")
+                        ticket = trade.get("ticket")
+
+                        # Step 1: Close position if still open (live mode only)
+                        if not args.test and ticket:
+                            _pos = mt5.positions_get(ticket=ticket)
+                            if not _pos:
+                                log(f"[{oid}] Position already closed by broker (TP/SL hit server-side)")
+                            else:
+                                closed_ok, close_msg = close_position(ticket, credentials=credentials)
+                                if not closed_ok:
+                                    if "not found" in close_msg.lower():
+                                        log(f"[{oid}] Position closed by broker between check and close (race)")
+                                    else:
+                                        log(f"[{oid}] Close failed: {close_msg}", "ERROR")
+                                        send_telegram(f"❌ Close failed\nID: <code>{oid}</code>\nReason: {close_msg}", is_error=True)
+                                        still_active.append(trade)
+                                        continue
+
+                        # Step 2: Verify exit from MT5 deal history (live mode only)
+                        deal = None
+                        if not args.test and ticket:
+                            deal = _get_exit_deal(mt5, ticket)
+                            if deal is None:
+                                log(f"[{oid}] Could not verify exit from deal history — using estimated price", "WARN")
+
+                        # Step 3: Use verified data if available, else fall back to candle estimate
+                        if deal:
+                            actual_price = deal["price"]
+                            actual_pnl_usd = deal["profit"] + deal["swap"]
+                            verified = True
+                        else:
+                            actual_price = exit_price
+                            actual_pnl_usd = (
+                                (exit_price - trade["entry"]) / pv if trade["direction"] == "BUY"
+                                else (trade["entry"] - exit_price) / pv
+                            ) * pv * trade_lot * 100000
+                            verified = False
+
+                        actual_pips = (
+                            (actual_price - trade["entry"]) / pv if trade["direction"] == "BUY"
+                            else (trade["entry"] - actual_price) / pv
+                        )
+
+                        # Step 4: Log, Telegram, record
+                        price_str = f"{actual_price:.2f}"
+                        pnl_str = f"{actual_pips:.1f} pips (${actual_pnl_usd:.2f})"
+                        if not verified:
+                            price_str += " ~est"
+                            pnl_str = "~" + pnl_str + " ⚠️"
+
+                        log(f"[{oid}] FEG SO Exit: {exit_type} @ {price_str}, P&L: {pnl_str}")
+                        send_telegram(f"<b>FEG SO Exit: {exit_type}</b>\nID: <code>{oid}</code>\nPrice: {price_str}\nP&L: {pnl_str}")
+                        _record_trade(_session_id, oid, trade["direction"],
+                                      trade["entry"], actual_price, exit_type,
+                                      actual_pnl_usd, trade_lot, verified=verified)
+                    else:
+                        still_active.append(trade)
+                active_trades = still_active
+
+                # 3. Scan FEG Stop Order signal → tạo pending order mới
+                now_hcm = datetime.now(TIMEZONE)
+                in_window = _in_time_window(now_hcm, entry_start_time, entry_end_time)
+                log(f"New candle {candle_time.strftime('%H:%M')} | "
+                    f"C1: O={prev['open']:.2f} H={prev['high']:.2f} L={prev['low']:.2f} C={prev['close']:.2f} | "
+                    f"C2: O={last['open']:.2f} H={last['high']:.2f} L={last['low']:.2f} C={last['close']:.2f} | "
+                    f"EMA={ema[-1]:.2f} | in_window={in_window}")
+                if in_window:
+                    c1 = {"open": prev["open"], "high": prev["high"], "low": prev["low"], "close": prev["close"]}
+                    c2 = {"open": last["open"], "high": last["high"], "low": last["low"], "close": last["close"]}
+                    signal = feg_stop_order_entry_decision(
+                        None, c1, c2, ema[-1], args.symbol,
+                        rr_ratio, buffer_k, lot_size,
+                        h2_exceed_pips, c2_gap_pips,
+                        ema_filter_enabled, buy_ema_side, sell_ema_side, ema_margin_pips,
+                    )
+                    log(f"Signal scan: {signal['direction'] if signal else 'NO SIGNAL'}"
+                        + (f" entry={signal['entry_price']:.2f} sl={signal['stop_loss']:.2f} tp={signal['take_profit']:.2f}" if signal else ""))
+                    if signal:
+                        trade_lot = lot_size
+                        if lot_mode == "flex":
+                            trade_lot = _calc_flex_lot(
+                                mt5, args.symbol, risk_mode, risk_percent, risk_amount,
+                                signal["entry_price"], signal["stop_loss"],
+                            )
+                        import uuid as _uuid
+                        _candle_dt = datetime.fromtimestamp(int(last['time']), tz=TIMEZONE)
+                        order_id = f"ORD-{_candle_dt.strftime('%y%m%d-%H%M%S')}-{args.symbol}-{_uuid.uuid4().hex[:4].upper()}"
+                        log(f"[{order_id}] FEG SO Signal: {signal['direction']} @ {signal['entry_price']:.2f}, "
+                            f"SL={signal['stop_loss']:.2f}, TP={signal['take_profit']:.2f}, lot={trade_lot}, "
+                            f"limit_timeout={limit_order_candles}c")
+                        # Place MT5 stop order (buy stop / sell stop)
+                        from src.orders import place_stop_order as _place_stop_order
+                        ok_stop, msg_stop, mt5_ticket = _place_stop_order(
+                            args.symbol, signal["direction"], trade_lot, signal["entry_price"],
+                            sl=signal["stop_loss"], tp=signal["take_profit"],
+                            credentials=credentials, test=bool(args.test),
+                            magic=212200, comment=f"FEGSO-{order_id[-4:]}",
+                        )
+                        if not ok_stop:
+                            log(f"[{order_id}] Failed to place stop order: {msg_stop}", "ERROR")
+                            send_telegram(f"❌ Stop order failed\nID: <code>{order_id}</code>\nReason: {msg_stop}", is_error=True)
+                        else:
+                            log(f"[{order_id}] Stop order placed on MT5 ticket={mt5_ticket}")
+                            _pv = get_pip_value(args.symbol)
+                            _sym_tag = "BTC" if "BTC" in args.symbol else "ETH" if "ETH" in args.symbol else "XAU" if "XAU" in args.symbol else "FX"
+                            _h, _l = c2["high"], c2["low"]
+                            _buf_offset = buffer_k * _pv
+                            _ep = signal["entry_price"]
+                            _sl = signal["stop_loss"]
+                            _tp = signal["take_profit"]
+                            _sl_pips = signal["sl_pips"]
+                            _ema_str = f"EMA filter: {sell_ema_side if signal['direction'] == 'SELL' else buy_ema_side}" if ema_filter_enabled else "EMA filter: OFF"
+                            if signal["direction"] == "SELL":
+                                _entry_calc = f"Entry = L2 - buffer   = {_l:.2f} - {_buf_offset:.2f} = {_ep:.2f}"
+                                _sl_calc    = f"SL    = H2             = {_sl:.2f}"
+                                _tp_calc    = f"TP    = Entry - Risk×{rr_ratio:.1f} = {_tp:.2f}"
+                            else:
+                                _entry_calc = f"Entry = H2 + buffer   = {_h:.2f} + {_buf_offset:.2f} = {_ep:.2f}"
+                                _sl_calc    = f"SL    = L2             = {_sl:.2f}"
+                                _tp_calc    = f"TP    = Entry + Risk×{rr_ratio:.1f} = {_tp:.2f}"
+                            _calc_block = (
+                                f"C2: H={_h:.2f} L={_l:.2f}\n"
+                                f"pip_value = {_pv} ({_sym_tag})\n"
+                                f"Buffer_k = {buffer_k} → buffer_offset = Buffer_k × pip_value = ${_buf_offset:.2f}\n"
+                                f"{_ema_str}\n"
+                                f"---\n"
+                                f"{_entry_calc}\n"
+                                f"{_sl_calc}\n"
+                                f"Risk  = {_sl_pips:.2f} pips\n"
+                                f"{_tp_calc}"
+                            )
+                            send_telegram(f"<b>FEG SO Signal (stop): {signal['direction']}</b>\n"
+                                          f"ID: <code>{order_id}</code>\n"
+                                          f"Symbol: {args.symbol} | Lot: {trade_lot} | Ticket: {mt5_ticket} | Chờ: {limit_order_candles} nến\n\n"
+                                          f"<pre>{_calc_block}</pre>")
+                            pending_orders.append({
+                                "signal": signal,
+                                "trade_lot": trade_lot,
+                                "candles_left": limit_order_candles,
+                                "order_id": order_id,
+                                "mt5_ticket": mt5_ticket,
+                            })
+
+                last_candle_time = candle_time
+
+                _write_bot_state(os.getpid(), args.symbol, args.strategy,
+                                 len(active_trades), len(pending_orders))
+
+                # Graceful restart: if flagged and idle, raise sentinel so __main__ re-runs bot
+                if _check_pending_restart(os.getpid()) and not active_trades and not pending_orders:
+                    log("Pending restart flag detected and bot is idle — restarting with new code")
+                    _clear_pending_restart(os.getpid())
+                    _write_bot_state(os.getpid(), args.symbol, args.strategy, 0, 0)
+                    _unregister_from_running_bots(os.getpid())
+                    close_session(_session_id)
+                    mt5.shutdown()
+                    raise _GracefulRestart()
+
+            mt5.shutdown()
+            time.sleep(args.interval)
+
+    except KeyboardInterrupt:
+        log("FEG Stop Order Bot stopped by user")
+        _write_bot_state(os.getpid(), args.symbol, args.strategy, 0, 0)
+        _unregister_from_running_bots(os.getpid())
+        close_session(_session_id)
+        send_telegram("FEG Stop Order Bot Stopped (manual)")
+    except _GracefulRestart:
+        raise
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        log(f"FEG Stop Order Bot error: {e}", "ERROR")
+        _write_bot_state(os.getpid(), args.symbol, args.strategy, 0, 0)
+        _unregister_from_running_bots(os.getpid())
+        close_session(_session_id)
+        send_telegram(f"❌ FEG SO Bot crashed\nSymbol: {args.symbol}\nError: {e}\n\n<pre>{tb[-800:]}</pre>", is_error=True)
         raise
 
 

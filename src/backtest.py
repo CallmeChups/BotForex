@@ -11,6 +11,7 @@ import pandas as pd
 
 from src.utils import get_pip_value, check_exit, compute_trade_levels, _in_time_window
 from src.feg_strategy import detect_feg_signal
+from src.feg_stop_order_strategy import detect_feg_stop_order_signal
 
 TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
 
@@ -303,6 +304,11 @@ def run_backtest(
     limit_order_candles: int = 1,
     be_enabled: bool = False,
     be_r: float = 1.0,
+    # FEG Stop Order params
+    strategy: str = "feg_ema21",
+    ema_filter_enabled: bool = True,
+    buy_ema_side: str = "below_ema",
+    sell_ema_side: str = "above_ema",
 ) -> dict:
     """
     Run backtest on historical data
@@ -337,17 +343,31 @@ def run_backtest(
     run_id = f"BT-{datetime.now().strftime('%y%m%d-%H%M%S')}-{symbol}-{uuid.uuid4().hex[:4].upper()}"
 
     if entry_type == "pattern":
-        result = _run_feg_backtest(
-            df=df, symbol=symbol, rr_ratio=rr_ratio, max_candles=max_candles,
-            lot_mode=lot_mode, fixed_lot=fixed_lot, risk_percent=risk_percent,
-            risk_amount=risk_amount, risk_mode=risk_mode, buffer_k=buffer_k,
-            starting_equity=starting_equity, tp_type=tp_type, sl_type=sl_type,
-            entry_mode=entry_mode, entry_percent=entry_percent, ema_period=ema_period,
-            h2_exceed_pips=h2_exceed_pips, c2_gap_pips=c2_gap_pips, ema_margin_pips=ema_margin_pips,
-            entry_start_time=entry_start_time, entry_end_time=entry_end_time,
-            limit_order_candles=limit_order_candles,
-            be_enabled=be_enabled, be_r=be_r,
-        )
+        if strategy == "feg_stop_order":
+            result = _run_feg_stop_order_backtest(
+                df=df, symbol=symbol, rr_ratio=rr_ratio, max_candles=max_candles,
+                lot_mode=lot_mode, fixed_lot=fixed_lot, risk_percent=risk_percent,
+                risk_amount=risk_amount, risk_mode=risk_mode, buffer_k=buffer_k,
+                starting_equity=starting_equity, tp_type=tp_type, sl_type=sl_type,
+                ema_period=ema_period, h2_exceed_pips=h2_exceed_pips, c2_gap_pips=c2_gap_pips,
+                ema_filter_enabled=ema_filter_enabled, buy_ema_side=buy_ema_side,
+                sell_ema_side=sell_ema_side, ema_margin_pips=ema_margin_pips,
+                entry_start_time=entry_start_time, entry_end_time=entry_end_time,
+                limit_order_candles=limit_order_candles,
+                be_enabled=be_enabled, be_r=be_r,
+            )
+        else:
+            result = _run_feg_backtest(
+                df=df, symbol=symbol, rr_ratio=rr_ratio, max_candles=max_candles,
+                lot_mode=lot_mode, fixed_lot=fixed_lot, risk_percent=risk_percent,
+                risk_amount=risk_amount, risk_mode=risk_mode, buffer_k=buffer_k,
+                starting_equity=starting_equity, tp_type=tp_type, sl_type=sl_type,
+                entry_mode=entry_mode, entry_percent=entry_percent, ema_period=ema_period,
+                h2_exceed_pips=h2_exceed_pips, c2_gap_pips=c2_gap_pips, ema_margin_pips=ema_margin_pips,
+                entry_start_time=entry_start_time, entry_end_time=entry_end_time,
+                limit_order_candles=limit_order_candles,
+                be_enabled=be_enabled, be_r=be_r,
+            )
         result["run_id"] = run_id
         return result
 
@@ -499,6 +519,126 @@ def _run_feg_backtest(
                 equity_curve_usd.append(current_equity)
 
                 i = exit_pos + 1  # 1 lệnh/lúc: quét tiếp sau nến exit
+                continue
+
+        i += 1
+
+    stats = calculate_stats(trades, lot_mode)
+    stats["equity_curve"] = equity_curve_pips
+    stats["equity_curve_usd"] = equity_curve_usd
+    stats["trades"] = trades
+    stats["lot_mode"] = lot_mode
+    stats["final_equity"] = current_equity
+    stats["starting_equity"] = starting_equity
+    stats["ohlc_data"] = df
+    return stats
+
+
+def _run_feg_stop_order_backtest(
+    df, symbol, rr_ratio, max_candles, lot_mode, fixed_lot, risk_percent,
+    risk_amount, risk_mode, buffer_k, starting_equity, tp_type, sl_type,
+    ema_period: int = 21,
+    h2_exceed_pips: float = 0.0, c2_gap_pips: float = 0.0,
+    ema_filter_enabled: bool = True,
+    buy_ema_side: str = "below_ema", sell_ema_side: str = "above_ema",
+    ema_margin_pips: float = 0.0,
+    entry_start_time: _time = _time(0, 0),
+    entry_end_time: _time = _time(23, 59),
+    limit_order_candles: int = 1,
+    be_enabled: bool = False,
+    be_r: float = 1.0,
+):
+    """Backtest FEG Stop Order: entry = H2+buffer (BUY) / L2-buffer (SELL), SL = L2 / H2."""
+    pip_value = get_pip_value(symbol)
+    df = df.reset_index(drop=True)
+    ema = df["close"].ewm(span=ema_period, adjust=False).mean()
+    df[f"ema{ema_period}"] = ema
+    ema = ema.tolist()
+
+    trades = []
+    equity_curve_pips = [0]
+    equity_curve_usd = [starting_equity]
+    current_equity = starting_equity
+
+    n = len(df)
+    i = max(1, ema_period)
+    while i < n:
+        candle_time = df.at[i, "time"]
+        if not _in_time_window(candle_time, entry_start_time, entry_end_time):
+            i += 1
+            continue
+
+        c1 = {"open": df.at[i - 1, "open"], "high": df.at[i - 1, "high"],
+              "low": df.at[i - 1, "low"], "close": df.at[i - 1, "close"]}
+        c2 = {"open": df.at[i, "open"], "high": df.at[i, "high"],
+              "low": df.at[i, "low"], "close": df.at[i, "close"]}
+
+        direction = detect_feg_stop_order_signal(
+            c1, c2, ema[i], pip_value,
+            h2_exceed_pips, c2_gap_pips,
+            ema_filter_enabled, buy_ema_side, sell_ema_side, ema_margin_pips,
+        )
+
+        if direction:
+            h2, l2 = c2["high"], c2["low"]
+            buffer_offset = buffer_k * pip_value
+
+            if direction == "BUY":
+                entry_price = h2 + buffer_offset
+                stop_loss   = l2
+                risk        = entry_price - stop_loss
+                take_profit = entry_price + risk * rr_ratio
+            else:
+                entry_price = l2 - buffer_offset
+                stop_loss   = h2
+                risk        = stop_loss - entry_price
+                take_profit = entry_price - risk * rr_ratio
+
+            sl_pips = risk / pip_value
+            levels = {
+                "entry_price": entry_price,
+                "stop_loss": stop_loss,
+                "take_profit": take_profit,
+                "sl_pips": sl_pips,
+            }
+
+            lot_size = _compute_lot_size(
+                lot_mode, current_equity, risk_mode, risk_percent, risk_amount,
+                sl_pips, symbol, fixed_lot,
+            )
+
+            # Tìm nến khớp stop order: giá phải vượt qua entry_price
+            filled_at = None
+            for j in range(i + 1, min(i + 1 + limit_order_candles, n)):
+                if direction == "BUY" and df.at[j, "high"] >= entry_price:
+                    filled_at = j
+                    break
+                elif direction == "SELL" and df.at[j, "low"] <= entry_price:
+                    filled_at = j
+                    break
+
+            if filled_at is not None:
+                exit_type, exit_price, exit_time, candles_held, exit_pos = _simulate_exit(
+                    df, filled_at, direction, take_profit, stop_loss,
+                    max_candles, tp_type, sl_type,
+                    be_enabled=be_enabled, be_r=be_r, entry_price=entry_price,
+                )
+                if not exit_type:
+                    break
+
+                trade, pnl_pips, pnl_usd = _make_trade(
+                    df.at[filled_at, "time"], direction, levels, lot_size, exit_type,
+                    exit_price, exit_time, candles_held, symbol, exit_pos=exit_pos,
+                )
+                current_equity += pnl_usd
+                trade["_c1"] = {**c1, "time": df.at[i - 1, "time"]}
+                trade["_c2"] = {**c2, "time": df.at[i, "time"]}
+                trade["_ema"] = ema[i]
+                trades.append(trade)
+                equity_curve_pips.append(equity_curve_pips[-1] + pnl_pips)
+                equity_curve_usd.append(current_equity)
+
+                i = exit_pos + 1
                 continue
 
         i += 1

@@ -399,6 +399,7 @@ def show_create_bot():
 
     params = get_strategy_parameters(selected_strategy)
     is_pattern = params.get('entry_type', 'time') == 'pattern'
+    is_feg_stop_order = selected_strategy == 'feg_stop_order'
     sk = selected_strategy  # key prefix — forces widget reinit when strategy changes
 
     # Load from Backtest History
@@ -532,19 +533,46 @@ def show_create_bot():
                                            help="Gate entries until this time. 23:59 = no filter.")
 
         with r2c3:
-            _em_opts = ["close", "range_percent"]
-            _em_default = st.session_state.get(f"{sk}_entry_mode", params.get('entry_mode', 'close'))
-            entry_mode = st.radio("Entry Mode", options=_em_opts,
-                                  index=_em_opts.index(_em_default) if _em_default in _em_opts else 0,
-                                  format_func=lambda x: "Close" if x == "close" else "Body %",
-                                  key=f"{sk}_entry_mode")
-            if entry_mode == "range_percent":
-                entry_percent = st.number_input("Entry %",
-                                                value=float(st.session_state.get(f"{sk}_entry_pct", params.get('entry_percent', 10.0) or 10.0)),
-                                                min_value=0.0, max_value=100.0, step=5.0,
-                                                key=f"{sk}_entry_pct")
-            else:
+            if is_feg_stop_order:
+                ema_filter_enabled = st.checkbox(
+                    "EMA Filter",
+                    value=bool(st.session_state.get(f"{sk}_ema_filter", params.get('ema_filter_enabled', True))),
+                    key=f"{sk}_ema_filter",
+                    help="Bật/tắt EMA filter cho feg_stop_order")
+                _ema_side_opts = ["below_ema", "above_ema"]
+                buy_ema_side = st.selectbox(
+                    "BUY EMA side",
+                    options=_ema_side_opts,
+                    index=_ema_side_opts.index(st.session_state.get(f"{sk}_buy_ema_side", params.get('buy_ema_side', 'below_ema'))),
+                    key=f"{sk}_buy_ema_side",
+                    disabled=not ema_filter_enabled,
+                    help="BUY: 'below_ema' → H2 < EMA | 'above_ema' → H2 > EMA")
+                sell_ema_side = st.selectbox(
+                    "SELL EMA side",
+                    options=_ema_side_opts,
+                    index=_ema_side_opts.index(st.session_state.get(f"{sk}_sell_ema_side", params.get('sell_ema_side', 'above_ema'))),
+                    key=f"{sk}_sell_ema_side",
+                    disabled=not ema_filter_enabled,
+                    help="SELL: 'above_ema' → L2 > EMA | 'below_ema' → L2 < EMA")
+                entry_mode = None
                 entry_percent = 0.0
+            else:
+                ema_filter_enabled = True
+                buy_ema_side = "below_ema"
+                sell_ema_side = "above_ema"
+                _em_opts = ["close", "range_percent"]
+                _em_default = st.session_state.get(f"{sk}_entry_mode", params.get('entry_mode', 'close'))
+                entry_mode = st.radio("Entry Mode", options=_em_opts,
+                                      index=_em_opts.index(_em_default) if _em_default in _em_opts else 0,
+                                      format_func=lambda x: "Close" if x == "close" else "Body %",
+                                      key=f"{sk}_entry_mode")
+                if entry_mode == "range_percent":
+                    entry_percent = st.number_input("Entry %",
+                                                    value=float(st.session_state.get(f"{sk}_entry_pct", params.get('entry_percent', 10.0) or 10.0)),
+                                                    min_value=0.0, max_value=100.0, step=5.0,
+                                                    key=f"{sk}_entry_pct")
+                else:
+                    entry_percent = 0.0
             limit_order_candles = st.number_input(
                 "Chờ khớp lệnh (nến)",
                 value=int(st.session_state.get(f"{sk}_loc", 1)),
@@ -826,6 +854,9 @@ def show_create_bot():
                 limit_order_candles=int(limit_order_candles),
                 be_enabled=be_enabled,
                 be_r=be_r,
+                ema_filter_enabled=ema_filter_enabled,
+                buy_ema_side=buy_ema_side,
+                sell_ema_side=sell_ema_side,
             )
 
             if success:
