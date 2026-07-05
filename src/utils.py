@@ -2,12 +2,39 @@
 Shared utility functions for BotForex
 """
 
+import os
+import traceback as _traceback
+import requests as _requests
 from pandas import Series
 from sys import float_info as sflt
 from datetime import time as _time
 from zoneinfo import ZoneInfo as _ZoneInfo
 
 _TZ_HCM = _ZoneInfo("Asia/Ho_Chi_Minh")
+
+
+def report_page_error(exc: Exception, context: str = "") -> None:
+    """Log exception to Telegram ERROR_CHAT and re-raise nothing.
+
+    Call inside except blocks on all Streamlit pages so bugs surface in
+    the bug-error group automatically.  context = short label, e.g.
+    "Backtest / fetch_historical_data".
+    """
+    tb = _traceback.format_exc()
+    label = f"[{context}] " if context else ""
+    msg = f"🐛 <b>PAGE ERROR</b> {label}\n<code>{type(exc).__name__}: {exc}</code>\n\n<pre>{tb[-2000:]}</pre>"
+
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_ERROR_CHAT_ID")
+    if token and chat_id:
+        try:
+            _requests.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"},
+                timeout=8,
+            )
+        except Exception:
+            pass  # never let Telegram failure mask the original error
 
 
 def non_zero_range(high: Series, low: Series) -> Series:

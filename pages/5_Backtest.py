@@ -25,7 +25,7 @@ from src.auth import (require_auth, get_user_mt5_credentials, has_mt5_credential
 username, name = require_auth()
 
 from src.backtest import fetch_historical_data, run_backtest
-from src.utils import is_mt5_available, get_pip_value
+from src.utils import is_mt5_available, get_pip_value, report_page_error
 from src.strategy_manager import list_strategies, get_strategy_parameters
 from src.backtest_history import (
     save_backtest_result,
@@ -530,113 +530,117 @@ def main():
 
     # Run backtest button
     if st.button("Run Backtest", type="primary", use_container_width=True):
-        with st.spinner("Fetching historical data..."):
-            # Convert dates to datetime
-            start_dt = datetime.combine(start_date, datetime.min.time()).replace(tzinfo=TIMEZONE)
-            end_dt = datetime.combine(end_date, datetime.max.time()).replace(tzinfo=TIMEZONE)
+        try:
+            with st.spinner("Fetching historical data..."):
+                # Convert dates to datetime
+                start_dt = datetime.combine(start_date, datetime.min.time()).replace(tzinfo=TIMEZONE)
+                end_dt = datetime.combine(end_date, datetime.max.time()).replace(tzinfo=TIMEZONE)
 
-            # Fetch data
-            df, error = fetch_historical_data(symbol, start_dt, end_dt, user_creds, timeframe)
+                # Fetch data
+                df, error = fetch_historical_data(symbol, start_dt, end_dt, user_creds, timeframe)
 
-            if error:
-                st.error(f"Failed to fetch data: {error}")
-                return
+                if error:
+                    st.error(f"Failed to fetch data: {error}")
+                    st.stop()
 
-            if df is None or df.empty:
-                st.warning("No data found for the selected period")
-                return
+                if df is None or df.empty:
+                    st.warning("No data found for the selected period")
+                    st.stop()
 
-            st.success(f"Fetched {len(df)} candles")
+                st.success(f"Fetched {len(df)} candles")
 
-        with st.spinner("Running backtest..."):
-            # Run backtest
-            results = run_backtest(
-                df=df,
-                symbol=symbol,
-                entry_hour=entry_time.hour,
-                entry_minute=entry_time.minute,
-                sl_pips=sl_pips,
-                rr_ratio=rr_ratio,
-                max_candles=max_candles,
-                lot_mode=lot_mode,
-                fixed_lot=fixed_lot,
-                risk_percent=risk_percent,
-                risk_amount=risk_amount,
-                risk_mode=risk_mode,
-                buffer_k=buffer_k,
-                starting_equity=starting_equity,
-                tp_type=tp_type,
-                sl_type=sl_type,
-                entry_mode=entry_mode,
-                entry_percent=entry_percent,
-                entry_type=entry_type,
-                ema_period=ema_period,
-                h2_exceed_pips=h2_exceed_pips,
-                c2_gap_pips=c2_gap_pips,
-                ema_margin_pips=ema_margin_pips,
-                entry_start_time=entry_start_time,
-                entry_end_time=entry_end_time,
-                limit_order_candles=int(limit_order_candles),
-                be_enabled=be_enabled,
-                be_r=be_r,
-                strategy=selected_strategy,
-                ema_filter_enabled=ema_filter_enabled,
-                buy_ema_side=buy_ema_side,
-                sell_ema_side=sell_ema_side,
-            )
+            with st.spinner("Running backtest..."):
+                results = run_backtest(
+                    df=df,
+                    symbol=symbol,
+                    entry_hour=entry_time.hour,
+                    entry_minute=entry_time.minute,
+                    sl_pips=sl_pips,
+                    rr_ratio=rr_ratio,
+                    max_candles=max_candles,
+                    lot_mode=lot_mode,
+                    fixed_lot=fixed_lot,
+                    risk_percent=risk_percent,
+                    risk_amount=risk_amount,
+                    risk_mode=risk_mode,
+                    buffer_k=buffer_k,
+                    starting_equity=starting_equity,
+                    tp_type=tp_type,
+                    sl_type=sl_type,
+                    entry_mode=entry_mode,
+                    entry_percent=entry_percent,
+                    entry_type=entry_type,
+                    ema_period=ema_period,
+                    h2_exceed_pips=h2_exceed_pips,
+                    c2_gap_pips=c2_gap_pips,
+                    ema_margin_pips=ema_margin_pips,
+                    entry_start_time=entry_start_time,
+                    entry_end_time=entry_end_time,
+                    limit_order_candles=int(limit_order_candles),
+                    be_enabled=be_enabled,
+                    be_r=be_r,
+                    strategy=selected_strategy,
+                    ema_filter_enabled=ema_filter_enabled,
+                    buy_ema_side=buy_ema_side,
+                    sell_ema_side=sell_ema_side,
+                )
 
-        # Build config dict for export/history
-        backtest_config = {
-            'timeframe': timeframe,
-            'start_date': str(start_date),
-            'end_date': str(end_date),
-            'entry_time': entry_time.strftime('%H:%M'),
-            'entry_start_time': entry_start_time.strftime('%H:%M'),
-            'entry_end_time': entry_end_time.strftime('%H:%M'),
-            'entry_mode': entry_mode,
-            'entry_percent': entry_percent,
-            'rr_ratio': rr_ratio,
-            'max_candles': max_candles,
-            'buffer_k': buffer_k,
-            'lot_mode': lot_mode,
-            'tp_type': tp_type,
-            'sl_type': sl_type,
-            'entry_type': entry_type,
-            'ema_period': ema_period,
-            'h2_exceed_pips': h2_exceed_pips,
-            'c2_gap_pips': c2_gap_pips,
-            'ema_margin_pips': ema_margin_pips,
-            'limit_order_candles': int(limit_order_candles),
-            'be_enabled': be_enabled,
-            'be_r': be_r,
-        }
+            # Build config dict for export/history
+            backtest_config = {
+                'timeframe': timeframe,
+                'start_date': str(start_date),
+                'end_date': str(end_date),
+                'entry_time': entry_time.strftime('%H:%M'),
+                'entry_start_time': entry_start_time.strftime('%H:%M'),
+                'entry_end_time': entry_end_time.strftime('%H:%M'),
+                'entry_mode': entry_mode,
+                'entry_percent': entry_percent,
+                'rr_ratio': rr_ratio,
+                'max_candles': max_candles,
+                'buffer_k': buffer_k,
+                'lot_mode': lot_mode,
+                'tp_type': tp_type,
+                'sl_type': sl_type,
+                'entry_type': entry_type,
+                'ema_period': ema_period,
+                'h2_exceed_pips': h2_exceed_pips,
+                'c2_gap_pips': c2_gap_pips,
+                'ema_margin_pips': ema_margin_pips,
+                'limit_order_candles': int(limit_order_candles),
+                'be_enabled': be_enabled,
+                'be_r': be_r,
+            }
 
-        if lot_mode == 'fixed':
-            backtest_config['fixed_lot'] = fixed_lot
-        else:
-            backtest_config['starting_equity'] = starting_equity
-            backtest_config['risk_mode'] = risk_mode
-            backtest_config['risk_percent'] = risk_percent
-            backtest_config['risk_amount'] = risk_amount
+            if lot_mode == 'fixed':
+                backtest_config['fixed_lot'] = fixed_lot
+            else:
+                backtest_config['starting_equity'] = starting_equity
+                backtest_config['risk_mode'] = risk_mode
+                backtest_config['risk_percent'] = risk_percent
+                backtest_config['risk_amount'] = risk_amount
 
-        # Store results in session state
-        st.session_state['backtest_results'] = results
-        st.session_state['backtest_symbol'] = symbol
-        st.session_state['backtest_strategy'] = selected_strategy_name
-        st.session_state['backtest_lot_mode'] = lot_mode
-        st.session_state['backtest_timeframe'] = timeframe
-        st.session_state['backtest_tp_type'] = tp_type
-        st.session_state['backtest_sl_type'] = sl_type
-        st.session_state['backtest_config'] = backtest_config
+            # Store results in session state
+            st.session_state['backtest_results'] = results
+            st.session_state['backtest_symbol'] = symbol
+            st.session_state['backtest_strategy'] = selected_strategy_name
+            st.session_state['backtest_lot_mode'] = lot_mode
+            st.session_state['backtest_timeframe'] = timeframe
+            st.session_state['backtest_tp_type'] = tp_type
+            st.session_state['backtest_sl_type'] = sl_type
+            st.session_state['backtest_config'] = backtest_config
 
-        # Auto-save to history
-        if results.get('total_trades', 0) > 0:
-            save_backtest_result(
-                config=backtest_config,
-                results=results,
-                strategy_name=selected_strategy_name,
-                symbol=symbol
-            )
+            # Auto-save to history
+            if results.get('total_trades', 0) > 0:
+                save_backtest_result(
+                    config=backtest_config,
+                    results=results,
+                    strategy_name=selected_strategy_name,
+                    symbol=symbol
+                )
+
+        except Exception as e:
+            report_page_error(e, f"Backtest / {selected_strategy} / {symbol}")
+            st.error(f"Lỗi khi chạy backtest: {type(e).__name__}: {e}")
 
     # Display results if available
     if 'backtest_results' in st.session_state:
