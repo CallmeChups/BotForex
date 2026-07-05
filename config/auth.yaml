@@ -19,6 +19,10 @@ credentials:
         login: '415929088'
         password: Hang1970@
         server: Exness-MT5Trial14
+      mt5_backtest:
+        login: '275523344'
+        password: Plmoknijb123!@#
+        server: Exness-MT5Real26
       name: User
       password: $2b$12$32ZRRwf8Sp0b/AGXgYIsvOMLHClOxzGs3JDKv5rVw3iB.qnylWECW
       role: user
