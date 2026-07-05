@@ -17,6 +17,9 @@ entry:
   ema_period: 21
   h2_exceed_pips: 0.0
   c2_gap_pips: 0.0
+  ema_filter_enabled: true
+  buy_ema_side: below_ema     # "above_ema" | "below_ema"
+  sell_ema_side: above_ema    # "above_ema" | "below_ema"
   ema_margin_pips: 0.0
 
 exit:

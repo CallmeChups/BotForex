@@ -465,6 +465,7 @@ def feg_entry_decision(
     active_trade, candle1, candle2, ema2, symbol,
     rr_ratio, buffer_k, lot_size, entry_mode, entry_percent,
     h2_exceed_pips=0.0, c2_gap_pips=0.0, ema_margin_pips=0.0,
+    ema_filter_enabled=True, buy_ema_side="below_ema", sell_ema_side="above_ema",
 ):
     """Quyết định vào lệnh FEG. None nếu đang có lệnh (1 lệnh/lúc) hoặc không có pattern."""
     from src.feg_strategy import analyze_feg
@@ -475,6 +476,7 @@ def feg_entry_decision(
         rr_ratio=rr_ratio, buffer_k=buffer_k, lot_size=lot_size,
         entry_mode=entry_mode, entry_percent=entry_percent,
         h2_exceed_pips=h2_exceed_pips, c2_gap_pips=c2_gap_pips, ema_margin_pips=ema_margin_pips,
+        ema_filter_enabled=ema_filter_enabled, buy_ema_side=buy_ema_side, sell_ema_side=sell_ema_side,
     )
 
 
@@ -690,6 +692,9 @@ def run_feg_bot(args, strategy, params, credentials,
     h2_exceed_pips = args.h2_exceed_pips if args.h2_exceed_pips else params.get('h2_exceed_pips', 0.0)
     c2_gap_pips    = args.c2_gap_pips    if args.c2_gap_pips    else params.get('c2_gap_pips',    0.0)
     ema_margin_pips = args.ema_margin_pips if args.ema_margin_pips else params.get('ema_margin_pips', 0.0)
+    ema_filter_enabled = bool(args.ema_filter_enabled)
+    buy_ema_side  = args.buy_ema_side  or params.get('buy_ema_side',  'below_ema')
+    sell_ema_side = args.sell_ema_side or params.get('sell_ema_side', 'above_ema')
     limit_order_candles = args.limit_order_candles if args.limit_order_candles else params.get('limit_order_candles', 1)
     entry_mode = args.entry_mode or params.get('entry_mode', 'close')
     entry_percent = args.entry_percent if args.entry_percent is not None else params.get('entry_percent', 0.0)
@@ -711,9 +716,10 @@ def run_feg_bot(args, strategy, params, credentials,
 
     lot_log = f"flex({risk_mode} {risk_percent}%/{risk_amount}$)" if lot_mode == "flex" else f"fixed={lot_size}"
     be_log = f"BE=ON(r={args.be_r})" if args.be_enabled else "BE=OFF"
+    ema_filter_str = f"EMA_filter=ON(buy={buy_ema_side},sell={sell_ema_side},margin={ema_margin_pips}p)" if ema_filter_enabled else "EMA_filter=OFF"
     log(f"FEG params: EMA{ema_period}, RR={rr_ratio}, buffer_k={buffer_k}, "
         f"lot={lot_log}, max_candles={max_candles or 'unlimited'}, "
-        f"h2_exceed={h2_exceed_pips}p, c2_gap={c2_gap_pips}p, ema_margin={ema_margin_pips}p, {be_log}")
+        f"h2_exceed={h2_exceed_pips}p, c2_gap={c2_gap_pips}p, {ema_filter_str}, {be_log}")
 
     send_telegram(f"FEG Bot Started\nSymbol: {args.symbol}\nUser: {args.user}\n"
                   f"Test: {'Yes' if args.test else 'No'}")
@@ -965,6 +971,7 @@ def run_feg_bot(args, strategy, params, credentials,
                         None, c1, c2, ema[-1], args.symbol,
                         rr_ratio, buffer_k, lot_size, entry_mode, entry_percent,
                         h2_exceed_pips, c2_gap_pips, ema_margin_pips,
+                        ema_filter_enabled, buy_ema_side, sell_ema_side,
                     )
                     log(f"Signal scan: {signal['direction'] if signal else 'NO SIGNAL'}"
                         + (f" entry={signal['entry_price']:.2f} sl={signal['stop_loss']:.2f} tp={signal['take_profit']:.2f}" if signal else ""))

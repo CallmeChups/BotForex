@@ -19,42 +19,46 @@ def detect_feg_signal(
     h2_exceed_pips: float = 0.0,
     c2_gap_pips: float = 0.0,
     ema_margin_pips: float = 0.0,
+    ema_filter_enabled: bool = True,
+    buy_ema_side: str = "below_ema",
+    sell_ema_side: str = "above_ema",
 ) -> str | None:
     """
     Phát hiện tín hiệu FEG từ 2 nến đã đóng + EMA21 tại close candle2.
 
-    Args:
-        candle1: nến đóng trước (dict open/high/low/close)
-        candle2: nến vừa đóng (dict open/high/low/close)
-        ema2: giá trị EMA21 tại close của candle2
-        pip_value: giá trị 1 pip của symbol
-        h2_exceed_pips: H2 > H1 + N pips / L2 < L1 - N pips (điều kiện 4)
-        c2_gap_pips: C2 < L1 - N pips / C2 > H1 + N pips (điều kiện 5)
-        ema_margin_pips: L2 > EMA + N pips / H2 < EMA - N pips (điều kiện 6)
-
-    Returns:
-        "BUY", "SELL", hoặc None
+    EMA filter (optional, per-direction):
+      ema_filter_enabled: bật/tắt toàn bộ EMA check
+      buy_ema_side:  "below_ema" → H2 < EMA (default) | "above_ema" → H2 > EMA
+      sell_ema_side: "above_ema" → L2 > EMA (default) | "below_ema" → L2 < EMA
     """
     h1, l1, o1, c1 = candle1["high"], candle1["low"], candle1["open"], candle1["close"]
     h2, l2, o2, c2 = candle2["high"], candle2["low"], candle2["open"], candle2["close"]
 
-    h2_exceed = h2_exceed_pips * pip_value
-    c2_gap    = c2_gap_pips    * pip_value
+    h2_exceed  = h2_exceed_pips  * pip_value
+    c2_gap     = c2_gap_pips     * pip_value
     ema_margin = ema_margin_pips * pip_value
 
-    bullish1, bullish2 = c1 > o1, c2 > o2  # True = nến tăng
+    bullish1, bullish2 = c1 > o1, c2 > o2
     body1, body2 = abs(c1 - o1), abs(c2 - o2)
 
-    # SELL: FEG giảm — cả 2 nến phải cùng loại (đều giảm), body C2 > body C1
+    # SELL: cả 2 nến giảm, body C2 > C1, H2>H1, C2<L1
     if not bullish1 and not bullish2 and body2 > body1:
         if h2 > h1 + h2_exceed and c2 < l1 - c2_gap:
-            if l2 > ema2 + ema_margin:
+            if not ema_filter_enabled:
+                return "SELL"
+            if sell_ema_side == "above_ema" and l2 > ema2 + ema_margin:
+                return "SELL"
+            if sell_ema_side == "below_ema" and l2 < ema2 - ema_margin:
                 return "SELL"
 
-    # BUY: FEG tăng — cả 2 nến phải cùng loại (đều tăng), body C2 > body C1
+    # BUY: cả 2 nến tăng, body C2 > C1, L2<L1, C2>H1
     if bullish1 and bullish2 and body2 > body1:
         if l2 < l1 - h2_exceed and c2 > h1 + c2_gap:
-            if h2 < ema2 - ema_margin:
+            if not ema_filter_enabled:
+                return "BUY"
+            if buy_ema_side == "below_ema" and h2 < ema2 - ema_margin:
+                return "BUY"
+            if buy_ema_side == "above_ema" and h2 > ema2 + ema_margin:
                 return "BUY"
 
     return None
@@ -73,12 +77,16 @@ def analyze_feg(
     h2_exceed_pips: float = 0.0,
     c2_gap_pips: float = 0.0,
     ema_margin_pips: float = 0.0,
+    ema_filter_enabled: bool = True,
+    buy_ema_side: str = "below_ema",
+    sell_ema_side: str = "above_ema",
 ) -> dict | None:
     """Dựng signal đầy đủ (entry/SL/TP) từ pattern FEG. Trả None nếu không có tín hiệu."""
     pip_value = get_pip_value(symbol)
     direction = detect_feg_signal(
         candle1, candle2, ema2, pip_value,
         h2_exceed_pips, c2_gap_pips, ema_margin_pips,
+        ema_filter_enabled, buy_ema_side, sell_ema_side,
     )
     if direction is None:
         return None

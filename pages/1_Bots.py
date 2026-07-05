@@ -533,12 +533,12 @@ def show_create_bot():
                                            help="Gate entries until this time. 23:59 = no filter.")
 
         with r2c3:
-            if is_feg_stop_order:
+            if is_pattern:
                 ema_filter_enabled = st.checkbox(
                     "EMA Filter",
                     value=bool(st.session_state.get(f"{sk}_ema_filter", params.get('ema_filter_enabled', True))),
                     key=f"{sk}_ema_filter",
-                    help="Bật/tắt EMA filter cho feg_stop_order")
+                    help="Bật/tắt EMA filter")
                 _ema_side_opts = ["below_ema", "above_ema"]
                 buy_ema_side = st.selectbox(
                     "BUY EMA side",
@@ -554,8 +554,29 @@ def show_create_bot():
                     key=f"{sk}_sell_ema_side",
                     disabled=not ema_filter_enabled,
                     help="SELL: 'above_ema' → L2 > EMA | 'below_ema' → L2 < EMA")
-                entry_mode = None
-                entry_percent = 0.0
+                if not is_feg_stop_order:
+                    _em_opts = ["close", "range_percent"]
+                    _em_default = st.session_state.get(f"{sk}_entry_mode", params.get('entry_mode', 'close'))
+                    entry_mode = st.radio("Entry Mode", options=_em_opts,
+                                          index=_em_opts.index(_em_default) if _em_default in _em_opts else 0,
+                                          format_func=lambda x: "Close" if x == "close" else "Body %",
+                                          key=f"{sk}_entry_mode")
+                    if entry_mode == "range_percent":
+                        entry_percent = st.number_input("Entry %",
+                                                        value=float(st.session_state.get(f"{sk}_entry_pct", params.get('entry_percent', 10.0) or 10.0)),
+                                                        min_value=0.0, max_value=100.0, step=5.0,
+                                                        key=f"{sk}_entry_pct")
+                    else:
+                        entry_percent = 0.0
+                    limit_order_candles = st.number_input(
+                        "Chờ khớp lệnh (nến)",
+                        value=int(st.session_state.get(f"{sk}_loc", 1)),
+                        min_value=1, max_value=100, key=f"{sk}_loc",
+                        help="Số nến tối đa chờ limit order khớp. 1 = khớp ngay nến tiếp theo nếu giá chạm entry.")
+                else:
+                    entry_mode = None
+                    entry_percent = 0.0
+                    limit_order_candles = 1
             else:
                 ema_filter_enabled = True
                 buy_ema_side = "below_ema"
@@ -573,11 +594,11 @@ def show_create_bot():
                                                     key=f"{sk}_entry_pct")
                 else:
                     entry_percent = 0.0
-            limit_order_candles = st.number_input(
-                "Chờ khớp lệnh (nến)",
-                value=int(st.session_state.get(f"{sk}_loc", 1)),
-                min_value=1, max_value=100, key=f"{sk}_loc",
-                help="Số nến tối đa chờ limit order khớp. 1 = khớp ngay nến tiếp theo nếu giá chạm entry.")
+                limit_order_candles = st.number_input(
+                    "Chờ khớp lệnh (nến)",
+                    value=int(st.session_state.get(f"{sk}_loc", 1)),
+                    min_value=1, max_value=100, key=f"{sk}_loc",
+                    help="Số nến tối đa chờ limit order khớp. 1 = khớp ngay nến tiếp theo nếu giá chạm entry.")
 
         with r2c4:
             buffer_k = st.number_input("Buffer K (pips)",
