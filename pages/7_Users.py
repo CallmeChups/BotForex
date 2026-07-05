@@ -18,6 +18,7 @@ st.set_page_config(
 
 # Auth check
 from src.auth import require_auth, is_admin, load_config, register_user, hash_password, save_config
+from src.utils import report_page_error
 
 username, name = require_auth()
 
@@ -89,20 +90,24 @@ def main():
             elif new_username in config['credentials']['usernames']:
                 st.error(f"Username '{new_username}' already exists")
             else:
-                # Register
-                success = register_user(
-                    username=new_username,
-                    name=new_name,
-                    password=new_password,
-                    email=new_email or f"{new_username}@botforex.com",
-                    role=new_role
-                )
+                try:
+                    # Register
+                    success = register_user(
+                        username=new_username,
+                        name=new_name,
+                        password=new_password,
+                        email=new_email or f"{new_username}@botforex.com",
+                        role=new_role
+                    )
 
-                if success:
-                    st.success(f"User '{new_username}' registered successfully!")
-                    st.rerun()
-                else:
-                    st.error("Failed to register user")
+                    if success:
+                        st.success(f"User '{new_username}' registered successfully!")
+                        st.rerun()
+                    else:
+                        st.error("Failed to register user")
+                except Exception as e:
+                    report_page_error(e, f"Users / register_user / {new_username}")
+                    st.error(f"Lỗi khi đăng ký user: {type(e).__name__}: {e}")
 
     st.divider()
 
@@ -118,10 +123,14 @@ def main():
             if user_to_delete == username:
                 st.error("Cannot delete yourself")
             else:
-                del config['credentials']['usernames'][user_to_delete]
-                save_config(config)
-                st.success(f"User '{user_to_delete}' deleted")
-                st.rerun()
+                try:
+                    del config['credentials']['usernames'][user_to_delete]
+                    save_config(config)
+                    st.success(f"User '{user_to_delete}' deleted")
+                    st.rerun()
+                except Exception as e:
+                    report_page_error(e, f"Users / delete_user / {user_to_delete}")
+                    st.error(f"Lỗi khi xóa user: {type(e).__name__}: {e}")
     else:
         st.info("No users to delete (only you exist)")
 
@@ -143,9 +152,13 @@ def main():
             elif new_pwd != new_pwd_confirm:
                 st.error("Passwords do not match")
             else:
-                config['credentials']['usernames'][target_user]['password'] = hash_password(new_pwd)
-                save_config(config)
-                st.success(f"Password changed for '{target_user}'")
+                try:
+                    config['credentials']['usernames'][target_user]['password'] = hash_password(new_pwd)
+                    save_config(config)
+                    st.success(f"Password changed for '{target_user}'")
+                except Exception as e:
+                    report_page_error(e, f"Users / change_password / {target_user}")
+                    st.error(f"Lỗi khi đổi mật khẩu: {type(e).__name__}: {e}")
 
 
 if __name__ == "__main__":

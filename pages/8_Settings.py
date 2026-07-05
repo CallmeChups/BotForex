@@ -18,6 +18,7 @@ st.set_page_config(
 
 # Auth check
 from src.auth import require_auth, is_admin, get_user_mt5_credentials, set_user_mt5_credentials, has_mt5_credentials
+from src.utils import report_page_error
 username, name = require_auth()
 
 TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
@@ -82,12 +83,16 @@ def main():
             if not mt5_login or not mt5_password or not mt5_server:
                 st.error("Please fill in all MT5 fields")
             else:
-                success = set_user_mt5_credentials(username, mt5_login, mt5_password, mt5_server)
-                if success:
-                    st.success("MT5 credentials saved!")
-                    st.rerun()
-                else:
-                    st.error("Failed to save credentials")
+                try:
+                    success = set_user_mt5_credentials(username, mt5_login, mt5_password, mt5_server)
+                    if success:
+                        st.success("MT5 credentials saved!")
+                        st.rerun()
+                    else:
+                        st.error("Failed to save credentials")
+                except Exception as e:
+                    report_page_error(e, "Settings / set_user_mt5_credentials")
+                    st.error(f"Lỗi khi lưu credentials: {type(e).__name__}: {e}")
 
     st.divider()
 
@@ -122,6 +127,7 @@ def main():
                     st.error(f"Login failed: {mt5.last_error()}")
                     mt5.shutdown()
         except Exception as e:
+            report_page_error(e, "Settings / test_mt5_connection")
             st.error(f"Error: {e}")
 
     # Admin-only sections
@@ -177,6 +183,7 @@ def main():
                 else:
                     st.error(f"Failed: {response.text}")
             except Exception as e:
+                report_page_error(e, "Settings / test_telegram")
                 st.error(f"Error: {e}")
 
         st.divider()

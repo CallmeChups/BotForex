@@ -21,7 +21,7 @@ st.set_page_config(
 from src.auth import require_auth, get_user_mt5_credentials, has_mt5_credentials
 username, name = require_auth()
 
-from src.utils import get_pip_value, is_mt5_available, check_exit
+from src.utils import get_pip_value, is_mt5_available, check_exit, report_page_error
 from src.strategy_manager import list_strategies, get_strategy_parameters
 
 TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
@@ -234,59 +234,63 @@ def main():
 
     # Run simulation
     if st.button("Run Simulation", use_container_width=True, type="primary"):
-        with st.spinner("Connecting to MT5 and running simulation..."):
-            result, error = run_simulation(
-                symbol=symbol,
-                sl_pips=sl_pips,
-                rr_ratio=rr_ratio,
-                max_candles=max_candles,
-                credentials=user_creds
-            )
+        try:
+            with st.spinner("Connecting to MT5 and running simulation..."):
+                result, error = run_simulation(
+                    symbol=symbol,
+                    sl_pips=sl_pips,
+                    rr_ratio=rr_ratio,
+                    max_candles=max_candles,
+                    credentials=user_creds
+                )
 
-        if error:
-            st.error(f"Error: {error}")
-        else:
-            # Display results
-            st.success("Simulation completed!")
+            if error:
+                st.error(f"Error: {error}")
+            else:
+                # Display results
+                st.success("Simulation completed!")
 
-            # Master candle info
-            st.markdown(f"### Master Candle: {result['master_time']}")
+                # Master candle info
+                st.markdown(f"### Master Candle: {result['master_time']}")
 
-            col1, col2 = st.columns(2)
+                col1, col2 = st.columns(2)
 
-            with col1:
-                st.markdown("**OHLC:**")
-                ohlc = result['ohlc']
-                st.code(f"Open:  {ohlc['o']:.2f}\nHigh:  {ohlc['h']:.2f}\nLow:   {ohlc['l']:.2f}\nClose: {ohlc['c']:.2f}")
+                with col1:
+                    st.markdown("**OHLC:**")
+                    ohlc = result['ohlc']
+                    st.code(f"Open:  {ohlc['o']:.2f}\nHigh:  {ohlc['h']:.2f}\nLow:   {ohlc['l']:.2f}\nClose: {ohlc['c']:.2f}")
 
-            with col2:
-                direction_color = "green" if result['direction'] == "BUY" else "red"
-                st.markdown(f"**Signal:** :{direction_color}[{result['direction']}]")
-                st.code(f"Entry: {result['entry']:.2f}\nSL:    {result['sl']:.2f}\nTP:    {result['tp']:.2f}")
+                with col2:
+                    direction_color = "green" if result['direction'] == "BUY" else "red"
+                    st.markdown(f"**Signal:** :{direction_color}[{result['direction']}]")
+                    st.code(f"Entry: {result['entry']:.2f}\nSL:    {result['sl']:.2f}\nTP:    {result['tp']:.2f}")
 
-            st.divider()
+                st.divider()
 
-            # Candle tracking
-            st.markdown("### Candle Tracking")
+                # Candle tracking
+                st.markdown("### Candle Tracking")
 
-            candles_df = pd.DataFrame(result['candles'])
-            candles_df.columns = ["#", "Time", "High", "Low", "Close", "Exit"]
-            st.dataframe(candles_df, width='stretch', hide_index=True)
+                candles_df = pd.DataFrame(result['candles'])
+                candles_df.columns = ["#", "Time", "High", "Low", "Close", "Exit"]
+                st.dataframe(candles_df, width='stretch', hide_index=True)
 
-            # Result
-            st.divider()
-            exit_emoji = "TP" if result['exit_type'] == "TP" else "SL" if result['exit_type'] == "SL" else "TIME"
-            pnl_color = "green" if result['pnl'] > 0 else "red" if result['pnl'] < 0 else "gray"
+                # Result
+                st.divider()
+                exit_emoji = "TP" if result['exit_type'] == "TP" else "SL" if result['exit_type'] == "SL" else "TIME"
+                pnl_color = "green" if result['pnl'] > 0 else "red" if result['pnl'] < 0 else "gray"
 
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Exit Type", exit_emoji)
-            with col2:
-                st.metric("Exit Price", f"{result['exit_price']:.2f}")
-            with col3:
-                st.metric("P&L", f"{result['pnl']:+.1f} pips", delta="profit" if result['pnl'] > 0 else "loss" if result['pnl'] < 0 else None)
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Exit Type", exit_emoji)
+                with col2:
+                    st.metric("Exit Price", f"{result['exit_price']:.2f}")
+                with col3:
+                    st.metric("P&L", f"{result['pnl']:+.1f} pips", delta="profit" if result['pnl'] > 0 else "loss" if result['pnl'] < 0 else None)
 
-            st.caption(f"Exited on candle #{result['exit_candle']}")
+                st.caption(f"Exited on candle #{result['exit_candle']}")
+        except Exception as e:
+            report_page_error(e, f"Simulation / run_simulation / {symbol}")
+            st.error(f"Lỗi khi chạy simulation: {type(e).__name__}: {e}")
 
     st.divider()
 

@@ -18,6 +18,7 @@ st.set_page_config(
 
 # Auth check
 from src.auth import require_auth
+from src.utils import report_page_error
 username, name = require_auth()
 
 from src.strategy_manager import (
@@ -86,22 +87,34 @@ def show_strategy_list():
                 # Toggle enable/disable
                 if strat['enabled']:
                     if st.button("Disable", key=f"disable_{strat['id']}", type="secondary"):
-                        toggle_strategy(strat['id'], False)
-                        st.rerun()
+                        try:
+                            toggle_strategy(strat['id'], False)
+                            st.rerun()
+                        except Exception as e:
+                            report_page_error(e, f"Strategies / toggle_disable / {strat['id']}")
+                            st.error(f"Lỗi: {type(e).__name__}: {e}")
                 else:
                     if st.button("Enable", key=f"enable_{strat['id']}", type="primary"):
-                        toggle_strategy(strat['id'], True)
-                        st.rerun()
+                        try:
+                            toggle_strategy(strat['id'], True)
+                            st.rerun()
+                        except Exception as e:
+                            report_page_error(e, f"Strategies / toggle_enable / {strat['id']}")
+                            st.error(f"Lỗi: {type(e).__name__}: {e}")
 
             with col3:
                 # Delete button
                 if st.button("Delete", key=f"delete_{strat['id']}", type="secondary"):
-                    success, msg = delete_strategy(strat['id'])
-                    if success:
-                        st.success(msg)
-                        st.rerun()
-                    else:
-                        st.error(msg)
+                    try:
+                        success, msg = delete_strategy(strat['id'])
+                        if success:
+                            st.success(msg)
+                            st.rerun()
+                        else:
+                            st.error(msg)
+                    except Exception as e:
+                        report_page_error(e, f"Strategies / delete_strategy / {strat['id']}")
+                        st.error(f"Lỗi: {type(e).__name__}: {e}")
 
             st.divider()
 
@@ -179,46 +192,50 @@ def show_create_form():
             if not strat_id or not strat_name:
                 st.error("Strategy ID and Name are required")
             else:
-                # Build strategy dict
-                strategy = {
-                    'id': strat_id.lower().replace(' ', '_'),
-                    'name': strat_name,
-                    'version': strat_version,
-                    'description': strat_description,
-                    'author': strat_author,
-                    'enabled': True,
-                    'entry': {
-                        'timeframe': strat_timeframe,
-                        'time': strat_entry_time,
-                        'timezone': 'Asia/Ho_Chi_Minh',
-                        'rules': {
-                            'bullish': 'close > open -> BUY',
-                            'bearish': 'close < open -> SELL',
-                            'doji': 'close == open -> SKIP'
-                        }
-                    },
-                    'exit': {
-                        'tp': {'type': tp_type},
-                        'sl': {'type': sl_type},
-                        'time_limit': {
-                            'enabled': True,
-                            'max_candles': max_candles
-                        }
-                    },
-                    'parameters': {
-                        'sl_pips': sl_pips,
-                        'rr_ratio': rr_ratio,
-                        'lot_size': 0.01
-                    },
-                    'symbols': [s.strip() for s in symbols.split(',')]
-                }
+                try:
+                    # Build strategy dict
+                    strategy = {
+                        'id': strat_id.lower().replace(' ', '_'),
+                        'name': strat_name,
+                        'version': strat_version,
+                        'description': strat_description,
+                        'author': strat_author,
+                        'enabled': True,
+                        'entry': {
+                            'timeframe': strat_timeframe,
+                            'time': strat_entry_time,
+                            'timezone': 'Asia/Ho_Chi_Minh',
+                            'rules': {
+                                'bullish': 'close > open -> BUY',
+                                'bearish': 'close < open -> SELL',
+                                'doji': 'close == open -> SKIP'
+                            }
+                        },
+                        'exit': {
+                            'tp': {'type': tp_type},
+                            'sl': {'type': sl_type},
+                            'time_limit': {
+                                'enabled': True,
+                                'max_candles': max_candles
+                            }
+                        },
+                        'parameters': {
+                            'sl_pips': sl_pips,
+                            'rr_ratio': rr_ratio,
+                            'lot_size': 0.01
+                        },
+                        'symbols': [s.strip() for s in symbols.split(',')]
+                    }
 
-                success, msg = save_strategy(strategy)
-                if success:
-                    st.success(f"Strategy '{strat_name}' created!")
-                    st.rerun()
-                else:
-                    st.error(msg)
+                    success, msg = save_strategy(strategy)
+                    if success:
+                        st.success(f"Strategy '{strat_name}' created!")
+                        st.rerun()
+                    else:
+                        st.error(msg)
+                except Exception as e:
+                    report_page_error(e, f"Strategies / create_strategy / {strat_id}")
+                    st.error(f"Lỗi khi tạo strategy: {type(e).__name__}: {e}")
 
 
 def show_view_edit():
@@ -343,24 +360,28 @@ def show_view_edit():
             edit_symbols = st.text_input("Symbols", value=", ".join(strategy.get('symbols', [])))
 
             if st.form_submit_button("Save Changes", type="primary", use_container_width=True):
-                # Update strategy
-                strategy['name'] = edit_name
-                strategy['version'] = edit_version
-                strategy['author'] = edit_author
-                strategy['description'] = edit_description
-                strategy['entry']['timeframe'] = edit_timeframe
-                strategy['entry']['time'] = edit_entry_time
-                strategy['parameters']['sl_pips'] = edit_sl_pips
-                strategy['parameters']['rr_ratio'] = edit_rr_ratio
-                strategy['exit']['time_limit']['max_candles'] = edit_max_candles
-                strategy['symbols'] = [s.strip() for s in edit_symbols.split(',')]
+                try:
+                    # Update strategy
+                    strategy['name'] = edit_name
+                    strategy['version'] = edit_version
+                    strategy['author'] = edit_author
+                    strategy['description'] = edit_description
+                    strategy['entry']['timeframe'] = edit_timeframe
+                    strategy['entry']['time'] = edit_entry_time
+                    strategy['parameters']['sl_pips'] = edit_sl_pips
+                    strategy['parameters']['rr_ratio'] = edit_rr_ratio
+                    strategy['exit']['time_limit']['max_candles'] = edit_max_candles
+                    strategy['symbols'] = [s.strip() for s in edit_symbols.split(',')]
 
-                success, msg = save_strategy(strategy)
-                if success:
-                    st.success("Strategy updated!")
-                    st.rerun()
-                else:
-                    st.error(msg)
+                    success, msg = save_strategy(strategy)
+                    if success:
+                        st.success("Strategy updated!")
+                        st.rerun()
+                    else:
+                        st.error(msg)
+                except Exception as e:
+                    report_page_error(e, f"Strategies / save_strategy / {selected_id}")
+                    st.error(f"Lỗi khi lưu strategy: {type(e).__name__}: {e}")
 
 
 if __name__ == "__main__":

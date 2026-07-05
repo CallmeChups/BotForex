@@ -30,7 +30,7 @@ from src.orders import (
     place_order,
     get_symbol_info
 )
-from src.utils import get_pip_value, is_mt5_available
+from src.utils import get_pip_value, is_mt5_available, report_page_error
 
 TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
 
@@ -184,13 +184,17 @@ def show_open_positions(user_creds: dict):
 
                 with col6:
                     if st.button("Close", key=f"close_{pos['ticket']}", type="secondary"):
-                        success, msg = close_position(pos['ticket'], credentials=user_creds)
-                        if success:
-                            st.success(msg)
-                            time.sleep(1)
-                            st.rerun()
-                        else:
-                            st.error(msg)
+                        try:
+                            success, msg = close_position(pos['ticket'], credentials=user_creds)
+                            if success:
+                                st.success(msg)
+                                time.sleep(1)
+                                st.rerun()
+                            else:
+                                st.error(msg)
+                        except Exception as e:
+                            report_page_error(e, f"Orders / close_position / ticket={pos['ticket']}")
+                            st.error(f"Lỗi: {type(e).__name__}: {e}")
 
                 st.divider()
 
@@ -200,13 +204,17 @@ def show_open_positions(user_creds: dict):
 
         with col2:
             if st.button("Close All Positions", type="secondary", use_container_width=True):
-                closed, error = close_all_positions(credentials=user_creds)
-                if error:
-                    st.warning(error)
-                else:
-                    st.success(f"Closed {closed} position(s)")
-                    time.sleep(1)
-                    st.rerun()
+                try:
+                    closed, error = close_all_positions(credentials=user_creds)
+                    if error:
+                        st.warning(error)
+                    else:
+                        st.success(f"Closed {closed} position(s)")
+                        time.sleep(1)
+                        st.rerun()
+                except Exception as e:
+                    report_page_error(e, "Orders / close_all_positions")
+                    st.error(f"Lỗi: {type(e).__name__}: {e}")
 
     # Auto-refresh logic
     if auto_refresh:
@@ -344,23 +352,27 @@ def show_place_order(user_creds: dict):
             use_container_width=True,
             key="place_order_btn"
         ):
-            with st.spinner("Placing order..."):
-                success, msg, ticket = place_order(
-                    symbol=symbol,
-                    direction=direction,
-                    volume=volume,
-                    sl=sl_price if use_sl_tp and sl_pips > 0 else None,
-                    tp=tp_price if use_sl_tp and tp_pips > 0 else None,
-                    credentials=user_creds
-                )
+            try:
+                with st.spinner("Placing order..."):
+                    success, msg, ticket = place_order(
+                        symbol=symbol,
+                        direction=direction,
+                        volume=volume,
+                        sl=sl_price if use_sl_tp and sl_pips > 0 else None,
+                        tp=tp_price if use_sl_tp and tp_pips > 0 else None,
+                        credentials=user_creds
+                    )
 
-            if success:
-                st.success(f"Order placed! {msg}")
-                if ticket:
-                    st.info(f"Ticket: {ticket}")
-                st.balloons()
-            else:
-                st.error(f"Order failed: {msg}")
+                if success:
+                    st.success(f"Order placed! {msg}")
+                    if ticket:
+                        st.info(f"Ticket: {ticket}")
+                    st.balloons()
+                else:
+                    st.error(f"Order failed: {msg}")
+            except Exception as e:
+                report_page_error(e, f"Orders / place_order / {symbol} {direction}")
+                st.error(f"Lỗi khi đặt lệnh: {type(e).__name__}: {e}")
 
 
 def show_demo_mode():

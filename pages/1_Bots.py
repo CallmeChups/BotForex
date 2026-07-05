@@ -32,7 +32,7 @@ from src.bot_manager import (
     is_process_running,
 )
 from src.strategy_manager import list_strategies, get_strategy_parameters
-from src.utils import get_pip_value
+from src.utils import get_pip_value, report_page_error
 
 TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
 
@@ -135,10 +135,14 @@ def show_running_bots():
         cc1, cc2 = st.columns(2)
         with cc1:
             if st.button("✅ Xác nhận Stop All", type="primary"):
-                stopped, msg = stop_all_bots(user=None if admin else username)
-                st.success(msg)
-                _clear_confirm("stop_all")
-                st.rerun()
+                try:
+                    stopped, msg = stop_all_bots(user=None if admin else username)
+                    st.success(msg)
+                    _clear_confirm("stop_all")
+                    st.rerun()
+                except Exception as e:
+                    report_page_error(e, "Bots / stop_all_bots")
+                    st.error(f"Lỗi: {type(e).__name__}: {e}")
         with cc2:
             if st.button("❌ Hủy"):
                 _clear_confirm("stop_all")
@@ -149,10 +153,14 @@ def show_running_bots():
         cc1, cc2 = st.columns(2)
         with cc1:
             if st.button("✅ Xác nhận Restart All", type="primary"):
-                restarted, msg = restart_all_bots(user=None if admin else username)
-                st.success(msg)
-                _clear_confirm("restart_all")
-                st.rerun()
+                try:
+                    restarted, msg = restart_all_bots(user=None if admin else username)
+                    st.success(msg)
+                    _clear_confirm("restart_all")
+                    st.rerun()
+                except Exception as e:
+                    report_page_error(e, "Bots / restart_all_bots")
+                    st.error(f"Lỗi: {type(e).__name__}: {e}")
         with cc2:
             if st.button("❌ Hủy", key="cancel_restart_all"):
                 _clear_confirm("restart_all")
@@ -163,23 +171,27 @@ def show_running_bots():
         cc1, cc2 = st.columns(2)
         with cc1:
             if st.button("✅ Xác nhận → Live", type="primary"):
-                _all_bots = list_bots(refresh=True)
-                if not admin:
-                    _all_bots = [b for b in _all_bots if b['user'] == username]
-                _switched, _blocked_msgs = 0, []
-                for _b in _all_bots:
-                    if _b.get('test', True):
-                        _ok, _msg, _ = switch_bot_mode(_b['pid'], live=True)
-                        if _ok:
-                            _switched += 1
-                        else:
-                            _blocked_msgs.append(_msg)
-                if _switched:
-                    st.success(f"Đã chuyển {_switched} bot sang Live.")
-                for _m in _blocked_msgs:
-                    st.error(_m)
-                _clear_confirm("all_live")
-                st.rerun()
+                try:
+                    _all_bots = list_bots(refresh=True)
+                    if not admin:
+                        _all_bots = [b for b in _all_bots if b['user'] == username]
+                    _switched, _blocked_msgs = 0, []
+                    for _b in _all_bots:
+                        if _b.get('test', True):
+                            _ok, _msg, _ = switch_bot_mode(_b['pid'], live=True)
+                            if _ok:
+                                _switched += 1
+                            else:
+                                _blocked_msgs.append(_msg)
+                    if _switched:
+                        st.success(f"Đã chuyển {_switched} bot sang Live.")
+                    for _m in _blocked_msgs:
+                        st.error(_m)
+                    _clear_confirm("all_live")
+                    st.rerun()
+                except Exception as e:
+                    report_page_error(e, "Bots / all_bots_to_live")
+                    st.error(f"Lỗi: {type(e).__name__}: {e}")
         with cc2:
             if st.button("❌ Hủy", key="cancel_all_live"):
                 _clear_confirm("all_live")
@@ -190,23 +202,27 @@ def show_running_bots():
         cc1, cc2 = st.columns(2)
         with cc1:
             if st.button("✅ Xác nhận → Test", type="primary"):
-                _all_bots = list_bots(refresh=True)
-                if not admin:
-                    _all_bots = [b for b in _all_bots if b['user'] == username]
-                _switched, _blocked_msgs = 0, []
-                for _b in _all_bots:
-                    if not _b.get('test', True):
-                        _ok, _msg, _ = switch_bot_mode(_b['pid'], live=False)
-                        if _ok:
-                            _switched += 1
-                        else:
-                            _blocked_msgs.append(_msg)
-                if _switched:
-                    st.success(f"Đã chuyển {_switched} bot sang Test.")
-                for _m in _blocked_msgs:
-                    st.warning(_m)
-                _clear_confirm("all_test")
-                st.rerun()
+                try:
+                    _all_bots = list_bots(refresh=True)
+                    if not admin:
+                        _all_bots = [b for b in _all_bots if b['user'] == username]
+                    _switched, _blocked_msgs = 0, []
+                    for _b in _all_bots:
+                        if not _b.get('test', True):
+                            _ok, _msg, _ = switch_bot_mode(_b['pid'], live=False)
+                            if _ok:
+                                _switched += 1
+                            else:
+                                _blocked_msgs.append(_msg)
+                    if _switched:
+                        st.success(f"Đã chuyển {_switched} bot sang Test.")
+                    for _m in _blocked_msgs:
+                        st.warning(_m)
+                    _clear_confirm("all_test")
+                    st.rerun()
+                except Exception as e:
+                    report_page_error(e, "Bots / all_bots_to_test")
+                    st.error(f"Lỗi: {type(e).__name__}: {e}")
         with cc2:
             if st.button("❌ Hủy", key="cancel_all_test"):
                 _clear_confirm("all_test")
@@ -311,10 +327,14 @@ def show_running_bots():
                 dc1, dc2 = st.columns(2)
                 with dc1:
                     if st.button("✅ Xác nhận", key=f"confirm_stop_{pid}", type="primary"):
-                        success, msg = stop_bot(pid)
-                        st.success(msg) if success else st.error(msg)
-                        _clear_confirm(f"stop_{pid}")
-                        st.rerun()
+                        try:
+                            success, msg = stop_bot(pid)
+                            st.success(msg) if success else st.error(msg)
+                            _clear_confirm(f"stop_{pid}")
+                            st.rerun()
+                        except Exception as e:
+                            report_page_error(e, f"Bots / stop_bot / pid={pid}")
+                            st.error(f"Lỗi: {type(e).__name__}: {e}")
                 with dc2:
                     if st.button("❌ Hủy", key=f"cancel_stop_{pid}"):
                         _clear_confirm(f"stop_{pid}")
@@ -325,10 +345,14 @@ def show_running_bots():
                 dc1, dc2 = st.columns(2)
                 with dc1:
                     if st.button("✅ Xác nhận", key=f"confirm_restart_{pid}", type="primary"):
-                        success, msg, _ = restart_bot(pid)
-                        st.success(msg) if success else st.error(msg)
-                        _clear_confirm(f"restart_{pid}")
-                        st.rerun()
+                        try:
+                            success, msg, _ = restart_bot(pid)
+                            st.success(msg) if success else st.error(msg)
+                            _clear_confirm(f"restart_{pid}")
+                            st.rerun()
+                        except Exception as e:
+                            report_page_error(e, f"Bots / restart_bot / pid={pid}")
+                            st.error(f"Lỗi: {type(e).__name__}: {e}")
                 with dc2:
                     if st.button("❌ Hủy", key=f"cancel_restart_{pid}"):
                         _clear_confirm(f"restart_{pid}")
@@ -340,10 +364,14 @@ def show_running_bots():
                 dc1, dc2 = st.columns(2)
                 with dc1:
                     if st.button("✅ Xác nhận", key=f"confirm_switch_{pid}", type="primary"):
-                        success, msg, _ = switch_bot_mode(pid, live=is_test)
-                        st.success(msg) if success else st.error(msg)
-                        _clear_confirm(f"switch_{pid}")
-                        st.rerun()
+                        try:
+                            success, msg, _ = switch_bot_mode(pid, live=is_test)
+                            st.success(msg) if success else st.error(msg)
+                            _clear_confirm(f"switch_{pid}")
+                            st.rerun()
+                        except Exception as e:
+                            report_page_error(e, f"Bots / switch_bot_mode / pid={pid}")
+                            st.error(f"Lỗi: {type(e).__name__}: {e}")
                 with dc2:
                     if st.button("❌ Hủy", key=f"cancel_switch_{pid}"):
                         _clear_confirm(f"switch_{pid}")
@@ -847,45 +875,49 @@ def show_create_bot():
         if not symbol:
             st.error("Symbol is required")
         else:
-            success, msg, bot_info = start_bot(
-                strategy=selected_strategy,
-                symbol=symbol,
-                user=username,
-                test=test_mode,
-                lot_size=lot_size if lot_mode == "fixed" else None,
-                sl_pips=sl_pips,
-                rr_ratio=rr_ratio,
-                max_candles=max_candles,
-                interval=interval,
-                ema_period=ema_period,
-                h2_exceed_pips=h2_exceed_pips,
-                c2_gap_pips=c2_gap_pips,
-                ema_margin_pips=ema_margin_pips,
-                entry_mode=entry_mode,
-                entry_percent=entry_percent if entry_mode == "range_percent" else None,
-                tp_type=tp_type,
-                sl_type=sl_type,
-                buffer_k=buffer_k,
-                lot_mode=lot_mode,
-                risk_mode=risk_mode if lot_mode == "flex" else None,
-                risk_percent=risk_percent if lot_mode == "flex" else None,
-                risk_amount=risk_amount if lot_mode == "flex" else None,
-                entry_start_time=entry_start_time.strftime('%H:%M'),
-                entry_end_time=entry_end_time.strftime('%H:%M'),
-                limit_order_candles=int(limit_order_candles),
-                be_enabled=be_enabled,
-                be_r=be_r,
-                ema_filter_enabled=ema_filter_enabled,
-                buy_ema_side=buy_ema_side,
-                sell_ema_side=sell_ema_side,
-            )
+            try:
+                success, msg, bot_info = start_bot(
+                    strategy=selected_strategy,
+                    symbol=symbol,
+                    user=username,
+                    test=test_mode,
+                    lot_size=lot_size if lot_mode == "fixed" else None,
+                    sl_pips=sl_pips,
+                    rr_ratio=rr_ratio,
+                    max_candles=max_candles,
+                    interval=interval,
+                    ema_period=ema_period,
+                    h2_exceed_pips=h2_exceed_pips,
+                    c2_gap_pips=c2_gap_pips,
+                    ema_margin_pips=ema_margin_pips,
+                    entry_mode=entry_mode,
+                    entry_percent=entry_percent if entry_mode == "range_percent" else None,
+                    tp_type=tp_type,
+                    sl_type=sl_type,
+                    buffer_k=buffer_k,
+                    lot_mode=lot_mode,
+                    risk_mode=risk_mode if lot_mode == "flex" else None,
+                    risk_percent=risk_percent if lot_mode == "flex" else None,
+                    risk_amount=risk_amount if lot_mode == "flex" else None,
+                    entry_start_time=entry_start_time.strftime('%H:%M'),
+                    entry_end_time=entry_end_time.strftime('%H:%M'),
+                    limit_order_candles=int(limit_order_candles),
+                    be_enabled=be_enabled,
+                    be_r=be_r,
+                    ema_filter_enabled=ema_filter_enabled,
+                    buy_ema_side=buy_ema_side,
+                    sell_ema_side=sell_ema_side,
+                )
 
-            if success:
-                st.success(f"Bot started! {msg}")
-                st.balloons()
-                st.rerun()
-            else:
-                st.error(msg)
+                if success:
+                    st.success(f"Bot started! {msg}")
+                    st.balloons()
+                    st.rerun()
+                else:
+                    st.error(msg)
+            except Exception as e:
+                report_page_error(e, f"Bots / start_bot / {selected_strategy} / {symbol}")
+                st.error(f"Lỗi khi start bot: {type(e).__name__}: {e}")
 
     # Quick start buttons
     st.markdown("---")
@@ -895,45 +927,57 @@ def show_create_bot():
 
     with col1:
         if st.button("XAUUSD", use_container_width=True):
-            success, msg, _ = start_bot(
-                strategy=enabled_strategies[0]['id'],
-                symbol="XAUUSD",
-                user=username,
-                test=True
-            )
-            if success:
-                st.success(msg)
-                st.rerun()
-            else:
-                st.error(msg)
+            try:
+                success, msg, _ = start_bot(
+                    strategy=enabled_strategies[0]['id'],
+                    symbol="XAUUSD",
+                    user=username,
+                    test=True
+                )
+                if success:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+            except Exception as e:
+                report_page_error(e, "Bots / quick_start / XAUUSD")
+                st.error(f"Lỗi: {type(e).__name__}: {e}")
 
     with col2:
         if st.button("BTCUSD", use_container_width=True):
-            success, msg, _ = start_bot(
-                strategy=enabled_strategies[0]['id'],
-                symbol="BTCUSD",
-                user=username,
-                test=True
-            )
-            if success:
-                st.success(msg)
-                st.rerun()
-            else:
-                st.error(msg)
+            try:
+                success, msg, _ = start_bot(
+                    strategy=enabled_strategies[0]['id'],
+                    symbol="BTCUSD",
+                    user=username,
+                    test=True
+                )
+                if success:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+            except Exception as e:
+                report_page_error(e, "Bots / quick_start / BTCUSD")
+                st.error(f"Lỗi: {type(e).__name__}: {e}")
 
     with col3:
         if st.button("ETHUSD", use_container_width=True):
-            success, msg, _ = start_bot(
-                strategy=enabled_strategies[0]['id'],
-                symbol="ETHUSD",
-                user=username,
-                test=True
-            )
-            if success:
-                st.success(msg)
-                st.rerun()
-            else:
-                st.error(msg)
+            try:
+                success, msg, _ = start_bot(
+                    strategy=enabled_strategies[0]['id'],
+                    symbol="ETHUSD",
+                    user=username,
+                    test=True
+                )
+                if success:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+            except Exception as e:
+                report_page_error(e, "Bots / quick_start / ETHUSD")
+                st.error(f"Lỗi: {type(e).__name__}: {e}")
 
 
 def show_bot_history():
@@ -1019,9 +1063,13 @@ def show_bot_history():
                                              value=s.get("name") or "",
                                              key=f"rn_{s['id']}")
                     if st.form_submit_button("Lưu tên"):
-                        rename_session(s["id"], new_name)
-                        st.success("Đã đổi tên.")
-                        st.rerun()
+                        try:
+                            rename_session(s["id"], new_name)
+                            st.success("Đã đổi tên.")
+                            st.rerun()
+                        except Exception as e:
+                            report_page_error(e, f"Bots / rename_session / {s['id']}")
+                            st.error(f"Lỗi: {type(e).__name__}: {e}")
 
             # Trades table
             trades = s.get("trades", [])
@@ -1052,9 +1100,13 @@ def show_bot_history():
             # Delete / restore
             if not is_deleted:
                 if st.button("🗑 Xóa session này", key=f"del_{s['id']}", type="secondary"):
-                    delete_session(s["id"])
-                    st.success("Đã xóa (soft delete).")
-                    st.rerun()
+                    try:
+                        delete_session(s["id"])
+                        st.success("Đã xóa (soft delete).")
+                        st.rerun()
+                    except Exception as e:
+                        report_page_error(e, f"Bots / delete_session / {s['id']}")
+                        st.error(f"Lỗi: {type(e).__name__}: {e}")
             else:
                 st.caption("Session này đã bị xóa.")
 

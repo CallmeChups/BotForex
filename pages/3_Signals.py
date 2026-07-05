@@ -19,6 +19,7 @@ st.set_page_config(
 
 # Auth check
 from src.auth import require_auth
+from src.utils import report_page_error
 username, name = require_auth()
 
 TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
@@ -199,24 +200,28 @@ def main():
         st.metric("Calculated P&L", f"{signal_pnl:.1f} pips")
 
         if st.button("Add Signal", type="primary"):
-            new_signal = pd.DataFrame([{
-                "Date": signal_date.strftime("%Y-%m-%d"),
-                "Time": signal_time.strftime("%H:%M"),
-                "Symbol": signal_symbol,
-                "Direction": signal_direction,
-                "Entry": signal_entry,
-                "SL": signal_sl,
-                "TP": signal_tp,
-                "Exit_Type": signal_exit_type,
-                "Exit_Price": signal_exit_price,
-                "PnL_Pips": signal_pnl,
-                "Candles": signal_candles
-            }])
+            try:
+                new_signal = pd.DataFrame([{
+                    "Date": signal_date.strftime("%Y-%m-%d"),
+                    "Time": signal_time.strftime("%H:%M"),
+                    "Symbol": signal_symbol,
+                    "Direction": signal_direction,
+                    "Entry": signal_entry,
+                    "SL": signal_sl,
+                    "TP": signal_tp,
+                    "Exit_Type": signal_exit_type,
+                    "Exit_Price": signal_exit_price,
+                    "PnL_Pips": signal_pnl,
+                    "Candles": signal_candles
+                }])
 
-            signals_df = pd.concat([signals_df, new_signal], ignore_index=True)
-            save_signals(signals_df)
-            st.success("Signal added!")
-            st.rerun()
+                signals_df = pd.concat([signals_df, new_signal], ignore_index=True)
+                save_signals(signals_df)
+                st.success("Signal added!")
+                st.rerun()
+            except Exception as e:
+                report_page_error(e, "Signals / add_signal")
+                st.error(f"Lỗi: {type(e).__name__}: {e}")
 
     # Clear signals
     st.divider()
@@ -224,10 +229,14 @@ def main():
 
     with col2:
         if st.button("🗑️ Clear All Signals", type="secondary"):
-            if os.path.exists(SIGNALS_FILE):
-                os.remove(SIGNALS_FILE)
-                st.success("All signals cleared!")
-                st.rerun()
+            try:
+                if os.path.exists(SIGNALS_FILE):
+                    os.remove(SIGNALS_FILE)
+                    st.success("All signals cleared!")
+                    st.rerun()
+            except Exception as e:
+                report_page_error(e, "Signals / clear_all_signals")
+                st.error(f"Lỗi: {type(e).__name__}: {e}")
 
 
 if __name__ == "__main__":
