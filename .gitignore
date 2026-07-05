@@ -19,3 +19,4 @@ data/
 *py.tmp*
 *.pyc
 history config/
+data/backtest_history.json
