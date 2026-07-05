@@ -157,10 +157,20 @@ def fetch_historical_data(symbol: str, start_date: datetime, end_date: datetime,
             end_date
         )
 
-        mt5.shutdown()
-
         if rates is None or len(rates) == 0:
-            return None, f"No data found for {symbol}"
+            # Probe oldest available candle for a helpful hint before shutdown
+            hint = ""
+            try:
+                probe_old = mt5.copy_rates_from_pos(symbol, mt5_timeframe, 0, 99_999)
+                if probe_old is not None and len(probe_old) > 0:
+                    oldest = pd.to_datetime(probe_old[0]['time'], unit='s').strftime('%Y-%m-%d')
+                    hint = f" — {timeframe} oldest available: {oldest}"
+            except Exception:
+                pass
+            mt5.shutdown()
+            return None, f"No data found for {symbol} in selected date range{hint}"
+
+        mt5.shutdown()
 
         # Convert to DataFrame
         df = pd.DataFrame(rates)
