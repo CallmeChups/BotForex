@@ -656,7 +656,11 @@ def main():
         )
 
     # Show history section
-    show_history_section()
+    try:
+        show_history_section()
+    except Exception as e:
+        report_page_error(e, "Backtest / show_history_section")
+        st.error(f"Lỗi hiển thị history: {type(e).__name__}: {e}")
 
 
 def display_results(results: dict, symbol: str, strategy_name: str = "", lot_mode: str = "fixed", timeframe: str = "M5", tp_type: str = "price_based", sl_type: str = "close_based", config: dict = None):

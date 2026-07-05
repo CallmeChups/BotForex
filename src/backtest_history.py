@@ -197,10 +197,10 @@ def history_to_dataframe(history: list) -> pd.DataFrame:
             'TP Type': config.get('tp_type', ''),
             'SL Type': config.get('sl_type', ''),
             'Fixed Lot': round(float(config.get('fixed_lot', 0) or 0), 2),
-            'Start Equity': config.get('starting_equity', ''),
+            'Start Equity': round(float(config.get('starting_equity', 0) or 0), 2),
             'Risk Mode': config.get('risk_mode', ''),
             'Risk %': round(float(config.get('risk_percent', 0) or 0), 1),
-            'Risk $': config.get('risk_amount', ''),
+            'Risk $': round(float(config.get('risk_amount', 0) or 0), 2),
 
             # Summary - Core
             'Trades': summary.get('total_trades', 0),
