@@ -20,7 +20,8 @@ st.set_page_config(
 )
 
 # Auth check
-from src.auth import require_auth, get_user_mt5_credentials, has_mt5_credentials
+from src.auth import (require_auth, get_user_mt5_credentials, has_mt5_credentials,
+                      get_user_mt5_backtest_credentials, set_user_mt5_backtest_credentials)
 username, name = require_auth()
 
 from src.backtest import fetch_historical_data, run_backtest
@@ -74,6 +75,25 @@ def main():
 
     # Get user credentials
     user_creds = get_user_mt5_credentials(username)
+
+    # Backtest MT5 override — dùng account khác (ví dụ real account stable hơn demo trial)
+    _saved_bt = get_user_mt5_backtest_credentials(username)
+    with st.expander("🔧 Backtest MT5 Override (fallback account)", expanded=bool(_saved_bt['login'])):
+        st.caption("Để trống = dùng MT5 account trong Settings. Điền vào để override khi server demo lỗi.")
+        _oc1, _oc2, _oc3 = st.columns(3)
+        with _oc1:
+            _ov_login = st.text_input("Login", value=_saved_bt['login'], key="bt_ov_login", placeholder="MT5 login number")
+        with _oc2:
+            _ov_password = st.text_input("Password", value=_saved_bt['password'], key="bt_ov_password", type="password", placeholder="MT5 password")
+        with _oc3:
+            _ov_server = st.text_input("Server", value=_saved_bt['server'], key="bt_ov_server", placeholder="e.g. Exness-MT5Real8")
+        if _ov_login and _ov_password and _ov_server:
+            user_creds = {'login': _ov_login, 'password': _ov_password, 'server': _ov_server}
+            # Auto-save nếu khác với đã lưu
+            if (_ov_login != _saved_bt['login'] or _ov_password != _saved_bt['password']
+                    or _ov_server != _saved_bt['server']):
+                set_user_mt5_backtest_credentials(username, _ov_login, _ov_password, _ov_server)
+            st.success(f"Override active: login={_ov_login} server={_ov_server}")
 
     # Get available strategies
     strategies = list_strategies()
@@ -173,7 +193,7 @@ def main():
                     min_value=0.0, step=1.0,
                     help="SELL: L2 phải cách EMA ≥ N pips | BUY: H2 phải cách EMA ≥ N pips")
                 st.caption(_pip_caption(ema_margin_pips, symbol))
-                if is_feg_stop_order:
+                if is_pattern:
                     ema_filter_enabled = st.checkbox(
                         "EMA Filter", value=bool(_pf('ema_filter_enabled', params.get('ema_filter_enabled', True))),
                         help="Bật/tắt điều kiện EMA cho tín hiệu entry")

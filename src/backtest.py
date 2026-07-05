@@ -367,6 +367,8 @@ def run_backtest(
                 entry_start_time=entry_start_time, entry_end_time=entry_end_time,
                 limit_order_candles=limit_order_candles,
                 be_enabled=be_enabled, be_r=be_r,
+                ema_filter_enabled=ema_filter_enabled, buy_ema_side=buy_ema_side,
+                sell_ema_side=sell_ema_side,
             )
         result["run_id"] = run_id
         return result
@@ -452,6 +454,9 @@ def _run_feg_backtest(
     limit_order_candles: int = 1,
     be_enabled: bool = False,
     be_r: float = 1.0,
+    ema_filter_enabled: bool = True,
+    buy_ema_side: str = "below_ema",
+    sell_ema_side: str = "above_ema",
 ):
     """Backtest FEG: quét tuần tự, 1 lệnh tại 1 thời điểm."""
     pip_value = get_pip_value(symbol)
@@ -479,6 +484,7 @@ def _run_feg_backtest(
               "low": df.at[i, "low"], "close": df.at[i, "close"]}
         direction = detect_feg_signal(
             c1, c2, ema[i], pip_value, h2_exceed_pips, c2_gap_pips, ema_margin_pips,
+            ema_filter_enabled, buy_ema_side, sell_ema_side,
         )
         if direction:
             levels = compute_trade_levels(

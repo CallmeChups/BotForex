@@ -173,3 +173,24 @@ def has_mt5_credentials(username: str) -> bool:
     """Check if user has MT5 credentials configured"""
     creds = get_user_mt5_credentials(username)
     return bool(creds['login'] and creds['password'] and creds['server'])
+
+
+def get_user_mt5_backtest_credentials(username: str) -> dict:
+    """Get user's backtest-override MT5 credentials (separate from live trading account)."""
+    config = load_config()
+    if config and username in config['credentials']['usernames']:
+        bt = config['credentials']['usernames'][username].get('mt5_backtest', {})
+        return {'login': bt.get('login', ''), 'password': bt.get('password', ''), 'server': bt.get('server', '')}
+    return {'login': '', 'password': '', 'server': ''}
+
+
+def set_user_mt5_backtest_credentials(username: str, login: str, password: str, server: str) -> bool:
+    """Save user's backtest-override MT5 credentials."""
+    config = load_config()
+    if config and username in config['credentials']['usernames']:
+        config['credentials']['usernames'][username]['mt5_backtest'] = {
+            'login': login, 'password': password, 'server': server,
+        }
+        save_config(config)
+        return True
+    return False
