@@ -919,6 +919,246 @@ def show_create_bot():
             st.divider()
     # end Classic layout
 
+    if layout_version == "New":
+        _pip_caption_fn = _pip_caption  # local alias
+
+        # ── ZONE 1: GENERAL ──────────────────────────────────────────────
+        with st.expander("General", expanded=True):
+            gc1, gc2, gc3, gc4, gc5, gc6 = st.columns([2, 1, 1, 1, 1, 1])
+            strategy_symbols = params.get('symbols', [])
+            with gc1:
+                use_custom_symbol = st.checkbox("Custom symbol", value=False, key=f"{sk}_custom_sym")
+                if use_custom_symbol:
+                    symbol = st.text_input("Symbol*", value=os.getenv("SYMBOL", "XAUUSD"), key=f"{sk}_symbol")
+                elif strategy_symbols:
+                    symbol = st.selectbox("Symbol*", options=strategy_symbols, key=f"{sk}_symbol")
+                else:
+                    symbol = st.text_input("Symbol*", value=os.getenv("SYMBOL", "XAUUSD"), key=f"{sk}_symbol")
+            with gc2:
+                test_mode = st.checkbox("Test Mode", value=st.session_state.get(f"{sk}_test", True), key=f"{sk}_test",
+                                        help="Test mode: no real orders placed")
+            with gc3:
+                rr_ratio = st.number_input("RR Ratio", value=float(st.session_state.get(f"{sk}_rr", params.get('rr_ratio', 2.0))),
+                                           min_value=0.1, max_value=20.0, step=0.1, format="%.1f", key=f"{sk}_rr")
+            with gc4:
+                _use_mc = st.checkbox("Limit candles", value=st.session_state.get(f"{sk}_use_mc", True), key=f"{sk}_use_mc")
+                if _use_mc:
+                    max_candles = st.number_input("Max Candles", value=int(st.session_state.get(f"{sk}_mc", params.get('max_candles', 7))),
+                                                  min_value=1, max_value=500, key=f"{sk}_mc")
+                else:
+                    max_candles = None
+                    st.caption("No candle limit")
+            with gc5:
+                interval = st.number_input("Interval (s)", value=int(st.session_state.get(f"{sk}_iv", 60)),
+                                           min_value=5, max_value=3600, step=5, key=f"{sk}_iv",
+                                           help="Bot scan interval in seconds")
+                strategy_timeframe = params.get('timeframe', 'M1')
+                st.caption(f"TF: {strategy_timeframe}")
+
+        # ── ZONE 2: ENTRY ─────────────────────────────────────────────────
+        if is_pattern:
+            with st.expander("Entry", expanded=True):
+                # Sub-section: FEG Margins
+                st.caption("**FEG Margins**")
+                em1, em2, em3, em4, em5, em6 = st.columns(6)
+                with em1:
+                    ema_period = st.number_input("EMA Period",
+                                                 value=int(st.session_state.get(f"{sk}_ema", params.get('ema_period', 21))),
+                                                 min_value=2, max_value=200, key=f"{sk}_ema")
+                with em2:
+                    h2_exceed_pips = st.number_input("H2 > H1 + N pips",
+                                                     value=float(st.session_state.get(f"{sk}_h2x", params.get('h2_exceed_pips', 0.0))),
+                                                     min_value=0.0, step=1.0, key=f"{sk}_h2x",
+                                                     help="SELL: H2 phải vượt H1 thêm N pips | BUY: L2 phải thấp hơn L1 thêm N pips")
+                    st.caption(_pip_caption_fn(h2_exceed_pips, symbol))
+                with em3:
+                    c2_gap_pips = st.number_input("C2 vượt L1/H1 + N pips",
+                                                  value=float(st.session_state.get(f"{sk}_c2g", params.get('c2_gap_pips', 0.0))),
+                                                  min_value=0.0, step=1.0, key=f"{sk}_c2g",
+                                                  help="SELL: C2 phải đóng thấp hơn L1 thêm N pips | BUY: C2 phải đóng cao hơn H1 thêm N pips")
+                    st.caption(_pip_caption_fn(c2_gap_pips, symbol))
+                with em4:
+                    ema_margin_pips = st.number_input("L2/H2 cách EMA + N pips",
+                                                      value=float(st.session_state.get(f"{sk}_emam", params.get('ema_margin_pips', 0.0))),
+                                                      min_value=0.0, step=1.0, key=f"{sk}_emam",
+                                                      help="SELL: L2 phải cách EMA ≥ N pips | BUY: H2 phải cách EMA ≥ N pips")
+                    st.caption(_pip_caption_fn(ema_margin_pips, symbol))
+                with em5:
+                    c2_wick_filter_enabled = st.checkbox("C2 Wick Filter",
+                                                         value=bool(st.session_state.get(f"{sk}_c2_wick_filter_enabled", False)),
+                                                         key=f"{sk}_c2_wick_filter_enabled",
+                                                         help="Râu nến C2 phải nhỏ hơn n% body C2.")
+                with em6:
+                    c2_wick_max_percent = st.number_input("Wick Max % of Body",
+                                                          value=float(st.session_state.get(f"{sk}_c2_wick_max_percent", 30.0)),
+                                                          min_value=1.0, max_value=200.0, step=1.0, format="%.0f",
+                                                          key=f"{sk}_c2_wick_max_percent",
+                                                          disabled=not c2_wick_filter_enabled)
+
+                st.divider()
+                # Sub-section: EMA Direction
+                st.caption("**EMA Direction**")
+                ed1, ed2, ed3 = st.columns(3)
+                with ed1:
+                    ema_filter_enabled = st.checkbox("EMA Filter",
+                                                     value=bool(st.session_state.get(f"{sk}_ema_filter", params.get('ema_filter_enabled', True))),
+                                                     key=f"{sk}_ema_filter",
+                                                     help="Bật/tắt điều kiện EMA cho tín hiệu entry")
+                with ed2:
+                    _ema_side_opts = ["above_ema", "below_ema"]
+                    buy_ema_side = st.selectbox("BUY EMA side", options=_ema_side_opts,
+                                                index=_ema_side_opts.index(st.session_state.get(f"{sk}_buy_ema_side", params.get('buy_ema_side', 'below_ema'))),
+                                                format_func=lambda x: "H2 > EMA (above)" if x == "above_ema" else "H2 < EMA (below)",
+                                                key=f"{sk}_buy_ema_side",
+                                                disabled=not ema_filter_enabled)
+                with ed3:
+                    sell_ema_side = st.selectbox("SELL EMA side", options=_ema_side_opts,
+                                                 index=_ema_side_opts.index(st.session_state.get(f"{sk}_sell_ema_side", params.get('sell_ema_side', 'above_ema'))),
+                                                 format_func=lambda x: "L2 > EMA (above)" if x == "above_ema" else "L2 < EMA (below)",
+                                                 key=f"{sk}_sell_ema_side",
+                                                 disabled=not ema_filter_enabled)
+
+                st.divider()
+                # Sub-section: Time Window
+                st.caption("**Time Window**")
+                tw1, tw2 = st.columns(2)
+                with tw1:
+                    entry_start_time = st.time_input("Window Start (HCM)", value=time(0, 0),
+                                                     key=f"{sk}_tw_start",
+                                                     help="Gate entries from this time. 00:00 = no filter.")
+                with tw2:
+                    entry_end_time = st.time_input("Window End (HCM)", value=time(23, 59),
+                                                   key=f"{sk}_tw_end",
+                                                   help="Gate entries until this time. 23:59 = no filter.")
+
+                st.divider()
+                # Sub-section: Entry Mode
+                st.caption("**Entry Mode**")
+                if not is_feg_stop_order:
+                    enm1, enm2 = st.columns(2)
+                    with enm1:
+                        _em_opts = ["close", "range_percent"]
+                        _em_default = st.session_state.get(f"{sk}_entry_mode", params.get('entry_mode', 'close'))
+                        entry_mode = st.radio("Entry Mode", options=_em_opts,
+                                              index=_em_opts.index(_em_default),
+                                              format_func=lambda x: "Market (close)" if x == "close" else "Limit (body%)",
+                                              horizontal=True, key=f"{sk}_entry_mode")
+                    with enm2:
+                        if entry_mode == "range_percent":
+                            entry_percent = st.number_input("Entry %",
+                                                            value=float(st.session_state.get(f"{sk}_entry_pct", params.get('entry_percent', 10.0))),
+                                                            min_value=0.0, max_value=100.0, step=1.0, format="%.0f",
+                                                            key=f"{sk}_entry_pct")
+                        else:
+                            entry_percent = 0.0
+                    limit_order_candles = 1
+                else:
+                    entry_mode = "close"
+                    entry_percent = 0.0
+                    limit_order_candles = st.number_input("Limit Order Candles",
+                                                          value=int(st.session_state.get(f"{sk}_loc", 1)),
+                                                          min_value=1, max_value=50, key=f"{sk}_loc",
+                                                          help="Số nến tối đa để chờ stop order fill")
+        else:
+            # Master Candle — no Entry zone, set defaults
+            ema_period = None
+            h2_exceed_pips = 0.0
+            c2_gap_pips = 0.0
+            ema_margin_pips = 0.0
+            c2_wick_filter_enabled = False
+            c2_wick_max_percent = 30.0
+            ema_filter_enabled = True
+            buy_ema_side = "below_ema"
+            sell_ema_side = "above_ema"
+            entry_start_time = time(0, 0)
+            entry_end_time = time(23, 59)
+            entry_mode = "close"
+            entry_percent = 0.0
+            limit_order_candles = 1
+
+        # ── ZONE 3: ORDER SETTINGS ────────────────────────────────────────
+        with st.expander("Order Settings", expanded=False):
+            os1, os2 = st.columns(2)
+            with os1:
+                buffer_k = st.number_input("Buffer K (pips)",
+                                           value=float(st.session_state.get(f"{sk}_buffer_k", params.get('buffer_k', 5))),
+                                           min_value=0.0, max_value=200.0, step=1.0, key=f"{sk}_buffer_k",
+                                           help="SL = candle body + k pips")
+            with os2:
+                re_entry_after_sl = st.checkbox("Re-Entry After SL",
+                                                value=bool(st.session_state.get(f"{sk}_re_entry_after_sl", False)),
+                                                key=f"{sk}_re_entry_after_sl",
+                                                help="Trong lúc lệnh đang chạy, bot vẫn scan signal. "
+                                                     "Nếu SL hit đúng tại candle2 của signal mới → vào lệnh tiếp ngay.")
+
+        # ── ZONE 4: RISK & SIZING ─────────────────────────────────────────
+        with st.expander("Risk & Sizing", expanded=False):
+            lot_mode = st.radio("Lot Mode", options=["fixed", "flex"],
+                                format_func=lambda x: "Fixed" if x == "fixed" else "Flex (Risk-based)",
+                                horizontal=True, key=f"{sk}_lot_mode")
+            if lot_mode == "fixed":
+                rs1, rs2 = st.columns(2)
+                with rs1:
+                    lot_size = st.number_input("Lot Size",
+                                               value=float(st.session_state.get(f"{sk}_lot", params.get('lot_size', 0.01))),
+                                               min_value=0.01, max_value=10.0, step=0.01, format="%.2f",
+                                               key=f"{sk}_lot")
+                risk_mode = "percent"
+                risk_percent = 0.5
+                risk_amount = 0.0
+            else:
+                rs1, rs2, rs3 = st.columns(3)
+                with rs1:
+                    _rm_opts = ["percent", "fixed_amount"]
+                    _rm_default = st.session_state.get(f"{sk}_risk_mode", "percent")
+                    risk_mode = st.radio("Risk Mode", options=_rm_opts,
+                                        index=_rm_opts.index(_rm_default),
+                                        format_func=lambda x: "%" if x == "percent" else "Fixed $",
+                                        horizontal=True, key=f"{sk}_risk_mode")
+                with rs2:
+                    if risk_mode == "percent":
+                        risk_percent = st.number_input("Risk %",
+                                                       value=float(st.session_state.get(f"{sk}_risk_pct", 0.5)),
+                                                       min_value=0.1, max_value=5.0, step=0.1, format="%.1f",
+                                                       key=f"{sk}_risk_pct")
+                        risk_amount = 0.0
+                    else:
+                        risk_amount = st.number_input("Risk $",
+                                                      value=float(st.session_state.get(f"{sk}_risk_amt", 5.0)),
+                                                      min_value=1.0, max_value=1000.0, step=1.0, format="%.2f",
+                                                      key=f"{sk}_risk_amt")
+                        risk_percent = 0.0
+                lot_size = 0.01
+
+        # ── ZONE 5: EXIT ──────────────────────────────────────────────────
+        with st.expander("Exit", expanded=False):
+            ex1, ex2, ex3, ex4 = st.columns(4)
+            with ex1:
+                _tp_opts = ["price_based", "close_based"]
+                tp_type = st.radio("TP Exit", options=_tp_opts,
+                                   index=_tp_opts.index(st.session_state.get(f"{sk}_tp_type", params.get('tp_type', 'price_based'))),
+                                   format_func=lambda x: "Price-based (wick)" if x == "price_based" else "Close-based",
+                                   horizontal=True, key=f"{sk}_tp_type")
+            with ex2:
+                _sl_opts = ["price_based", "close_based"]
+                sl_type = st.radio("SL Exit", options=_sl_opts,
+                                   index=_sl_opts.index(st.session_state.get(f"{sk}_sl_type", params.get('sl_type', 'close_based'))),
+                                   format_func=lambda x: "Price-based (wick)" if x == "price_based" else "Close-based",
+                                   horizontal=True, key=f"{sk}_sl_type")
+            with ex3:
+                be_enabled = st.checkbox("Break-Even (BE)",
+                                         value=bool(st.session_state.get(f"{sk}_be_enabled", False)),
+                                         key=f"{sk}_be_enabled",
+                                         help="Dời SL về entry khi lời đủ be_r × SL distance")
+            with ex4:
+                be_r = st.number_input("BE Trigger (R)",
+                                       value=float(st.session_state.get(f"{sk}_be_r", 1.0)),
+                                       min_value=0.1, max_value=10.0, step=0.1, format="%.1f",
+                                       key=f"{sk}_be_r",
+                                       help="BE kích hoạt khi lời đạt be_r × SL distance",
+                                       disabled=not be_enabled)
+    # end New layout
+
     # sl_pips not used for pattern strategies (SL from candle + buffer_k)
     sl_pips = None if is_pattern else int(params.get('sl_pips', 30))
 
