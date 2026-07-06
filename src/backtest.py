@@ -319,6 +319,9 @@ def run_backtest(
     ema_filter_enabled: bool = True,
     buy_ema_side: str = "below_ema",
     sell_ema_side: str = "above_ema",
+    re_entry_after_sl: bool = False,
+    c2_wick_filter_enabled: bool = False,
+    c2_wick_max_percent: float = 30.0,
 ) -> dict:
     """
     Run backtest on historical data
@@ -365,6 +368,8 @@ def run_backtest(
                 entry_start_time=entry_start_time, entry_end_time=entry_end_time,
                 limit_order_candles=limit_order_candles,
                 be_enabled=be_enabled, be_r=be_r,
+                re_entry_after_sl=re_entry_after_sl,
+                c2_wick_filter_enabled=c2_wick_filter_enabled, c2_wick_max_percent=c2_wick_max_percent,
             )
         else:
             result = _run_feg_backtest(
@@ -379,6 +384,8 @@ def run_backtest(
                 be_enabled=be_enabled, be_r=be_r,
                 ema_filter_enabled=ema_filter_enabled, buy_ema_side=buy_ema_side,
                 sell_ema_side=sell_ema_side,
+                re_entry_after_sl=re_entry_after_sl,
+                c2_wick_filter_enabled=c2_wick_filter_enabled, c2_wick_max_percent=c2_wick_max_percent,
             )
         result["run_id"] = run_id
         return result
@@ -454,6 +461,40 @@ def run_backtest(
     return stats
 
 
+def _scan_feg_pending(df, ema, idx, pip_value,
+                      h2_exceed_pips, c2_gap_pips, ema_margin_pips,
+                      ema_filter_enabled, buy_ema_side, sell_ema_side,
+                      entry_mode, entry_percent, buffer_k, rr_ratio,
+                      entry_start_time, entry_end_time,
+                      c2_wick_filter_enabled=False, c2_wick_max_percent=30.0):
+    """Scan 1 candle cho FEG signal. Trả về pending dict hoặc None."""
+    if idx < 1 or idx >= len(df):
+        return None
+    candle_time = df.at[idx, "time"]
+    if not _in_time_window(candle_time, entry_start_time, entry_end_time):
+        return None
+    c1 = {"open": df.at[idx - 1, "open"], "high": df.at[idx - 1, "high"],
+          "low": df.at[idx - 1, "low"], "close": df.at[idx - 1, "close"]}
+    c2 = {"open": df.at[idx, "open"], "high": df.at[idx, "high"],
+          "low": df.at[idx, "low"], "close": df.at[idx, "close"]}
+    direction = detect_feg_signal(
+        c1, c2, ema[idx], pip_value, h2_exceed_pips, c2_gap_pips, ema_margin_pips,
+        ema_filter_enabled, buy_ema_side, sell_ema_side,
+        c2_wick_filter_enabled, c2_wick_max_percent,
+    )
+    if not direction:
+        return None
+    levels = compute_trade_levels(direction, c2, entry_mode, entry_percent, buffer_k, rr_ratio, pip_value)
+    return {
+        "direction": direction,
+        "candle2_idx": idx,
+        "levels": levels,
+        "_c1": {**c1, "time": df.at[idx - 1, "time"]},
+        "_c2": {**c2, "time": df.at[idx, "time"]},
+        "_ema": ema[idx],
+    }
+
+
 def _run_feg_backtest(
     df, symbol, rr_ratio, max_candles, lot_mode, fixed_lot, risk_percent,
     risk_amount, risk_mode, buffer_k, starting_equity, tp_type, sl_type,
@@ -467,8 +508,15 @@ def _run_feg_backtest(
     ema_filter_enabled: bool = True,
     buy_ema_side: str = "below_ema",
     sell_ema_side: str = "above_ema",
+    re_entry_after_sl: bool = False,
+    c2_wick_filter_enabled: bool = False,
+    c2_wick_max_percent: float = 30.0,
 ):
-    """Backtest FEG: quét tuần tự, 1 lệnh tại 1 thời điểm."""
+    """Backtest FEG: quét tuần tự, 1 lệnh tại 1 thời điểm.
+
+    re_entry_after_sl: trong khi lệnh chạy, scan signal song song.
+    Nếu SL hit đúng tại candle2 của pending signal → re-entry limit ngay candle tiếp.
+    """
     pip_value = get_pip_value(symbol)
     df = df.reset_index(drop=True)
     ema = df["close"].ewm(span=ema_period, adjust=False).mean()
@@ -482,6 +530,7 @@ def _run_feg_backtest(
 
     n = len(df)
     i = max(1, ema_period)  # warmup: bỏ vùng EMA chưa ổn định
+
     while i < n:
         candle_time = df.at[i, "time"]
         if not _in_time_window(candle_time, entry_start_time, entry_end_time):
@@ -495,6 +544,7 @@ def _run_feg_backtest(
         direction = detect_feg_signal(
             c1, c2, ema[i], pip_value, h2_exceed_pips, c2_gap_pips, ema_margin_pips,
             ema_filter_enabled, buy_ema_side, sell_ema_side,
+            c2_wick_filter_enabled, c2_wick_max_percent,
         )
         if direction:
             levels = compute_trade_levels(
@@ -504,8 +554,6 @@ def _run_feg_backtest(
                 lot_mode, current_equity, risk_mode, risk_percent, risk_amount,
                 levels["sl_pips"], symbol, fixed_lot,
             )
-
-            # Tìm nến khớp lệnh trong limit_order_candles nến tiếp theo
             entry_price = levels["entry_price"]
             filled_at = None
             for j in range(i + 1, min(i + 1 + limit_order_candles, n)):
@@ -514,11 +562,61 @@ def _run_feg_backtest(
                     break
 
             if filled_at is not None:
-                exit_type, exit_price, exit_time, candles_held, exit_pos = _simulate_exit(
-                    df, filled_at, direction, levels["take_profit"], levels["stop_loss"],
-                    max_candles, tp_type, sl_type,
-                    be_enabled=be_enabled, be_r=be_r, entry_price=entry_price,
-                )
+                # Simulate exit, scanning for pending re-entry signal in parallel
+                pending = None
+                exit_type = exit_price = exit_time = None
+                candles_held = 0
+                exit_pos = filled_at
+                current_sl = levels["stop_loss"]
+                be_triggered = False
+                if be_enabled:
+                    sl_dist = abs(entry_price - current_sl)
+                    be_trigger = (entry_price + be_r * sl_dist) if direction == "BUY" else (entry_price - be_r * sl_dist)
+                else:
+                    be_trigger = None
+
+                scan_end = filled_at + max_candles if max_candles > 0 else n
+                for k in range(filled_at + 1, min(scan_end + 1, n)):
+                    candles_held += 1
+                    exit_pos = k
+                    row = df.iloc[k]
+
+                    # BE check
+                    if be_enabled and not be_triggered and be_trigger is not None:
+                        if direction == "BUY" and row["high"] >= be_trigger:
+                            current_sl = entry_price
+                            be_triggered = True
+                        elif direction == "SELL" and row["low"] <= be_trigger:
+                            current_sl = entry_price
+                            be_triggered = True
+
+                    # Exit check
+                    candle = {"high": row["high"], "low": row["low"], "close": row["close"]}
+                    exit_type, exit_price = check_exit(direction, candle, levels["take_profit"], current_sl, tp_type, sl_type)
+                    if exit_type:
+                        exit_time = row["time"]
+                        break
+
+                    # Re-entry scan: update pending signal (overwrite với signal mới nhất)
+                    if re_entry_after_sl and k >= 1:
+                        sig = _scan_feg_pending(
+                            df, ema, k, pip_value,
+                            h2_exceed_pips, c2_gap_pips, ema_margin_pips,
+                            ema_filter_enabled, buy_ema_side, sell_ema_side,
+                            entry_mode, entry_percent, buffer_k, rr_ratio,
+                            entry_start_time, entry_end_time,
+                            c2_wick_filter_enabled, c2_wick_max_percent,
+                        )
+                        if sig:
+                            pending = sig  # overwrite với signal mới nhất
+
+                # Time exit
+                if not exit_type and max_candles > 0 and candles_held >= max_candles:
+                    exit_type = "TIME"
+                    last = df.iloc[exit_pos]
+                    exit_price = last["close"]
+                    exit_time = last["time"]
+
                 if not exit_type:
                     break  # hết data
 
@@ -534,7 +632,16 @@ def _run_feg_backtest(
                 equity_curve_pips.append(equity_curve_pips[-1] + pnl_pips)
                 equity_curve_usd.append(current_equity)
 
-                i = exit_pos + 1  # 1 lệnh/lúc: quét tiếp sau nến exit
+                next_i = exit_pos + 1
+
+                # Re-entry: SL hit đúng tại candle2 của pending → jump về candle2 để re-process
+                if (re_entry_after_sl and exit_type == "SL"
+                        and pending and pending["candle2_idx"] == exit_pos):
+                    # Jump về candle2_idx: vòng lặp chính sẽ detect signal tại i=candle2_idx
+                    i = pending["candle2_idx"]
+                    continue
+
+                i = next_i
                 continue
 
         i += 1
@@ -550,6 +657,47 @@ def _run_feg_backtest(
     return stats
 
 
+def _scan_feg_stop_order_pending(df, ema, idx, pip_value,
+                                  h2_exceed_pips, c2_gap_pips,
+                                  ema_filter_enabled, buy_ema_side, sell_ema_side,
+                                  ema_margin_pips, buffer_k, rr_ratio,
+                                  entry_start_time, entry_end_time,
+                                  c2_wick_filter_enabled=False, c2_wick_max_percent=30.0):
+    """Scan 1 candle cho FEG Stop Order signal. Trả về pending dict hoặc None."""
+    if idx < 1 or idx >= len(df):
+        return None
+    candle_time = df.at[idx, "time"]
+    if not _in_time_window(candle_time, entry_start_time, entry_end_time):
+        return None
+    c1 = {"open": df.at[idx - 1, "open"], "high": df.at[idx - 1, "high"],
+          "low": df.at[idx - 1, "low"], "close": df.at[idx - 1, "close"]}
+    c2 = {"open": df.at[idx, "open"], "high": df.at[idx, "high"],
+          "low": df.at[idx, "low"], "close": df.at[idx, "close"]}
+    direction = detect_feg_stop_order_signal(
+        c1, c2, ema[idx], pip_value,
+        h2_exceed_pips, c2_gap_pips,
+        ema_filter_enabled, buy_ema_side, sell_ema_side, ema_margin_pips,
+        c2_wick_filter_enabled, c2_wick_max_percent,
+    )
+    if not direction:
+        return None
+    h2, l2 = c2["high"], c2["low"]
+    buf = buffer_k * pip_value
+    if direction == "BUY":
+        ep = h2 + buf; sl = l2; risk = ep - sl; tp = ep + risk * rr_ratio
+    else:
+        ep = l2 - buf; sl = h2; risk = sl - ep; tp = ep - risk * rr_ratio
+    levels = {"entry_price": ep, "stop_loss": sl, "take_profit": tp, "sl_pips": risk / pip_value}
+    return {
+        "direction": direction,
+        "candle2_idx": idx,
+        "levels": levels,
+        "_c1": {**c1, "time": df.at[idx - 1, "time"]},
+        "_c2": {**c2, "time": df.at[idx, "time"]},
+        "_ema": ema[idx],
+    }
+
+
 def _run_feg_stop_order_backtest(
     df, symbol, rr_ratio, max_candles, lot_mode, fixed_lot, risk_percent,
     risk_amount, risk_mode, buffer_k, starting_equity, tp_type, sl_type,
@@ -563,6 +711,9 @@ def _run_feg_stop_order_backtest(
     limit_order_candles: int = 1,
     be_enabled: bool = False,
     be_r: float = 1.0,
+    re_entry_after_sl: bool = False,
+    c2_wick_filter_enabled: bool = False,
+    c2_wick_max_percent: float = 30.0,
 ):
     """Backtest FEG Stop Order: entry = H2+buffer (BUY) / L2-buffer (SELL), SL = L2 / H2."""
     pip_value = get_pip_value(symbol)
@@ -593,6 +744,7 @@ def _run_feg_stop_order_backtest(
             c1, c2, ema[i], pip_value,
             h2_exceed_pips, c2_gap_pips,
             ema_filter_enabled, buy_ema_side, sell_ema_side, ema_margin_pips,
+            c2_wick_filter_enabled, c2_wick_max_percent,
         )
 
         if direction:
@@ -634,11 +786,55 @@ def _run_feg_stop_order_backtest(
                     break
 
             if filled_at is not None:
-                exit_type, exit_price, exit_time, candles_held, exit_pos = _simulate_exit(
-                    df, filled_at, direction, take_profit, stop_loss,
-                    max_candles, tp_type, sl_type,
-                    be_enabled=be_enabled, be_r=be_r, entry_price=entry_price,
-                )
+                # Simulate exit với scan pending re-entry song song
+                pending = None
+                exit_type = exit_price = exit_time = None
+                candles_held = 0
+                exit_pos = filled_at
+                current_sl = stop_loss
+                be_triggered = False
+                if be_enabled:
+                    sl_dist = abs(entry_price - current_sl)
+                    be_trigger = (entry_price + be_r * sl_dist) if direction == "BUY" else (entry_price - be_r * sl_dist)
+                else:
+                    be_trigger = None
+
+                scan_end = filled_at + max_candles if max_candles > 0 else n
+                for k in range(filled_at + 1, min(scan_end + 1, n)):
+                    candles_held += 1
+                    exit_pos = k
+                    row = df.iloc[k]
+
+                    if be_enabled and not be_triggered and be_trigger is not None:
+                        if direction == "BUY" and row["high"] >= be_trigger:
+                            current_sl = entry_price; be_triggered = True
+                        elif direction == "SELL" and row["low"] <= be_trigger:
+                            current_sl = entry_price; be_triggered = True
+
+                    candle = {"high": row["high"], "low": row["low"], "close": row["close"]}
+                    exit_type, exit_price = check_exit(direction, candle, take_profit, current_sl, tp_type, sl_type)
+                    if exit_type:
+                        exit_time = row["time"]
+                        break
+
+                    if re_entry_after_sl and k >= 1:
+                        sig = _scan_feg_stop_order_pending(
+                            df, ema, k, pip_value,
+                            h2_exceed_pips, c2_gap_pips,
+                            ema_filter_enabled, buy_ema_side, sell_ema_side,
+                            ema_margin_pips, buffer_k, rr_ratio,
+                            entry_start_time, entry_end_time,
+                            c2_wick_filter_enabled, c2_wick_max_percent,
+                        )
+                        if sig:
+                            pending = sig  # overwrite với signal mới nhất
+
+                if not exit_type and max_candles > 0 and candles_held >= max_candles:
+                    exit_type = "TIME"
+                    last = df.iloc[exit_pos]
+                    exit_price = last["close"]
+                    exit_time = last["time"]
+
                 if not exit_type:
                     break
 
@@ -654,7 +850,15 @@ def _run_feg_stop_order_backtest(
                 equity_curve_pips.append(equity_curve_pips[-1] + pnl_pips)
                 equity_curve_usd.append(current_equity)
 
-                i = exit_pos + 1
+                next_i = exit_pos + 1
+
+                # Re-entry: SL hit đúng tại candle2 của pending → jump về candle2
+                if (re_entry_after_sl and exit_type == "SL"
+                        and pending and pending["candle2_idx"] == exit_pos):
+                    i = pending["candle2_idx"]
+                    continue
+
+                i = next_i
                 continue
 
         i += 1

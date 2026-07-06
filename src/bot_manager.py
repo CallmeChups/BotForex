@@ -97,6 +97,8 @@ def build_bot_command(
     limit_order_candles=1,
     be_enabled=False, be_r=1.0,
     ema_filter_enabled=True, buy_ema_side="below_ema", sell_ema_side="above_ema",
+    re_entry_after_sl=False,
+    c2_wick_filter_enabled=False, c2_wick_max_percent=30.0,
 ):
     """Build command list to run bot_runner (separated for testability)."""
     cmd = [
@@ -146,6 +148,9 @@ def build_bot_command(
     cmd.extend(["--ema_filter_enabled", "1" if ema_filter_enabled else "0"])
     cmd.extend(["--buy_ema_side", buy_ema_side])
     cmd.extend(["--sell_ema_side", sell_ema_side])
+    cmd.extend(["--re_entry_after_sl", "1" if re_entry_after_sl else "0"])
+    cmd.extend(["--c2_wick_filter_enabled", "1" if c2_wick_filter_enabled else "0"])
+    cmd.extend(["--c2_wick_max_percent", str(c2_wick_max_percent)])
     return cmd
 
 
@@ -180,6 +185,9 @@ def start_bot(
     ema_filter_enabled: bool = True,
     buy_ema_side: str = "below_ema",
     sell_ema_side: str = "above_ema",
+    re_entry_after_sl: bool = False,
+    c2_wick_filter_enabled: bool = False,
+    c2_wick_max_percent: float = 30.0,
 ) -> tuple:
     """
     Start a new bot process
@@ -208,6 +216,8 @@ def start_bot(
         entry_start_time, entry_end_time, limit_order_candles,
         be_enabled, be_r,
         ema_filter_enabled, buy_ema_side, sell_ema_side,
+        re_entry_after_sl,
+        c2_wick_filter_enabled, c2_wick_max_percent,
     )
 
     try:
@@ -259,6 +269,9 @@ def start_bot(
             'limit_order_candles': limit_order_candles,
             'be_enabled': be_enabled,
             'be_r': be_r,
+            're_entry_after_sl': re_entry_after_sl,
+            'c2_wick_filter_enabled': c2_wick_filter_enabled,
+            'c2_wick_max_percent': c2_wick_max_percent,
             'started_at': datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M:%S'),
             'log_path': log_path,
             'command': ' '.join(cmd)
@@ -398,6 +411,9 @@ def switch_bot_mode(pid: int, live: bool) -> tuple:
         limit_order_candles=bot.get('limit_order_candles', 1),
         be_enabled=bot.get('be_enabled', False),
         be_r=bot.get('be_r', 1.0),
+        re_entry_after_sl=bot.get('re_entry_after_sl', False),
+        c2_wick_filter_enabled=bot.get('c2_wick_filter_enabled', False),
+        c2_wick_max_percent=bot.get('c2_wick_max_percent', 30.0),
     )
 
 
@@ -499,6 +515,9 @@ def restart_bot(pid: int) -> tuple:
         limit_order_candles=bot.get('limit_order_candles', 1),
         be_enabled=bot.get('be_enabled', False),
         be_r=bot.get('be_r', 1.0),
+        re_entry_after_sl=bot.get('re_entry_after_sl', False),
+        c2_wick_filter_enabled=bot.get('c2_wick_filter_enabled', False),
+        c2_wick_max_percent=bot.get('c2_wick_max_percent', 30.0),
     )
 
 

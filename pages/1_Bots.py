@@ -464,6 +464,9 @@ def show_create_bot():
                         f"{sk}_sl_type": _cfg.get('sl_type', 'price_based'),
                         f"{sk}_be_enabled": bool(_cfg.get('be_enabled', False)),
                         f"{sk}_be_r": float(_cfg.get('be_r', 1.0)),
+                        f"{sk}_re_entry_after_sl": bool(_cfg.get('re_entry_after_sl', False)),
+                        f"{sk}_c2_wick_filter_enabled": bool(_cfg.get('c2_wick_filter_enabled', False)),
+                        f"{sk}_c2_wick_max_percent": float(_cfg.get('c2_wick_max_percent', 30.0)),
                         f"{sk}_lot_mode": _cfg.get('lot_mode', 'fixed'),
                     }
                     if _cfg.get('lot_mode') == 'fixed':
@@ -657,7 +660,7 @@ def show_create_bot():
                                    index=_sl_opts.index(_sl_default) if _sl_default in _sl_opts else 0,
                                    format_func=lambda x: "Price-based (wick)" if x == "price_based" else "Close-based",
                                    horizontal=True, key=f"{sk}_sl_type")
-            bec1, bec2 = st.columns(2)
+            bec1, bec2, bec3 = st.columns(3)
             with bec1:
                 be_enabled = st.checkbox("Break-Even (BE)",
                                          value=bool(st.session_state.get(f"{sk}_be_enabled", False)),
@@ -670,6 +673,26 @@ def show_create_bot():
                                        step=0.1, format="%.1f", key=f"{sk}_be_r",
                                        help="BE kích hoạt khi lời đạt be_r × SL distance",
                                        disabled=not be_enabled)
+            with bec3:
+                re_entry_after_sl = st.checkbox("Re-Entry After SL",
+                                                value=bool(st.session_state.get(f"{sk}_re_entry_after_sl", False)),
+                                                key=f"{sk}_re_entry_after_sl",
+                                                help="Trong lúc lệnh đang chạy, bot vẫn scan signal. "
+                                                     "Nếu SL hit đúng tại candle2 của signal mới → vào lệnh tiếp ngay.")
+            wkc1, wkc2, wkc3 = st.columns(3)
+            with wkc1:
+                c2_wick_filter_enabled = st.checkbox("C2 Wick Filter",
+                                                     value=bool(st.session_state.get(f"{sk}_c2_wick_filter_enabled", False)),
+                                                     key=f"{sk}_c2_wick_filter_enabled",
+                                                     help="Râu nến C2 phải nhỏ hơn n% body C2. "
+                                                          "SELL: râu dưới (close-low) < body×n%. BUY: râu trên (high-close) < body×n%.")
+            with wkc2:
+                c2_wick_max_percent = st.number_input("Wick Max % of Body",
+                                                      value=float(st.session_state.get(f"{sk}_c2_wick_max_percent", 30.0)),
+                                                      min_value=1.0, max_value=200.0, step=1.0, format="%.0f",
+                                                      key=f"{sk}_c2_wick_max_percent",
+                                                      help="Ngưỡng tối đa của râu so với body C2 (%)",
+                                                      disabled=not c2_wick_filter_enabled)
             st.divider()
             if lot_mode == "fixed":
                 fc1, _ = st.columns(2)
@@ -820,7 +843,7 @@ def show_create_bot():
                                format_func=lambda x: "Price-based (Immediate)" if x == "price_based" else "Close-based (Delayed)",
                                horizontal=True, key=f"{sk}_sl_type")
 
-        becol1, becol2 = st.columns(2)
+        becol1, becol2, becol3 = st.columns(3)
         with becol1:
             be_enabled = st.checkbox("Break-Even (BE)", value=False, key=f"{sk}_be_enabled",
                                      help="Dời SL về entry khi lời đủ be_r × SL distance")
@@ -829,6 +852,21 @@ def show_create_bot():
                                    step=0.1, format="%.1f", key=f"{sk}_be_r",
                                    help="BE kích hoạt khi lời đạt be_r × SL distance",
                                    disabled=not be_enabled)
+        with becol3:
+            re_entry_after_sl = st.checkbox("Re-Entry After SL", value=False, key=f"{sk}_re_entry_after_sl",
+                                            help="Trong lúc lệnh đang chạy, bot vẫn scan signal. "
+                                                 "Nếu SL hit đúng tại candle2 của signal mới → vào lệnh tiếp ngay.")
+        wkcol1, wkcol2, wkcol3 = st.columns(3)
+        with wkcol1:
+            c2_wick_filter_enabled = st.checkbox("C2 Wick Filter", value=False, key=f"{sk}_c2_wick_filter_enabled",
+                                                 help="Râu nến C2 phải nhỏ hơn n% body C2. "
+                                                      "SELL: râu dưới (close-low) < body×n%. BUY: râu trên (high-close) < body×n%.")
+        with wkcol2:
+            c2_wick_max_percent = st.number_input("Wick Max % of Body", value=30.0,
+                                                  min_value=1.0, max_value=200.0, step=1.0, format="%.0f",
+                                                  key=f"{sk}_c2_wick_max_percent",
+                                                  help="Ngưỡng tối đa của râu so với body C2 (%)",
+                                                  disabled=not c2_wick_filter_enabled)
 
         st.divider()
         st.subheader("Lot Size")
@@ -907,6 +945,9 @@ def show_create_bot():
                     ema_filter_enabled=ema_filter_enabled,
                     buy_ema_side=buy_ema_side,
                     sell_ema_side=sell_ema_side,
+                    re_entry_after_sl=re_entry_after_sl,
+                    c2_wick_filter_enabled=c2_wick_filter_enabled,
+                    c2_wick_max_percent=c2_wick_max_percent,
                 )
 
                 if success:

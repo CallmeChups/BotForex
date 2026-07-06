@@ -285,7 +285,7 @@ def main():
                                    format_func=lambda x: "Price-based (wick)" if x == "price_based" else "Close-based",
                                    horizontal=True,
                                    help="Price: wick touches SL | Close: candle closes past SL")
-            bc1, bc2 = st.columns(2)
+            bc1, bc2, bc3 = st.columns(3)
             with bc1:
                 be_enabled = st.checkbox("Break-Even (BE)", value=bool(_pf('be_enabled', False)),
                                          help="Dời SL về entry khi lời đủ be_r × SL distance")
@@ -294,6 +294,20 @@ def main():
                                        step=0.1, format="%.1f",
                                        help="BE kích hoạt khi lời đạt be_r × SL distance",
                                        disabled=not be_enabled)
+            with bc3:
+                re_entry_after_sl = st.checkbox("Re-Entry After SL", value=bool(_pf('re_entry_after_sl', False)),
+                                                help="Trong lúc lệnh đang chạy, vẫn scan signal song song. "
+                                                     "Nếu SL hit đúng tại candle2 của signal mới → vào lệnh tiếp ngay.")
+            wc1, wc2, wc3 = st.columns(3)
+            with wc1:
+                c2_wick_filter_enabled = st.checkbox("C2 Wick Filter", value=bool(_pf('c2_wick_filter_enabled', False)),
+                                                     help="Râu nến C2 phải nhỏ hơn n% body C2. "
+                                                          "SELL: râu dưới (close-low) < body×n%. BUY: râu trên (high-close) < body×n%.")
+            with wc2:
+                c2_wick_max_percent = st.number_input("Wick Max % of Body", value=float(_pf('c2_wick_max_percent', 30.0)),
+                                                      min_value=1.0, max_value=200.0, step=1.0, format="%.0f",
+                                                      help="Ngưỡng tối đa của râu so với body C2 (%)",
+                                                      disabled=not c2_wick_filter_enabled)
             st.divider()
             if lot_mode == "fixed":
                 lc1, _ = st.columns(2)
@@ -472,7 +486,7 @@ def main():
                 st.caption("SL triggers when High/Low touches SL level (exits at SL price)")
             else:
                 st.caption("SL triggers when candle CLOSES beyond SL (exits at close price)")
-        bcol1, bcol2 = st.columns(2)
+        bcol1, bcol2, bcol3 = st.columns(3)
         with bcol1:
             be_enabled = st.checkbox("Break-Even (BE)", value=False,
                                      help="Dời SL về entry khi lời đủ be_r × SL distance")
@@ -481,6 +495,20 @@ def main():
                                    step=0.1, format="%.1f",
                                    help="BE kích hoạt khi lời đạt be_r × SL distance",
                                    disabled=not be_enabled)
+        with bcol3:
+            re_entry_after_sl = st.checkbox("Re-Entry After SL", value=False,
+                                            help="Trong lúc lệnh đang chạy, vẫn scan signal song song. "
+                                                 "Nếu SL hit đúng tại candle2 của signal mới → vào lệnh tiếp ngay.")
+        wkcol1, wkcol2, wkcol3 = st.columns(3)
+        with wkcol1:
+            c2_wick_filter_enabled = st.checkbox("C2 Wick Filter", value=False,
+                                                 help="Râu nến C2 phải nhỏ hơn n% body C2. "
+                                                      "SELL: râu dưới (close-low) < body×n%. BUY: râu trên (high-close) < body×n%.")
+        with wkcol2:
+            c2_wick_max_percent = st.number_input("Wick Max % of Body", value=30.0,
+                                                  min_value=1.0, max_value=200.0, step=1.0, format="%.0f",
+                                                  help="Ngưỡng tối đa của râu so với body C2 (%)",
+                                                  disabled=not c2_wick_filter_enabled)
         st.divider()
 
         st.subheader("Lot Size")
@@ -583,6 +611,9 @@ def main():
                     ema_filter_enabled=ema_filter_enabled,
                     buy_ema_side=buy_ema_side,
                     sell_ema_side=sell_ema_side,
+                    re_entry_after_sl=re_entry_after_sl,
+                    c2_wick_filter_enabled=c2_wick_filter_enabled,
+                    c2_wick_max_percent=c2_wick_max_percent,
                 )
 
             # Build config dict for export/history
@@ -609,6 +640,9 @@ def main():
                 'limit_order_candles': int(limit_order_candles),
                 'be_enabled': be_enabled,
                 'be_r': be_r,
+                're_entry_after_sl': re_entry_after_sl,
+                'c2_wick_filter_enabled': c2_wick_filter_enabled,
+                'c2_wick_max_percent': c2_wick_max_percent,
             }
 
             if lot_mode == 'fixed':

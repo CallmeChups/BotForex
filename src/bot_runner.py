@@ -100,6 +100,16 @@ def get_args():
                         help='Break-even: 1=enabled, 0=disabled (default 0)')
     parser.add_argument('--be_r', type=float, default=1.0,
                         help='Break-even trigger at be_r * SL_distance profit (default 1.0)')
+    parser.add_argument('--re_entry_after_sl', type=int, default=0,
+                        help='Re-entry after SL: scan signal in parallel while trade is open. '
+                             'If SL hits exactly at candle2 of pending signal → re-entry limit immediately. '
+                             '1=enabled, 0=disabled (default 0)')
+    parser.add_argument('--c2_wick_filter_enabled', type=int, default=0,
+                        help='C2 wick filter: râu C2 phải nhỏ hơn n%% body C2. '
+                             'SELL: râu dưới (close-low) < body*n%%. BUY: râu trên (high-close) < body*n%%. '
+                             '1=enabled, 0=disabled (default 0)')
+    parser.add_argument('--c2_wick_max_percent', type=float, default=30.0,
+                        help='Wick max %% of body C2 (default 30.0, used when c2_wick_filter_enabled=1)')
     parser.add_argument('--log_file', type=str, default=None,
                         help='Path to log file (default: stderr only)')
 
@@ -466,6 +476,7 @@ def feg_entry_decision(
     rr_ratio, buffer_k, lot_size, entry_mode, entry_percent,
     h2_exceed_pips=0.0, c2_gap_pips=0.0, ema_margin_pips=0.0,
     ema_filter_enabled=True, buy_ema_side="below_ema", sell_ema_side="above_ema",
+    c2_wick_filter_enabled=False, c2_wick_max_percent=30.0,
 ):
     """Quyết định vào lệnh FEG. None nếu đang có lệnh (1 lệnh/lúc) hoặc không có pattern."""
     from src.feg_strategy import analyze_feg
@@ -477,6 +488,7 @@ def feg_entry_decision(
         entry_mode=entry_mode, entry_percent=entry_percent,
         h2_exceed_pips=h2_exceed_pips, c2_gap_pips=c2_gap_pips, ema_margin_pips=ema_margin_pips,
         ema_filter_enabled=ema_filter_enabled, buy_ema_side=buy_ema_side, sell_ema_side=sell_ema_side,
+        c2_wick_filter_enabled=c2_wick_filter_enabled, c2_wick_max_percent=c2_wick_max_percent,
     )
 
 
@@ -486,6 +498,7 @@ def feg_stop_order_entry_decision(
     h2_exceed_pips=0.0, c2_gap_pips=0.0,
     ema_filter_enabled=True, buy_ema_side="below_ema", sell_ema_side="above_ema",
     ema_margin_pips=0.0,
+    c2_wick_filter_enabled=False, c2_wick_max_percent=30.0,
 ):
     """Quyết định vào lệnh FEG Stop Order. None nếu đang có lệnh (1 lệnh/lúc) hoặc không có pattern."""
     from src.feg_stop_order_strategy import analyze_feg_stop_order
@@ -498,6 +511,7 @@ def feg_stop_order_entry_decision(
         ema_filter_enabled=ema_filter_enabled,
         buy_ema_side=buy_ema_side, sell_ema_side=sell_ema_side,
         ema_margin_pips=ema_margin_pips,
+        c2_wick_filter_enabled=c2_wick_filter_enabled, c2_wick_max_percent=c2_wick_max_percent,
     )
 
 
@@ -704,6 +718,9 @@ def run_feg_bot(args, strategy, params, credentials,
     risk_mode = args.risk_mode or 'percent'
     risk_percent = args.risk_percent
     risk_amount = args.risk_amount
+    re_entry_after_sl = bool(args.re_entry_after_sl)
+    c2_wick_filter_enabled = bool(args.c2_wick_filter_enabled)
+    c2_wick_max_percent = args.c2_wick_max_percent
 
     # Auto-detect symbol min lot and clamp (only for fixed mode)
     mt5_tmp, err_tmp = get_mt5_connection(credentials)
@@ -717,9 +734,11 @@ def run_feg_bot(args, strategy, params, credentials,
     lot_log = f"flex({risk_mode} {risk_percent}%/{risk_amount}$)" if lot_mode == "flex" else f"fixed={lot_size}"
     be_log = f"BE=ON(r={args.be_r})" if args.be_enabled else "BE=OFF"
     ema_filter_str = f"EMA_filter=ON(buy={buy_ema_side},sell={sell_ema_side},margin={ema_margin_pips}p)" if ema_filter_enabled else "EMA_filter=OFF"
+    re_entry_log = "ReEntry=ON" if re_entry_after_sl else "ReEntry=OFF"
+    wick_log = f"WickFilter=ON({c2_wick_max_percent}%)" if c2_wick_filter_enabled else "WickFilter=OFF"
     log(f"FEG params: EMA{ema_period}, RR={rr_ratio}, buffer_k={buffer_k}, "
         f"lot={lot_log}, max_candles={max_candles or 'unlimited'}, "
-        f"h2_exceed={h2_exceed_pips}p, c2_gap={c2_gap_pips}p, {ema_filter_str}, {be_log}")
+        f"h2_exceed={h2_exceed_pips}p, c2_gap={c2_gap_pips}p, {ema_filter_str}, {be_log}, {re_entry_log}, {wick_log}")
 
     send_telegram(f"FEG Bot Started\nSymbol: {args.symbol}\nUser: {args.user}\n"
                   f"Test: {'Yes' if args.test else 'No'}")
@@ -960,11 +979,12 @@ def run_feg_bot(args, strategy, params, credentials,
                 # 3. Scan FEG signal → tạo pending order mới
                 now_hcm = datetime.now(TIMEZONE)
                 in_window = _in_time_window(now_hcm, entry_start_time, entry_end_time)
+                can_scan = re_entry_after_sl or not active_trades
                 log(f"New candle {candle_time.strftime('%H:%M')} | "
                     f"C1: O={prev['open']:.2f} H={prev['high']:.2f} L={prev['low']:.2f} C={prev['close']:.2f} | "
                     f"C2: O={last['open']:.2f} H={last['high']:.2f} L={last['low']:.2f} C={last['close']:.2f} | "
-                    f"EMA={ema[-1]:.2f} | in_window={in_window}")
-                if in_window:
+                    f"EMA={ema[-1]:.2f} | in_window={in_window} can_scan={can_scan}")
+                if in_window and can_scan:
                     c1 = {"open": prev["open"], "high": prev["high"], "low": prev["low"], "close": prev["close"]}
                     c2 = {"open": last["open"], "high": last["high"], "low": last["low"], "close": last["close"]}
                     signal = feg_entry_decision(
@@ -972,6 +992,7 @@ def run_feg_bot(args, strategy, params, credentials,
                         rr_ratio, buffer_k, lot_size, entry_mode, entry_percent,
                         h2_exceed_pips, c2_gap_pips, ema_margin_pips,
                         ema_filter_enabled, buy_ema_side, sell_ema_side,
+                        c2_wick_filter_enabled, c2_wick_max_percent,
                     )
                     log(f"Signal scan: {signal['direction'] if signal else 'NO SIGNAL'}"
                         + (f" entry={signal['entry_price']:.2f} sl={signal['stop_loss']:.2f} tp={signal['take_profit']:.2f}" if signal else ""))
@@ -1104,6 +1125,9 @@ def run_feg_stop_order_bot(args, strategy, params, credentials,
     risk_mode = args.risk_mode or 'percent'
     risk_percent = args.risk_percent
     risk_amount = args.risk_amount
+    re_entry_after_sl = bool(args.re_entry_after_sl)
+    c2_wick_filter_enabled = bool(args.c2_wick_filter_enabled)
+    c2_wick_max_percent = args.c2_wick_max_percent
 
     # Auto-detect symbol min lot and clamp (only for fixed mode)
     mt5_tmp, err_tmp = get_mt5_connection(credentials)
@@ -1117,9 +1141,11 @@ def run_feg_stop_order_bot(args, strategy, params, credentials,
     ema_filter_str = f"EMA_filter=ON(buy={buy_ema_side},sell={sell_ema_side},margin={ema_margin_pips}p)" if ema_filter_enabled else "EMA_filter=OFF"
     lot_log = f"flex({risk_mode} {risk_percent}%/{risk_amount}$)" if lot_mode == "flex" else f"fixed={lot_size}"
     be_log = f"BE=ON(r={args.be_r})" if args.be_enabled else "BE=OFF"
+    re_entry_log = "ReEntry=ON" if re_entry_after_sl else "ReEntry=OFF"
+    wick_log = f"WickFilter=ON({c2_wick_max_percent}%)" if c2_wick_filter_enabled else "WickFilter=OFF"
     log(f"FEG Stop Order params: EMA{ema_period}, RR={rr_ratio}, buffer_k={buffer_k}, "
         f"lot={lot_log}, max_candles={max_candles or 'unlimited'}, "
-        f"h2_exceed={h2_exceed_pips}p, c2_gap={c2_gap_pips}p, {ema_filter_str}, {be_log}")
+        f"h2_exceed={h2_exceed_pips}p, c2_gap={c2_gap_pips}p, {ema_filter_str}, {be_log}, {re_entry_log}, {wick_log}")
 
     send_telegram(f"FEG Stop Order Bot Started\nSymbol: {args.symbol}\nUser: {args.user}\n"
                   f"Test: {'Yes' if args.test else 'No'}")
@@ -1356,11 +1382,12 @@ def run_feg_stop_order_bot(args, strategy, params, credentials,
                 # 3. Scan FEG Stop Order signal → tạo pending order mới
                 now_hcm = datetime.now(TIMEZONE)
                 in_window = _in_time_window(now_hcm, entry_start_time, entry_end_time)
+                can_scan = re_entry_after_sl or not active_trades
                 log(f"New candle {candle_time.strftime('%H:%M')} | "
                     f"C1: O={prev['open']:.2f} H={prev['high']:.2f} L={prev['low']:.2f} C={prev['close']:.2f} | "
                     f"C2: O={last['open']:.2f} H={last['high']:.2f} L={last['low']:.2f} C={last['close']:.2f} | "
-                    f"EMA={ema[-1]:.2f} | in_window={in_window}")
-                if in_window:
+                    f"EMA={ema[-1]:.2f} | in_window={in_window} can_scan={can_scan}")
+                if in_window and can_scan:
                     c1 = {"open": prev["open"], "high": prev["high"], "low": prev["low"], "close": prev["close"]}
                     c2 = {"open": last["open"], "high": last["high"], "low": last["low"], "close": last["close"]}
                     signal = feg_stop_order_entry_decision(
@@ -1368,6 +1395,7 @@ def run_feg_stop_order_bot(args, strategy, params, credentials,
                         rr_ratio, buffer_k, lot_size,
                         h2_exceed_pips, c2_gap_pips,
                         ema_filter_enabled, buy_ema_side, sell_ema_side, ema_margin_pips,
+                        c2_wick_filter_enabled, c2_wick_max_percent,
                     )
                     log(f"Signal scan: {signal['direction'] if signal else 'NO SIGNAL'}"
                         + (f" entry={signal['entry_price']:.2f} sl={signal['stop_loss']:.2f} tp={signal['take_profit']:.2f}" if signal else ""))

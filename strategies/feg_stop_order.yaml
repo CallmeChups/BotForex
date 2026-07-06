@@ -35,6 +35,9 @@ parameters:
   rr_ratio: 2.0
   buffer_k: 5
   lot_size: 0.01
+  re_entry_after_sl: false  # scan signal in parallel during trade; re-enter if SL hits at candle2 of pending signal
+  c2_wick_filter_enabled: false  # optional: filter out C2 with large wick; SELL râu dưới < body×n%, BUY râu trên < body×n%
+  c2_wick_max_percent: 30.0      # n% threshold for wick vs body (used when c2_wick_filter_enabled=true)
 
 symbols:
   - XAUUSD
