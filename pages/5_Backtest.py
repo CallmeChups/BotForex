@@ -110,449 +110,458 @@ def main():
                             key="backtest_compact_layout",
                             help="Switch between compact grid and classic expanded layout")
 
+    layout_version = st.radio(
+        "Layout version",
+        ["New", "Classic"],
+        index=["New", "Classic"].index(st.session_state.get("backtest_layout_version", "New")),
+        horizontal=True,
+        key="backtest_layout_version",
+        help="New: 5-zone layout. Classic: original layout. Resets to New on page refresh.",
+    )
+
     strategy_options = {s['name']: s['id'] for s in enabled_strategies}
     default_end = now.date()
     default_start = default_end - timedelta(days=30)
 
-    if use_compact:
-        # ── COMPACT LAYOUT ────────────────────────────────────────────────────
-        # Row 1: Strategy | Symbol | Timeframe
-        # Row 2: Date Start | Date End | RR | Max Candles
-        # Row 3: Entry/EMA | Window | Entry Mode | Buffer K + Lot Mode
-        # Expander: Exit Types + Lot/Risk
-        # ─────────────────────────────────────────────────────────────────────
-
-        r1c1, r1c2, r1c3 = st.columns([2, 2, 1])
-        with r1c1:
-            selected_strategy_name = st.selectbox("Strategy", options=list(strategy_options.keys()))
-            selected_strategy = strategy_options[selected_strategy_name]
-        params = get_strategy_parameters(selected_strategy)
-        entry_type = params.get('entry_type', 'time')
-        is_pattern = entry_type == 'pattern'
-        strategy_symbols = params.get('symbols', [])
-        strategy_timeframe = params.get('timeframe', 'M5')
-
-        with r1c2:
-            use_custom_symbol = st.checkbox("Custom symbol", value=False)
-            if use_custom_symbol:
-                symbol = st.text_input("Symbol", value=os.getenv("SYMBOL", "XAUUSD"))
-            elif strategy_symbols:
-                symbol = st.selectbox("Symbol", options=strategy_symbols)
-            else:
-                symbol = st.text_input("Symbol", value=os.getenv("SYMBOL", "XAUUSD"))
-
-        with r1c3:
-            timeframe_options = ["M1", "M5", "M15", "M30", "H1", "H4", "D1"]
-            use_custom_timeframe = st.checkbox("Custom TF", value=False)
-            if use_custom_timeframe:
-                timeframe = st.selectbox("Timeframe", options=timeframe_options,
-                                         index=timeframe_options.index(strategy_timeframe))
-            else:
-                timeframe = strategy_timeframe
-                st.selectbox("Timeframe", options=[strategy_timeframe], disabled=True)
-
-        r2c1, r2c2, r2c3, r2c4 = st.columns(4)
-        with r2c1:
-            start_date = st.date_input("Start Date", value=default_start, max_value=default_end)
-        with r2c2:
-            end_date = st.date_input("End Date", value=default_end, max_value=default_end)
-        with r2c3:
-            rr_ratio = st.number_input("RR Ratio", value=float(_pf('rr_ratio', params.get('rr_ratio', 2.0))),
-                                       min_value=0.5, max_value=10.0, step=0.5)
-        with r2c4:
-            use_max_candles = st.checkbox("Max Candles", value=bool(_pf('max_candles', params.get('max_candles', 7))), help="Uncheck = TP/SL only")
-            if use_max_candles:
-                max_candles = st.number_input("", value=int(_pf('max_candles', params.get('max_candles', 7))),
-                                              min_value=1, max_value=50, label_visibility="collapsed")
-            else:
-                max_candles = 0
-
-        r3c1, r3c2, r3c3, r3c4 = st.columns(4)
-        is_feg_stop_order = (selected_strategy == 'feg_stop_order')
-        # EMA filter defaults — used below and passed to run_backtest
-        ema_filter_enabled = True
-        buy_ema_side = "below_ema"
-        sell_ema_side = "above_ema"
-
-        with r3c1:
-            if is_pattern:
-                ema_period = st.number_input("EMA Period", value=int(_pf('ema_period', params.get('ema_period', 21))),
-                                             min_value=2, max_value=200)
-                h2_exceed_pips = st.number_input(
-                    "H2 > H1 + N pips", value=float(_pf('h2_exceed_pips', params.get('h2_exceed_pips', 0.0))),
-                    min_value=0.0, step=1.0,
-                    help="SELL: H2 phải vượt H1 thêm N pips | BUY: L2 phải thấp hơn L1 thêm N pips")
-                st.caption(_pip_caption(h2_exceed_pips, symbol))
-                c2_gap_pips = st.number_input(
-                    "C2 vượt L1/H1 + N pips", value=float(_pf('c2_gap_pips', params.get('c2_gap_pips', 0.0))),
-                    min_value=0.0, step=1.0,
-                    help="SELL: C2 phải đóng thấp hơn L1 thêm N pips | BUY: C2 phải đóng cao hơn H1 thêm N pips")
-                st.caption(_pip_caption(c2_gap_pips, symbol))
-                ema_margin_pips = st.number_input(
-                    "L2/H2 cách EMA + N pips", value=float(_pf('ema_margin_pips', params.get('ema_margin_pips', 0.0))),
-                    min_value=0.0, step=1.0,
-                    help="SELL: L2 phải cách EMA ≥ N pips | BUY: H2 phải cách EMA ≥ N pips")
-                st.caption(_pip_caption(ema_margin_pips, symbol))
-                if is_pattern:
-                    ema_filter_enabled = st.checkbox(
-                        "EMA Filter", value=bool(_pf('ema_filter_enabled', params.get('ema_filter_enabled', True))),
-                        help="Bật/tắt điều kiện EMA cho tín hiệu entry")
-                    if ema_filter_enabled:
-                        _ema_side_opts = ["above_ema", "below_ema"]
-                        buy_ema_side = st.selectbox(
-                            "BUY EMA side",
-                            options=_ema_side_opts,
-                            index=_ema_side_opts.index(_pf('buy_ema_side', params.get('buy_ema_side', 'below_ema'))),
-                            format_func=lambda x: "H2 > EMA (above)" if x == "above_ema" else "H2 < EMA (below)",
-                            help="BUY: H2 phải nằm trên hay dưới EMA")
-                        sell_ema_side = st.selectbox(
-                            "SELL EMA side",
-                            options=_ema_side_opts,
-                            index=_ema_side_opts.index(_pf('sell_ema_side', params.get('sell_ema_side', 'above_ema'))),
-                            format_func=lambda x: "L2 > EMA (above)" if x == "above_ema" else "L2 < EMA (below)",
-                            help="SELL: L2 phải nằm trên hay dưới EMA")
-                entry_time = datetime.strptime("00:00", "%H:%M").time()
-            else:
-                ema_period = int(params.get('ema_period', 21))
-                h2_exceed_pips = 0.0
-                c2_gap_pips = 0.0
-                ema_margin_pips = 0.0
-                entry_time_str = params.get('entry_time', '21:05')
-                use_custom_time = st.checkbox("Custom entry time", value=False)
-                if use_custom_time:
-                    raw = st.text_input("Entry Time (HH:MM)", value="21:05", max_chars=5)
-                    try:
-                        entry_time = datetime.strptime(raw, "%H:%M").time()
-                    except ValueError:
-                        st.error("Use HH:MM format")
-                        entry_time = datetime.strptime("21:05", "%H:%M").time()
+    if layout_version == "Classic":
+        if use_compact:
+            # ── COMPACT LAYOUT ────────────────────────────────────────────────────
+            # Row 1: Strategy | Symbol | Timeframe
+            # Row 2: Date Start | Date End | RR | Max Candles
+            # Row 3: Entry/EMA | Window | Entry Mode | Buffer K + Lot Mode
+            # Expander: Exit Types + Lot/Risk
+            # ─────────────────────────────────────────────────────────────────────
+    
+            r1c1, r1c2, r1c3 = st.columns([2, 2, 1])
+            with r1c1:
+                selected_strategy_name = st.selectbox("Strategy", options=list(strategy_options.keys()))
+                selected_strategy = strategy_options[selected_strategy_name]
+            params = get_strategy_parameters(selected_strategy)
+            entry_type = params.get('entry_type', 'time')
+            is_pattern = entry_type == 'pattern'
+            strategy_symbols = params.get('symbols', [])
+            strategy_timeframe = params.get('timeframe', 'M5')
+    
+            with r1c2:
+                use_custom_symbol = st.checkbox("Custom symbol", value=False)
+                if use_custom_symbol:
+                    symbol = st.text_input("Symbol", value=os.getenv("SYMBOL", "XAUUSD"))
+                elif strategy_symbols:
+                    symbol = st.selectbox("Symbol", options=strategy_symbols)
                 else:
-                    entry_time = st.time_input("Entry Time", step=300,
-                                               value=datetime.strptime(entry_time_str, "%H:%M").time(),
-                                               disabled=True, help=f"Strategy default: {entry_time_str}")
-
-        with r3c2:
-            _pf_start = _pf('entry_start_time', '00:00')
-            _pf_end = _pf('entry_end_time', '23:59')
-            entry_start_time = st.time_input("Window Start (HCM)",
-                                             value=datetime.strptime(_pf_start, "%H:%M").time() if isinstance(_pf_start, str) else _pf_start,
-                                             help="Gate entries from this time. 00:00 = no filter.")
-            entry_end_time = st.time_input("Window End (HCM)",
-                                           value=datetime.strptime(_pf_end, "%H:%M").time() if isinstance(_pf_end, str) else _pf_end,
-                                           help="Gate entries until this time. 23:59 = no filter.")
-
-        with r3c3:
-            if is_feg_stop_order:
-                # Stop order: entry = H2+buffer / L2-buffer, không có entry_mode/percent
-                entry_mode = "close"
-                entry_percent = 0.0
-                st.caption("Entry: H2+buffer (BUY) / L2-buffer (SELL)")
-            else:
-                _pf_em = _pf('entry_mode', 'close')
+                    symbol = st.text_input("Symbol", value=os.getenv("SYMBOL", "XAUUSD"))
+    
+            with r1c3:
+                timeframe_options = ["M1", "M5", "M15", "M30", "H1", "H4", "D1"]
+                use_custom_timeframe = st.checkbox("Custom TF", value=False)
+                if use_custom_timeframe:
+                    timeframe = st.selectbox("Timeframe", options=timeframe_options,
+                                             index=timeframe_options.index(strategy_timeframe))
+                else:
+                    timeframe = strategy_timeframe
+                    st.selectbox("Timeframe", options=[strategy_timeframe], disabled=True)
+    
+            r2c1, r2c2, r2c3, r2c4 = st.columns(4)
+            with r2c1:
+                start_date = st.date_input("Start Date", value=default_start, max_value=default_end)
+            with r2c2:
+                end_date = st.date_input("End Date", value=default_end, max_value=default_end)
+            with r2c3:
+                rr_ratio = st.number_input("RR Ratio", value=float(_pf('rr_ratio', params.get('rr_ratio', 2.0))),
+                                           min_value=0.5, max_value=10.0, step=0.5)
+            with r2c4:
+                use_max_candles = st.checkbox("Max Candles", value=bool(_pf('max_candles', params.get('max_candles', 7))), help="Uncheck = TP/SL only")
+                if use_max_candles:
+                    max_candles = st.number_input("", value=int(_pf('max_candles', params.get('max_candles', 7))),
+                                                  min_value=1, max_value=50, label_visibility="collapsed")
+                else:
+                    max_candles = 0
+    
+            r3c1, r3c2, r3c3, r3c4 = st.columns(4)
+            is_feg_stop_order = (selected_strategy == 'feg_stop_order')
+            # EMA filter defaults — used below and passed to run_backtest
+            ema_filter_enabled = True
+            buy_ema_side = "below_ema"
+            sell_ema_side = "above_ema"
+    
+            with r3c1:
+                if is_pattern:
+                    ema_period = st.number_input("EMA Period", value=int(_pf('ema_period', params.get('ema_period', 21))),
+                                                 min_value=2, max_value=200)
+                    h2_exceed_pips = st.number_input(
+                        "H2 > H1 + N pips", value=float(_pf('h2_exceed_pips', params.get('h2_exceed_pips', 0.0))),
+                        min_value=0.0, step=1.0,
+                        help="SELL: H2 phải vượt H1 thêm N pips | BUY: L2 phải thấp hơn L1 thêm N pips")
+                    st.caption(_pip_caption(h2_exceed_pips, symbol))
+                    c2_gap_pips = st.number_input(
+                        "C2 vượt L1/H1 + N pips", value=float(_pf('c2_gap_pips', params.get('c2_gap_pips', 0.0))),
+                        min_value=0.0, step=1.0,
+                        help="SELL: C2 phải đóng thấp hơn L1 thêm N pips | BUY: C2 phải đóng cao hơn H1 thêm N pips")
+                    st.caption(_pip_caption(c2_gap_pips, symbol))
+                    ema_margin_pips = st.number_input(
+                        "L2/H2 cách EMA + N pips", value=float(_pf('ema_margin_pips', params.get('ema_margin_pips', 0.0))),
+                        min_value=0.0, step=1.0,
+                        help="SELL: L2 phải cách EMA ≥ N pips | BUY: H2 phải cách EMA ≥ N pips")
+                    st.caption(_pip_caption(ema_margin_pips, symbol))
+                    c2_wick_filter_enabled = st.checkbox("C2 Wick Filter", value=bool(_pf('c2_wick_filter_enabled', False)),
+                                                         help="Râu nến C2 phải nhỏ hơn n% body C2. "
+                                                              "SELL: râu dưới (close-low) < body×n%. BUY: râu trên (high-close) < body×n%.")
+                    c2_wick_max_percent = st.number_input("Wick Max % of Body", value=float(_pf('c2_wick_max_percent', 30.0)),
+                                                          min_value=1.0, max_value=200.0, step=1.0, format="%.0f",
+                                                          help="Ngưỡng tối đa của râu so với body C2 (%)",
+                                                          disabled=not c2_wick_filter_enabled)
+                    if is_pattern:
+                        ema_filter_enabled = st.checkbox(
+                            "EMA Filter", value=bool(_pf('ema_filter_enabled', params.get('ema_filter_enabled', True))),
+                            help="Bật/tắt điều kiện EMA cho tín hiệu entry")
+                        if ema_filter_enabled:
+                            _ema_side_opts = ["above_ema", "below_ema"]
+                            buy_ema_side = st.selectbox(
+                                "BUY EMA side",
+                                options=_ema_side_opts,
+                                index=_ema_side_opts.index(_pf('buy_ema_side', params.get('buy_ema_side', 'below_ema'))),
+                                format_func=lambda x: "H2 > EMA (above)" if x == "above_ema" else "H2 < EMA (below)",
+                                help="BUY: H2 phải nằm trên hay dưới EMA")
+                            sell_ema_side = st.selectbox(
+                                "SELL EMA side",
+                                options=_ema_side_opts,
+                                index=_ema_side_opts.index(_pf('sell_ema_side', params.get('sell_ema_side', 'above_ema'))),
+                                format_func=lambda x: "L2 > EMA (above)" if x == "above_ema" else "L2 < EMA (below)",
+                                help="SELL: L2 phải nằm trên hay dưới EMA")
+                    entry_time = datetime.strptime("00:00", "%H:%M").time()
+                else:
+                    ema_period = int(params.get('ema_period', 21))
+                    h2_exceed_pips = 0.0
+                    c2_gap_pips = 0.0
+                    ema_margin_pips = 0.0
+                    c2_wick_filter_enabled = False
+                    c2_wick_max_percent = 30.0
+                    entry_time_str = params.get('entry_time', '21:05')
+                    use_custom_time = st.checkbox("Custom entry time", value=False)
+                    if use_custom_time:
+                        raw = st.text_input("Entry Time (HH:MM)", value="21:05", max_chars=5)
+                        try:
+                            entry_time = datetime.strptime(raw, "%H:%M").time()
+                        except ValueError:
+                            st.error("Use HH:MM format")
+                            entry_time = datetime.strptime("21:05", "%H:%M").time()
+                    else:
+                        entry_time = st.time_input("Entry Time", step=300,
+                                                   value=datetime.strptime(entry_time_str, "%H:%M").time(),
+                                                   disabled=True, help=f"Strategy default: {entry_time_str}")
+    
+            with r3c2:
+                _pf_start = _pf('entry_start_time', '00:00')
+                _pf_end = _pf('entry_end_time', '23:59')
+                entry_start_time = st.time_input("Window Start (HCM)",
+                                                 value=datetime.strptime(_pf_start, "%H:%M").time() if isinstance(_pf_start, str) else _pf_start,
+                                                 help="Gate entries from this time. 00:00 = no filter.")
+                entry_end_time = st.time_input("Window End (HCM)",
+                                               value=datetime.strptime(_pf_end, "%H:%M").time() if isinstance(_pf_end, str) else _pf_end,
+                                               help="Gate entries until this time. 23:59 = no filter.")
+    
+            with r3c3:
+                if is_feg_stop_order:
+                    # Stop order: entry = H2+buffer / L2-buffer, không có entry_mode/percent
+                    entry_mode = "close"
+                    entry_percent = 0.0
+                    st.caption("Entry: H2+buffer (BUY) / L2-buffer (SELL)")
+                else:
+                    _pf_em = _pf('entry_mode', 'close')
+                    entry_mode = st.radio("Entry Mode", options=["close", "range_percent"],
+                                          index=0 if _pf_em == "close" else 1,
+                                          format_func=lambda x: "Close" if x == "close" else "Body %",
+                                          help="Close: entry at close price | Body %: limit inside candle body")
+                    if entry_mode == "range_percent":
+                        entry_percent = st.number_input("Entry %", value=float(_pf('entry_percent', 30.0)),
+                                                        min_value=0.0, max_value=100.0, step=5.0)
+                    else:
+                        entry_percent = 0.0
+                limit_order_candles = st.number_input(
+                    "Chờ khớp lệnh (nến)", value=int(_pf('limit_order_candles', 1)), min_value=1, max_value=100,
+                    help="Số nến tối đa chờ stop order khớp. 1 = khớp ngay nến tiếp theo nếu giá chạm entry.")
+    
+            with r3c4:
+                buffer_k = st.number_input("Buffer K (pips)", value=float(_pf('buffer_k', params.get('buffer_k', 5))),
+                                           min_value=0.0, max_value=200.0, step=1.0,
+                                           help="SL = candle body edge + K pips")
+                _pf_lot = _pf('lot_mode', 'fixed')
+                lot_mode = st.radio("Lot Mode", options=["fixed", "flex"],
+                                    index=0 if _pf_lot == "fixed" else 1,
+                                    format_func=lambda x: "Fixed" if x == "fixed" else "Flex (Risk)")
+    
+            with st.expander("Exit Types & Lot Size", expanded=False):
+                ec1, ec2 = st.columns(2)
+                with ec1:
+                    tp_type = st.radio("TP Exit", options=["price_based", "close_based"],
+                                       index=0 if _pf('tp_type', 'price_based') == 'price_based' else 1,
+                                       format_func=lambda x: "Price-based (wick)" if x == "price_based" else "Close-based",
+                                       horizontal=True,
+                                       help="Price: wick touches TP | Close: candle closes past TP")
+                with ec2:
+                    sl_type = st.radio("SL Exit", options=["price_based", "close_based"],
+                                       index=0 if _pf('sl_type', 'price_based') == 'price_based' else 1,
+                                       format_func=lambda x: "Price-based (wick)" if x == "price_based" else "Close-based",
+                                       horizontal=True,
+                                       help="Price: wick touches SL | Close: candle closes past SL")
+                bc1, bc2, bc3 = st.columns(3)
+                with bc1:
+                    be_enabled = st.checkbox("Break-Even (BE)", value=bool(_pf('be_enabled', False)),
+                                             help="Dời SL về entry khi lời đủ be_r × SL distance")
+                with bc2:
+                    be_r = st.number_input("BE Trigger (R)", value=float(_pf('be_r', 1.0)), min_value=0.1, max_value=10.0,
+                                           step=0.1, format="%.1f",
+                                           help="BE kích hoạt khi lời đạt be_r × SL distance",
+                                           disabled=not be_enabled)
+                with bc3:
+                    re_entry_after_sl = st.checkbox("Re-Entry After SL", value=bool(_pf('re_entry_after_sl', False)),
+                                                    help="Trong lúc lệnh đang chạy, vẫn scan signal song song. "
+                                                         "Nếu SL hit đúng tại candle2 của signal mới → vào lệnh tiếp ngay.")
+                st.divider()
+                if lot_mode == "fixed":
+                    lc1, _ = st.columns(2)
+                    with lc1:
+                        fixed_lot = st.number_input("Lot Size", value=float(_pf('fixed_lot', params.get('lot_size', 0.01))),
+                                                    min_value=0.01, max_value=10.0, step=0.01, format="%.2f")
+                    risk_percent = 0.5
+                    risk_amount = 0.0
+                    risk_mode = "percent"
+                    starting_equity = 1000.0
+                else:
+                    lc1, lc2, lc3 = st.columns(3)
+                    with lc1:
+                        starting_equity = st.number_input("Starting Equity ($)", value=float(_pf('starting_equity', 1000.0)),
+                                                          min_value=100.0, step=100.0)
+                    with lc2:
+                        _pf_rm = _pf('risk_mode', 'percent')
+                        risk_mode = st.radio("Risk Mode", options=["percent", "fixed_amount"],
+                                             index=0 if _pf_rm == "percent" else 1,
+                                             format_func=lambda x: "%" if x == "percent" else "Fixed $",
+                                             horizontal=True)
+                    with lc3:
+                        if risk_mode == "percent":
+                            risk_percent = st.number_input("Risk %", value=float(_pf('risk_percent', 0.5)), min_value=0.1,
+                                                           max_value=5.0, step=0.1, format="%.1f")
+                            risk_amount = 0.0
+                            st.caption(f"${starting_equity:.0f} × {risk_percent}% = ${starting_equity * risk_percent / 100:.2f}/trade")
+                        else:
+                            risk_amount = st.number_input("Risk $", value=float(_pf('risk_amount', 5.0)), min_value=1.0,
+                                                          max_value=1000.0, step=1.0, format="%.2f")
+                            risk_percent = 0.0
+                    fixed_lot = 0.01
+    
+            st.caption(f"Strategy: **{selected_strategy_name}** | TF: {timeframe} | Entry: {entry_type}")
+    
+        else:
+            # ── OLD LAYOUT (multi-section with subheaders) ────────────────────────
+            st.subheader("Backtest Parameters")
+    
+            selected_strategy_name = st.selectbox("Select Strategy", options=list(strategy_options.keys()))
+            selected_strategy = strategy_options[selected_strategy_name]
+            params = get_strategy_parameters(selected_strategy)
+            entry_type = params.get('entry_type', 'time')
+            is_pattern = entry_type == 'pattern'
+            strategy_symbols = params.get('symbols', [])
+            strategy_timeframe = params.get('timeframe', 'M5')
+    
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                use_custom_symbol = st.checkbox("Custom symbol", value=False)
+                if use_custom_symbol:
+                    symbol = st.text_input("Symbol", value=os.getenv("SYMBOL", "XAUUSD"))
+                elif strategy_symbols:
+                    symbol = st.selectbox("Symbol", options=strategy_symbols)
+                else:
+                    symbol = st.text_input("Symbol", value=os.getenv("SYMBOL", "XAUUSD"))
+                start_date = st.date_input("Start Date", value=default_start, max_value=default_end)
+    
+            with col2:
+                end_date = st.date_input("End Date", value=default_end, max_value=default_end)
+                if is_pattern:
+                    st.markdown("**FEG Filter Margins**")
+                    ema_period = st.number_input("EMA Period", value=int(params.get('ema_period', 21)),
+                                                 min_value=2, max_value=200)
+                    h2_exceed_pips = st.number_input(
+                        "H2 > H1 + N pips", value=float(params.get('h2_exceed_pips', 0.0)),
+                        min_value=0.0, step=1.0,
+                        help="SELL: H2 phải vượt H1 thêm N pips | BUY: L2 phải thấp hơn L1 thêm N pips")
+                    st.caption(_pip_caption(h2_exceed_pips, symbol))
+                    c2_gap_pips = st.number_input(
+                        "C2 vượt L1/H1 + N pips", value=float(params.get('c2_gap_pips', 0.0)),
+                        min_value=0.0, step=1.0,
+                        help="SELL: C2 phải đóng thấp hơn L1 thêm N pips | BUY: C2 phải đóng cao hơn H1 thêm N pips")
+                    st.caption(_pip_caption(c2_gap_pips, symbol))
+                    ema_margin_pips = st.number_input(
+                        "L2/H2 cách EMA + N pips", value=float(params.get('ema_margin_pips', 0.0)),
+                        min_value=0.0, step=1.0,
+                        help="SELL: L2 phải cách EMA ≥ N pips | BUY: H2 phải cách EMA ≥ N pips")
+                    st.caption(_pip_caption(ema_margin_pips, symbol))
+                    c2_wick_filter_enabled = st.checkbox("C2 Wick Filter", value=bool(params.get('c2_wick_filter_enabled', False)),
+                                                         help="Râu nến C2 phải nhỏ hơn n% body C2. "
+                                                              "SELL: râu dưới (close-low) < body×n%. BUY: râu trên (high-close) < body×n%.")
+                    c2_wick_max_percent = st.number_input("Wick Max % of Body", value=float(params.get('c2_wick_max_percent', 30.0)),
+                                                          min_value=1.0, max_value=200.0, step=1.0, format="%.0f",
+                                                          help="Ngưỡng tối đa của râu so với body C2 (%)",
+                                                          disabled=not c2_wick_filter_enabled)
+                    entry_time = datetime.strptime("00:00", "%H:%M").time()
+                else:
+                    ema_period = int(params.get('ema_period', 21))
+                    h2_exceed_pips = 0.0
+                    c2_gap_pips = 0.0
+                    ema_margin_pips = 0.0
+                    c2_wick_filter_enabled = False
+                    c2_wick_max_percent = 30.0
+                    entry_time_str = params.get('entry_time', '21:05')
+                    use_custom_time = st.checkbox("Custom entry time", value=False)
+                    if use_custom_time:
+                        raw = st.text_input("Entry Time", value="21:05", max_chars=5, placeholder="HH:MM")
+                        try:
+                            entry_time = datetime.strptime(raw, "%H:%M").time()
+                        except ValueError:
+                            st.error("Invalid time format. Use HH:MM (e.g., 21:05)")
+                            entry_time = datetime.strptime("21:05", "%H:%M").time()
+                    else:
+                        entry_time = st.time_input("Entry Time",
+                                                   value=datetime.strptime(entry_time_str, "%H:%M").time(),
+                                                   step=300, disabled=True,
+                                                   help=f"From strategy: {entry_time_str}")
+                        st.caption(f"Strategy default: {entry_time_str}")
+    
+            with col3:
+                timeframe_options = ["M1", "M5", "M15", "M30", "H1", "H4", "D1"]
+                use_custom_timeframe = st.checkbox("Custom timeframe", value=False)
+                if use_custom_timeframe:
+                    timeframe = st.selectbox("Timeframe", options=timeframe_options,
+                                             index=timeframe_options.index(strategy_timeframe))
+                else:
+                    timeframe = strategy_timeframe
+                    st.selectbox("Timeframe", options=[strategy_timeframe], disabled=True)
+                    st.caption(f"Strategy default: {strategy_timeframe}")
+                rr_ratio = st.number_input("RR Ratio", value=float(params.get('rr_ratio', 2.0)),
+                                           min_value=0.5, max_value=10.0, step=0.5)
+                use_max_candles = st.checkbox("Enable Max Candles", value=True,
+                                              help="Uncheck to disable time-based exit (only TP/SL)")
+                if use_max_candles:
+                    max_candles = st.number_input("Max Candles", value=int(params.get('max_candles', 7)),
+                                                  min_value=1, max_value=50)
+                else:
+                    max_candles = 0
+                    st.caption("Time exit disabled - trades exit only on TP or SL")
+    
+            st.caption(f"Strategy: **{selected_strategy_name}** | Timeframe: {timeframe}")
+            st.divider()
+    
+            st.subheader("Entry Time Window")
+            tw_col1, tw_col2 = st.columns(2)
+            with tw_col1:
+                entry_start_time = st.time_input("Entry Start Time (HCM)", value=time(0, 0),
+                                                 help="Only enter new positions at or after this time. Default 00:00 = no filter.")
+            with tw_col2:
+                entry_end_time = st.time_input("Entry End Time (HCM)", value=time(23, 59),
+                                               help="Only enter new positions at or before this time. Default 23:59 = no filter.")
+            st.caption("Active trade continues holding if window ends. Window only gates new entries.")
+            st.divider()
+    
+            st.subheader("Entry")
+            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns(3)
+            with col1:
                 entry_mode = st.radio("Entry Mode", options=["close", "range_percent"],
-                                      index=0 if _pf_em == "close" else 1,
-                                      format_func=lambda x: "Close" if x == "close" else "Body %",
-                                      help="Close: entry at close price | Body %: limit inside candle body")
+                                      format_func=lambda x: "Close Price" if x == "close" else "Body Percent (%)",
+                                      horizontal=True,
+                                      help="Close: Enter at candle close | Body %: Enter at % of candle body")
+            with col2:
                 if entry_mode == "range_percent":
-                    entry_percent = st.number_input("Entry %", value=float(_pf('entry_percent', 30.0)),
+                    entry_percent = st.number_input("Entry Percent (%)", value=30.0,
                                                     min_value=0.0, max_value=100.0, step=5.0)
+                    st.caption(f"BUY: Close - {entry_percent}%(body) | SELL: Close + {entry_percent}%(body)")
                 else:
                     entry_percent = 0.0
-            limit_order_candles = st.number_input(
-                "Chờ khớp lệnh (nến)", value=int(_pf('limit_order_candles', 1)), min_value=1, max_value=100,
-                help="Số nến tối đa chờ stop order khớp. 1 = khớp ngay nến tiếp theo nếu giá chạm entry.")
-
-        with r3c4:
-            buffer_k = st.number_input("Buffer K (pips)", value=float(_pf('buffer_k', params.get('buffer_k', 5))),
-                                       min_value=0.0, max_value=200.0, step=1.0,
-                                       help="SL = candle body edge + K pips")
-            _pf_lot = _pf('lot_mode', 'fixed')
-            lot_mode = st.radio("Lot Mode", options=["fixed", "flex"],
-                                index=0 if _pf_lot == "fixed" else 1,
-                                format_func=lambda x: "Fixed" if x == "fixed" else "Flex (Risk)")
-
-        with st.expander("Exit Types & Lot Size", expanded=False):
-            ec1, ec2 = st.columns(2)
-            with ec1:
-                tp_type = st.radio("TP Exit", options=["price_based", "close_based"],
-                                   index=0 if _pf('tp_type', 'price_based') == 'price_based' else 1,
-                                   format_func=lambda x: "Price-based (wick)" if x == "price_based" else "Close-based",
+                    st.caption("Entry at candle Close price")
+            with col3:
+                limit_order_candles = st.number_input(
+                    "Chờ khớp lệnh (nến)", value=1, min_value=1, max_value=100,
+                    help="Số nến tối đa chờ limit order khớp. 1 = khớp ngay nến tiếp theo nếu giá chạm entry.")
+            st.divider()
+    
+            st.subheader("Exit Types")
+            col1, col2 = st.columns(2)
+            with col1:
+                tp_type = st.radio("Take Profit (TP) Exit", options=["price_based", "close_based"],
+                                   format_func=lambda x: "Price-based (Immediate)" if x == "price_based" else "Close-based (Delayed)",
                                    horizontal=True,
-                                   help="Price: wick touches TP | Close: candle closes past TP")
-            with ec2:
-                sl_type = st.radio("SL Exit", options=["price_based", "close_based"],
-                                   index=0 if _pf('sl_type', 'price_based') == 'price_based' else 1,
-                                   format_func=lambda x: "Price-based (wick)" if x == "price_based" else "Close-based",
+                                   help="Price-based: Exit when wick touches TP | Close-based: Exit when candle closes beyond TP")
+                if tp_type == "price_based":
+                    st.caption("TP triggers when High/Low touches TP level (exits at TP price)")
+                else:
+                    st.caption("TP triggers when candle CLOSES beyond TP (exits at close price)")
+            with col2:
+                sl_type = st.radio("Stop Loss (SL) Exit", options=["price_based", "close_based"],
+                                   format_func=lambda x: "Price-based (Immediate)" if x == "price_based" else "Close-based (Delayed)",
                                    horizontal=True,
-                                   help="Price: wick touches SL | Close: candle closes past SL")
-            bc1, bc2, bc3 = st.columns(3)
-            with bc1:
-                be_enabled = st.checkbox("Break-Even (BE)", value=bool(_pf('be_enabled', False)),
+                                   help="Price-based: Exit when wick touches SL | Close-based: Exit when candle closes beyond SL")
+                if sl_type == "price_based":
+                    st.caption("SL triggers when High/Low touches SL level (exits at SL price)")
+                else:
+                    st.caption("SL triggers when candle CLOSES beyond SL (exits at close price)")
+            bcol1, bcol2, bcol3 = st.columns(3)
+            with bcol1:
+                be_enabled = st.checkbox("Break-Even (BE)", value=False,
                                          help="Dời SL về entry khi lời đủ be_r × SL distance")
-            with bc2:
-                be_r = st.number_input("BE Trigger (R)", value=float(_pf('be_r', 1.0)), min_value=0.1, max_value=10.0,
+            with bcol2:
+                be_r = st.number_input("BE Trigger (R)", value=1.0, min_value=0.1, max_value=10.0,
                                        step=0.1, format="%.1f",
                                        help="BE kích hoạt khi lời đạt be_r × SL distance",
                                        disabled=not be_enabled)
-            with bc3:
-                re_entry_after_sl = st.checkbox("Re-Entry After SL", value=bool(_pf('re_entry_after_sl', False)),
+            with bcol3:
+                re_entry_after_sl = st.checkbox("Re-Entry After SL", value=False,
                                                 help="Trong lúc lệnh đang chạy, vẫn scan signal song song. "
                                                      "Nếu SL hit đúng tại candle2 của signal mới → vào lệnh tiếp ngay.")
-            wc1, wc2, wc3 = st.columns(3)
-            with wc1:
-                c2_wick_filter_enabled = st.checkbox("C2 Wick Filter", value=bool(_pf('c2_wick_filter_enabled', False)),
-                                                     help="Râu nến C2 phải nhỏ hơn n% body C2. "
-                                                          "SELL: râu dưới (close-low) < body×n%. BUY: râu trên (high-close) < body×n%.")
-            with wc2:
-                c2_wick_max_percent = st.number_input("Wick Max % of Body", value=float(_pf('c2_wick_max_percent', 30.0)),
-                                                      min_value=1.0, max_value=200.0, step=1.0, format="%.0f",
-                                                      help="Ngưỡng tối đa của râu so với body C2 (%)",
-                                                      disabled=not c2_wick_filter_enabled)
             st.divider()
+    
+            st.subheader("Lot Size")
+            lot_mode = st.radio("Lot Size Mode", options=["fixed", "flex"],
+                                format_func=lambda x: "Fixed" if x == "fixed" else "Flex (Risk-based)",
+                                horizontal=True,
+                                help="Fixed: manual lot size | Flex: calculated from risk % and SL distance")
+            col1, col2 = st.columns(2)
+            with col1:
+                buffer_k = st.number_input("Buffer K (pips)", value=float(params.get('buffer_k', 5)),
+                                           min_value=0.0, max_value=200.0, step=1.0,
+                                           help="SL = candle body + k pips")
+            st.caption("SL pips = (Close - Low) + k for BUY, (High - Close) + k for SELL")
             if lot_mode == "fixed":
-                lc1, _ = st.columns(2)
-                with lc1:
-                    fixed_lot = st.number_input("Lot Size", value=float(_pf('fixed_lot', params.get('lot_size', 0.01))),
+                with col2:
+                    fixed_lot = st.number_input("Lot Size", value=float(params.get('lot_size', 0.01)),
                                                 min_value=0.01, max_value=10.0, step=0.01, format="%.2f")
                 risk_percent = 0.5
                 risk_amount = 0.0
                 risk_mode = "percent"
                 starting_equity = 1000.0
             else:
-                lc1, lc2, lc3 = st.columns(3)
-                with lc1:
-                    starting_equity = st.number_input("Starting Equity ($)", value=float(_pf('starting_equity', 1000.0)),
-                                                      min_value=100.0, step=100.0)
-                with lc2:
-                    _pf_rm = _pf('risk_mode', 'percent')
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    starting_equity = st.number_input("Starting Equity (USD)", value=1000.0,
+                                                      min_value=100.0, max_value=1000000.0, step=100.0)
+                with col2:
                     risk_mode = st.radio("Risk Mode", options=["percent", "fixed_amount"],
-                                         index=0 if _pf_rm == "percent" else 1,
-                                         format_func=lambda x: "%" if x == "percent" else "Fixed $",
+                                         format_func=lambda x: "Percentage (%)" if x == "percent" else "Fixed Amount ($)",
                                          horizontal=True)
-                with lc3:
+                with col3:
                     if risk_mode == "percent":
-                        risk_percent = st.number_input("Risk %", value=float(_pf('risk_percent', 0.5)), min_value=0.1,
+                        risk_percent = st.number_input("Risk per Trade (%)", value=0.5, min_value=0.1,
                                                        max_value=5.0, step=0.1, format="%.1f")
                         risk_amount = 0.0
-                        st.caption(f"${starting_equity:.0f} × {risk_percent}% = ${starting_equity * risk_percent / 100:.2f}/trade")
+                        example_r = starting_equity * (risk_percent / 100)
+                        st.caption(f"Initial: ${starting_equity:.0f} × {risk_percent}% = ${example_r:.2f}/trade")
                     else:
-                        risk_amount = st.number_input("Risk $", value=float(_pf('risk_amount', 5.0)), min_value=1.0,
+                        risk_amount = st.number_input("Risk per Trade ($)", value=5.0, min_value=1.0,
                                                       max_value=1000.0, step=1.0, format="%.2f")
                         risk_percent = 0.0
+                        st.caption(f"Constant ${risk_amount:.2f} risk per trade")
                 fixed_lot = 0.01
-
-        st.caption(f"Strategy: **{selected_strategy_name}** | TF: {timeframe} | Entry: {entry_type}")
-
-    else:
-        # ── OLD LAYOUT (multi-section with subheaders) ────────────────────────
-        st.subheader("Backtest Parameters")
-
-        selected_strategy_name = st.selectbox("Select Strategy", options=list(strategy_options.keys()))
-        selected_strategy = strategy_options[selected_strategy_name]
-        params = get_strategy_parameters(selected_strategy)
-        entry_type = params.get('entry_type', 'time')
-        is_pattern = entry_type == 'pattern'
-        strategy_symbols = params.get('symbols', [])
-        strategy_timeframe = params.get('timeframe', 'M5')
-
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            use_custom_symbol = st.checkbox("Custom symbol", value=False)
-            if use_custom_symbol:
-                symbol = st.text_input("Symbol", value=os.getenv("SYMBOL", "XAUUSD"))
-            elif strategy_symbols:
-                symbol = st.selectbox("Symbol", options=strategy_symbols)
-            else:
-                symbol = st.text_input("Symbol", value=os.getenv("SYMBOL", "XAUUSD"))
-            start_date = st.date_input("Start Date", value=default_start, max_value=default_end)
-
-        with col2:
-            end_date = st.date_input("End Date", value=default_end, max_value=default_end)
-            if is_pattern:
-                st.markdown("**FEG Filter Margins**")
-                ema_period = st.number_input("EMA Period", value=int(params.get('ema_period', 21)),
-                                             min_value=2, max_value=200)
-                h2_exceed_pips = st.number_input(
-                    "H2 > H1 + N pips", value=float(params.get('h2_exceed_pips', 0.0)),
-                    min_value=0.0, step=1.0,
-                    help="SELL: H2 phải vượt H1 thêm N pips | BUY: L2 phải thấp hơn L1 thêm N pips")
-                st.caption(_pip_caption(h2_exceed_pips, symbol))
-                c2_gap_pips = st.number_input(
-                    "C2 vượt L1/H1 + N pips", value=float(params.get('c2_gap_pips', 0.0)),
-                    min_value=0.0, step=1.0,
-                    help="SELL: C2 phải đóng thấp hơn L1 thêm N pips | BUY: C2 phải đóng cao hơn H1 thêm N pips")
-                st.caption(_pip_caption(c2_gap_pips, symbol))
-                ema_margin_pips = st.number_input(
-                    "L2/H2 cách EMA + N pips", value=float(params.get('ema_margin_pips', 0.0)),
-                    min_value=0.0, step=1.0,
-                    help="SELL: L2 phải cách EMA ≥ N pips | BUY: H2 phải cách EMA ≥ N pips")
-                st.caption(_pip_caption(ema_margin_pips, symbol))
-                entry_time = datetime.strptime("00:00", "%H:%M").time()
-            else:
-                ema_period = int(params.get('ema_period', 21))
-                h2_exceed_pips = 0.0
-                c2_gap_pips = 0.0
-                ema_margin_pips = 0.0
-                entry_time_str = params.get('entry_time', '21:05')
-                use_custom_time = st.checkbox("Custom entry time", value=False)
-                if use_custom_time:
-                    raw = st.text_input("Entry Time", value="21:05", max_chars=5, placeholder="HH:MM")
-                    try:
-                        entry_time = datetime.strptime(raw, "%H:%M").time()
-                    except ValueError:
-                        st.error("Invalid time format. Use HH:MM (e.g., 21:05)")
-                        entry_time = datetime.strptime("21:05", "%H:%M").time()
-                else:
-                    entry_time = st.time_input("Entry Time",
-                                               value=datetime.strptime(entry_time_str, "%H:%M").time(),
-                                               step=300, disabled=True,
-                                               help=f"From strategy: {entry_time_str}")
-                    st.caption(f"Strategy default: {entry_time_str}")
-
-        with col3:
-            timeframe_options = ["M1", "M5", "M15", "M30", "H1", "H4", "D1"]
-            use_custom_timeframe = st.checkbox("Custom timeframe", value=False)
-            if use_custom_timeframe:
-                timeframe = st.selectbox("Timeframe", options=timeframe_options,
-                                         index=timeframe_options.index(strategy_timeframe))
-            else:
-                timeframe = strategy_timeframe
-                st.selectbox("Timeframe", options=[strategy_timeframe], disabled=True)
-                st.caption(f"Strategy default: {strategy_timeframe}")
-            rr_ratio = st.number_input("RR Ratio", value=float(params.get('rr_ratio', 2.0)),
-                                       min_value=0.5, max_value=10.0, step=0.5)
-            use_max_candles = st.checkbox("Enable Max Candles", value=True,
-                                          help="Uncheck to disable time-based exit (only TP/SL)")
-            if use_max_candles:
-                max_candles = st.number_input("Max Candles", value=int(params.get('max_candles', 7)),
-                                              min_value=1, max_value=50)
-            else:
-                max_candles = 0
-                st.caption("Time exit disabled - trades exit only on TP or SL")
-
-        st.caption(f"Strategy: **{selected_strategy_name}** | Timeframe: {timeframe}")
-        st.divider()
-
-        st.subheader("Entry Time Window")
-        tw_col1, tw_col2 = st.columns(2)
-        with tw_col1:
-            entry_start_time = st.time_input("Entry Start Time (HCM)", value=time(0, 0),
-                                             help="Only enter new positions at or after this time. Default 00:00 = no filter.")
-        with tw_col2:
-            entry_end_time = st.time_input("Entry End Time (HCM)", value=time(23, 59),
-                                           help="Only enter new positions at or before this time. Default 23:59 = no filter.")
-        st.caption("Active trade continues holding if window ends. Window only gates new entries.")
-        st.divider()
-
-        st.subheader("Entry")
-        col1, col2 = st.columns(2)
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            entry_mode = st.radio("Entry Mode", options=["close", "range_percent"],
-                                  format_func=lambda x: "Close Price" if x == "close" else "Body Percent (%)",
-                                  horizontal=True,
-                                  help="Close: Enter at candle close | Body %: Enter at % of candle body")
-        with col2:
-            if entry_mode == "range_percent":
-                entry_percent = st.number_input("Entry Percent (%)", value=30.0,
-                                                min_value=0.0, max_value=100.0, step=5.0)
-                st.caption(f"BUY: Close - {entry_percent}%(body) | SELL: Close + {entry_percent}%(body)")
-            else:
-                entry_percent = 0.0
-                st.caption("Entry at candle Close price")
-        with col3:
-            limit_order_candles = st.number_input(
-                "Chờ khớp lệnh (nến)", value=1, min_value=1, max_value=100,
-                help="Số nến tối đa chờ limit order khớp. 1 = khớp ngay nến tiếp theo nếu giá chạm entry.")
-        st.divider()
-
-        st.subheader("Exit Types")
-        col1, col2 = st.columns(2)
-        with col1:
-            tp_type = st.radio("Take Profit (TP) Exit", options=["price_based", "close_based"],
-                               format_func=lambda x: "Price-based (Immediate)" if x == "price_based" else "Close-based (Delayed)",
-                               horizontal=True,
-                               help="Price-based: Exit when wick touches TP | Close-based: Exit when candle closes beyond TP")
-            if tp_type == "price_based":
-                st.caption("TP triggers when High/Low touches TP level (exits at TP price)")
-            else:
-                st.caption("TP triggers when candle CLOSES beyond TP (exits at close price)")
-        with col2:
-            sl_type = st.radio("Stop Loss (SL) Exit", options=["price_based", "close_based"],
-                               format_func=lambda x: "Price-based (Immediate)" if x == "price_based" else "Close-based (Delayed)",
-                               horizontal=True,
-                               help="Price-based: Exit when wick touches SL | Close-based: Exit when candle closes beyond SL")
-            if sl_type == "price_based":
-                st.caption("SL triggers when High/Low touches SL level (exits at SL price)")
-            else:
-                st.caption("SL triggers when candle CLOSES beyond SL (exits at close price)")
-        bcol1, bcol2, bcol3 = st.columns(3)
-        with bcol1:
-            be_enabled = st.checkbox("Break-Even (BE)", value=False,
-                                     help="Dời SL về entry khi lời đủ be_r × SL distance")
-        with bcol2:
-            be_r = st.number_input("BE Trigger (R)", value=1.0, min_value=0.1, max_value=10.0,
-                                   step=0.1, format="%.1f",
-                                   help="BE kích hoạt khi lời đạt be_r × SL distance",
-                                   disabled=not be_enabled)
-        with bcol3:
-            re_entry_after_sl = st.checkbox("Re-Entry After SL", value=False,
-                                            help="Trong lúc lệnh đang chạy, vẫn scan signal song song. "
-                                                 "Nếu SL hit đúng tại candle2 của signal mới → vào lệnh tiếp ngay.")
-        wkcol1, wkcol2, wkcol3 = st.columns(3)
-        with wkcol1:
-            c2_wick_filter_enabled = st.checkbox("C2 Wick Filter", value=False,
-                                                 help="Râu nến C2 phải nhỏ hơn n% body C2. "
-                                                      "SELL: râu dưới (close-low) < body×n%. BUY: râu trên (high-close) < body×n%.")
-        with wkcol2:
-            c2_wick_max_percent = st.number_input("Wick Max % of Body", value=30.0,
-                                                  min_value=1.0, max_value=200.0, step=1.0, format="%.0f",
-                                                  help="Ngưỡng tối đa của râu so với body C2 (%)",
-                                                  disabled=not c2_wick_filter_enabled)
-        st.divider()
-
-        st.subheader("Lot Size")
-        lot_mode = st.radio("Lot Size Mode", options=["fixed", "flex"],
-                            format_func=lambda x: "Fixed" if x == "fixed" else "Flex (Risk-based)",
-                            horizontal=True,
-                            help="Fixed: manual lot size | Flex: calculated from risk % and SL distance")
-        col1, col2 = st.columns(2)
-        with col1:
-            buffer_k = st.number_input("Buffer K (pips)", value=float(params.get('buffer_k', 5)),
-                                       min_value=0.0, max_value=200.0, step=1.0,
-                                       help="SL = candle body + k pips")
-        st.caption("SL pips = (Close - Low) + k for BUY, (High - Close) + k for SELL")
-        if lot_mode == "fixed":
-            with col2:
-                fixed_lot = st.number_input("Lot Size", value=float(params.get('lot_size', 0.01)),
-                                            min_value=0.01, max_value=10.0, step=0.01, format="%.2f")
-            risk_percent = 0.5
-            risk_amount = 0.0
-            risk_mode = "percent"
-            starting_equity = 1000.0
-        else:
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                starting_equity = st.number_input("Starting Equity (USD)", value=1000.0,
-                                                  min_value=100.0, max_value=1000000.0, step=100.0)
-            with col2:
-                risk_mode = st.radio("Risk Mode", options=["percent", "fixed_amount"],
-                                     format_func=lambda x: "Percentage (%)" if x == "percent" else "Fixed Amount ($)",
-                                     horizontal=True)
-            with col3:
-                if risk_mode == "percent":
-                    risk_percent = st.number_input("Risk per Trade (%)", value=0.5, min_value=0.1,
-                                                   max_value=5.0, step=0.1, format="%.1f")
-                    risk_amount = 0.0
-                    example_r = starting_equity * (risk_percent / 100)
-                    st.caption(f"Initial: ${starting_equity:.0f} × {risk_percent}% = ${example_r:.2f}/trade")
-                else:
-                    risk_amount = st.number_input("Risk per Trade ($)", value=5.0, min_value=1.0,
-                                                  max_value=1000.0, step=1.0, format="%.2f")
-                    risk_percent = 0.0
-                    st.caption(f"Constant ${risk_amount:.2f} risk per trade")
-            fixed_lot = 0.01
-        st.divider()
+            st.divider()
+    # end Classic layout
 
     sl_pips = 0  # always calculated from candle + buffer_k
 
