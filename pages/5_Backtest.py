@@ -203,13 +203,6 @@ def main():
                         min_value=0.0, step=1.0,
                         help="SELL: L2 phải cách EMA ≥ N pips | BUY: H2 phải cách EMA ≥ N pips")
                     st.caption(_pip_caption(ema_margin_pips, symbol))
-                    c2_wick_filter_enabled = st.checkbox("C2 Wick Filter", value=bool(_pf('c2_wick_filter_enabled', False)),
-                                                         help="Râu nến C2 phải nhỏ hơn n% body C2. "
-                                                              "SELL: râu dưới (close-low) < body×n%. BUY: râu trên (high-close) < body×n%.")
-                    c2_wick_max_percent = st.number_input("Wick Max % of Body", value=float(_pf('c2_wick_max_percent', 30.0)),
-                                                          min_value=1.0, max_value=200.0, step=1.0, format="%.0f",
-                                                          help="Ngưỡng tối đa của râu so với body C2 (%)",
-                                                          disabled=not c2_wick_filter_enabled)
                     if is_pattern:
                         ema_filter_enabled = st.checkbox(
                             "EMA Filter", value=bool(_pf('ema_filter_enabled', params.get('ema_filter_enabled', True))),
@@ -234,8 +227,6 @@ def main():
                     h2_exceed_pips = 0.0
                     c2_gap_pips = 0.0
                     ema_margin_pips = 0.0
-                    c2_wick_filter_enabled = False
-                    c2_wick_max_percent = 30.0
                     entry_time_str = params.get('entry_time', '21:05')
                     use_custom_time = st.checkbox("Custom entry time", value=False)
                     if use_custom_time:
@@ -317,6 +308,16 @@ def main():
                     re_entry_after_sl = st.checkbox("Re-Entry After SL", value=bool(_pf('re_entry_after_sl', False)),
                                                     help="Trong lúc lệnh đang chạy, vẫn scan signal song song. "
                                                          "Nếu SL hit đúng tại candle2 của signal mới → vào lệnh tiếp ngay.")
+                wc1, wc2, wc3 = st.columns(3)
+                with wc1:
+                    c2_wick_filter_enabled = st.checkbox("C2 Wick Filter", value=bool(_pf('c2_wick_filter_enabled', False)),
+                                                         help="Râu nến C2 phải nhỏ hơn n% body C2. "
+                                                              "SELL: râu dưới (close-low) < body×n%. BUY: râu trên (high-close) < body×n%.")
+                with wc2:
+                    c2_wick_max_percent = st.number_input("Wick Max % of Body", value=float(_pf('c2_wick_max_percent', 30.0)),
+                                                          min_value=1.0, max_value=200.0, step=1.0, format="%.0f",
+                                                          help="Ngưỡng tối đa của râu so với body C2 (%)",
+                                                          disabled=not c2_wick_filter_enabled)
                 st.divider()
                 if lot_mode == "fixed":
                     lc1, _ = st.columns(2)
@@ -396,21 +397,12 @@ def main():
                         min_value=0.0, step=1.0,
                         help="SELL: L2 phải cách EMA ≥ N pips | BUY: H2 phải cách EMA ≥ N pips")
                     st.caption(_pip_caption(ema_margin_pips, symbol))
-                    c2_wick_filter_enabled = st.checkbox("C2 Wick Filter", value=bool(params.get('c2_wick_filter_enabled', False)),
-                                                         help="Râu nến C2 phải nhỏ hơn n% body C2. "
-                                                              "SELL: râu dưới (close-low) < body×n%. BUY: râu trên (high-close) < body×n%.")
-                    c2_wick_max_percent = st.number_input("Wick Max % of Body", value=float(params.get('c2_wick_max_percent', 30.0)),
-                                                          min_value=1.0, max_value=200.0, step=1.0, format="%.0f",
-                                                          help="Ngưỡng tối đa của râu so với body C2 (%)",
-                                                          disabled=not c2_wick_filter_enabled)
                     entry_time = datetime.strptime("00:00", "%H:%M").time()
                 else:
                     ema_period = int(params.get('ema_period', 21))
                     h2_exceed_pips = 0.0
                     c2_gap_pips = 0.0
                     ema_margin_pips = 0.0
-                    c2_wick_filter_enabled = False
-                    c2_wick_max_percent = 30.0
                     entry_time_str = params.get('entry_time', '21:05')
                     use_custom_time = st.checkbox("Custom entry time", value=False)
                     if use_custom_time:
@@ -517,6 +509,16 @@ def main():
                 re_entry_after_sl = st.checkbox("Re-Entry After SL", value=False,
                                                 help="Trong lúc lệnh đang chạy, vẫn scan signal song song. "
                                                      "Nếu SL hit đúng tại candle2 của signal mới → vào lệnh tiếp ngay.")
+            wkcol1, wkcol2, wkcol3 = st.columns(3)
+            with wkcol1:
+                c2_wick_filter_enabled = st.checkbox("C2 Wick Filter", value=False,
+                                                     help="Râu nến C2 phải nhỏ hơn n% body C2. "
+                                                          "SELL: râu dưới (close-low) < body×n%. BUY: râu trên (high-close) < body×n%.")
+            with wkcol2:
+                c2_wick_max_percent = st.number_input("Wick Max % of Body", value=30.0,
+                                                      min_value=1.0, max_value=200.0, step=1.0, format="%.0f",
+                                                      help="Ngưỡng tối đa của râu so với body C2 (%)",
+                                                      disabled=not c2_wick_filter_enabled)
             st.divider()
     
             st.subheader("Lot Size")
