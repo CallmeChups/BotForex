@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Reorganize all strategy param forms (pages/1_Bots.py + pages/5_Backtest.py) into 5 clearly named zones using `st.expander`, replacing the current ad-hoc multi-row grid + partial-expander structure.
+**Goal:** Reorganize all strategy param forms (pages/1_Bots.py + pages/5_Backtest.py) into 5 clearly named zones using `st.expander`, while keeping the old layout intact and letting users switch between them at runtime.
 
-**Architecture:** Each zone is an `st.expander`. Compact layout uses multi-column grids inside each expander. Non-compact uses stack-dọc with sub-headers. Both layouts share the same 5-zone structure and session state keys (no key renames).
+**Architecture:** Two parallel layout implementations coexist in each page. A layout version selector (radio at bottom of page, session-only) controls which one renders. New layout: 5-zone expander structure. Classic layout: existing code untouched. Both share all logic, session state keys, and backend calls — only the render path differs.
 
 **Tech Stack:** Python, Streamlit, PyYAML. No backend changes — UI only.
 
@@ -17,6 +17,11 @@
 - Master Candle strategy: no `Entry` zone (no pattern params)
 - Apply to BOTH `pages/1_Bots.py` AND `pages/5_Backtest.py`
 - Apply to BOTH compact and non-compact layouts within each page
+- Classic layout code must NOT be modified — new layout is additive only
+- Layout selector: `st.radio("Layout", ["New", "Classic"], horizontal=True)` at bottom of each page
+- Layout selector default: `"New"`; stored in `st.session_state["layout_version"]` (session only, resets on refresh)
+- Each page manages its own selector independently (changing Bots layout does not affect Backtest layout)
+- Selector session state key: `"bots_layout_version"` for 1_Bots.py, `"backtest_layout_version"` for 5_Backtest.py
 
 ---
 
@@ -136,10 +141,45 @@ Only shown for FEG EMA21 and FEG Stop Order. Hidden entirely for Master Candle.
 
 ---
 
+## Layout Version Selector
+
+Placed at the **bottom of each page**, outside all forms, after all param widgets:
+
+```python
+# 1_Bots.py
+st.divider()
+st.session_state.setdefault("bots_layout_version", "New")
+layout_version = st.radio("Layout version", ["New", "Classic"],
+                           index=["New", "Classic"].index(st.session_state["bots_layout_version"]),
+                           horizontal=True, key="bots_layout_version",
+                           help="Switch between new zone layout and classic layout. Resets to New on page refresh.")
+```
+
+```python
+# 5_Backtest.py
+st.divider()
+st.session_state.setdefault("backtest_layout_version", "New")
+layout_version = st.radio("Layout version", ["New", "Classic"],
+                           index=["New", "Classic"].index(st.session_state["backtest_layout_version"]),
+                           horizontal=True, key="backtest_layout_version",
+                           help="Switch between new zone layout and classic layout. Resets to New on page refresh.")
+```
+
+The form rendering block is then wrapped:
+```python
+if layout_version == "New":
+    render_new_layout(...)   # 5-zone expander structure
+else:
+    render_classic_layout(...)  # existing code, untouched
+```
+
+---
+
 ## What Does NOT Change
 
 - Session state keys: all `{sk}_*` keys remain identical
 - Widget types: same `st.checkbox`, `st.number_input`, `st.radio`, `st.selectbox`, `st.time_input`
 - Backend calls: `start_bot(...)` and `run_backtest(...)` signatures unchanged
 - Strategy YAML files: unchanged
+- Classic layout code: zero modifications
 - Any file outside `pages/1_Bots.py` and `pages/5_Backtest.py`
