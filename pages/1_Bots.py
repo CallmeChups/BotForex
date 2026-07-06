@@ -946,7 +946,7 @@ def show_create_bot():
                     max_candles = st.number_input("Max Candles", value=int(st.session_state.get(f"{sk}_mc", params.get('max_candles', 7))),
                                                   min_value=1, max_value=500, key=f"{sk}_mc")
                 else:
-                    max_candles = None
+                    max_candles = 0
                     st.caption("No candle limit")
             with gc5:
                 interval = st.number_input("Interval (s)", value=int(st.session_state.get(f"{sk}_iv", 60)),
@@ -1142,7 +1142,7 @@ def show_create_bot():
             with ex2:
                 _sl_opts = ["price_based", "close_based"]
                 sl_type = st.radio("SL Exit", options=_sl_opts,
-                                   index=_sl_opts.index(st.session_state.get(f"{sk}_sl_type", params.get('sl_type', 'close_based'))),
+                                   index=_sl_opts.index(st.session_state.get(f"{sk}_sl_type", params.get('sl_type', 'price_based'))),
                                    format_func=lambda x: "Price-based (wick)" if x == "price_based" else "Close-based",
                                    horizontal=True, key=f"{sk}_sl_type")
             with ex3:

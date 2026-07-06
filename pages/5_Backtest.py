@@ -613,7 +613,7 @@ def main():
                                                   value=int(_pf('max_candles', params.get('max_candles', 7))),
                                                   min_value=1, max_value=500)
                 else:
-                    max_candles = None
+                    max_candles = 0
 
         # ── ZONE 2: ENTRY ─────────────────────────────────────────────────
         if is_pattern:
