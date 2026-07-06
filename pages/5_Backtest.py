@@ -683,7 +683,7 @@ def main():
                 with tw2:
                     entry_end_time = st.time_input("Entry End (HCM)", value=time(23, 59),
                                                    help="Gate entries until this time. 23:59 = no filter.")
-                entry_time = datetime.strptime("00:00", "%H:%M").time()
+                entry_time = datetime.strptime("00:00", "%H:%M").time()  # pattern strategies use entry_start_time/entry_end_time window; entry_time unused
 
                 st.divider()
                 # Sub-section: Entry Mode
@@ -770,7 +770,7 @@ def main():
                 risk_percent = 0.5
                 risk_amount = 0.0
                 risk_mode = "percent"
-                starting_equity = 1000.0
+                starting_equity = float(_pf('starting_equity', 1000.0))
             else:
                 rs1, rs2, rs3 = st.columns(3)
                 with rs1:
