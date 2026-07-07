@@ -1,4 +1,4 @@
-"""
+﻿"""
 FEG EMA21 Strategy
 
 Pattern 2 nến + filter EMA21, quét liên tục.
@@ -36,10 +36,10 @@ def detect_feg_signal(
       sell_ema_side: "above_ema" → L2 > EMA (default) | "below_ema" → L2 < EMA
 
     Wick filter (optional, per-direction):
-      c2_buy_upper_wick_max_pct: BUY — râu trên (high-close) phải < n% body C2. None = tắt.
-      c2_buy_lower_wick_max_pct: BUY — râu dưới (close-low)  phải < n% body C2. None = tắt.
-      c2_sell_upper_wick_max_pct: SELL — râu trên (high-close) phải < n% body C2. None = tắt.
-      c2_sell_lower_wick_max_pct: SELL — râu dưới (close-low)  phải < n% body C2. None = tắt.
+      c2_buy_upper_wick_max_pct: BUY — wick trên (high-close) < n% body C2. None = tắt.
+      c2_buy_lower_wick_max_pct: BUY — wick dưới (open-low) < n% body C2. None = tắt.
+      c2_sell_upper_wick_max_pct: SELL — wick trên (high-open) < n% body C2. None = tắt.
+      c2_sell_lower_wick_max_pct: SELL — wick dưới (close-low) < n% body C2. None = tắt.
     """
     h1, l1, o1, c1 = candle1["high"], candle1["low"], candle1["open"], candle1["close"]
     h2, l2, o2, c2 = candle2["high"], candle2["low"], candle2["open"], candle2["close"]
@@ -55,7 +55,7 @@ def detect_feg_signal(
     if not bullish1 and not bullish2 and body2 > body1:
         if h2 > h1 + h2_exceed and c2 < l1 - c2_gap:
             if body2 > 0:
-                if c2_sell_upper_wick_max_pct is not None and (h2 - c2) >= body2 * (c2_sell_upper_wick_max_pct / 100.0):
+                if c2_sell_upper_wick_max_pct is not None and (h2 - o2) >= body2 * (c2_sell_upper_wick_max_pct / 100.0):
                     return None
                 if c2_sell_lower_wick_max_pct is not None and (c2 - l2) >= body2 * (c2_sell_lower_wick_max_pct / 100.0):
                     return None
@@ -72,7 +72,7 @@ def detect_feg_signal(
             if body2 > 0:
                 if c2_buy_upper_wick_max_pct is not None and (h2 - c2) >= body2 * (c2_buy_upper_wick_max_pct / 100.0):
                     return None
-                if c2_buy_lower_wick_max_pct is not None and (c2 - l2) >= body2 * (c2_buy_lower_wick_max_pct / 100.0):
+                if c2_buy_lower_wick_max_pct is not None and (o2 - l2) >= body2 * (c2_buy_lower_wick_max_pct / 100.0):
                     return None
             if not ema_filter_enabled:
                 return "BUY"
