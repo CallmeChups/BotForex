@@ -105,6 +105,9 @@ def _migrate_config(cfg: dict) -> dict:
 def main():
     st.title("Backtest Strategy")
 
+    if msg := st.session_state.pop('_flash_success', None):
+        st.success(msg)
+
     now = datetime.now(TIMEZONE)
     st.markdown(f"**Current Time:** {now.strftime('%H:%M:%S %d/%m/%Y')} (HCM)")
 
@@ -1738,7 +1741,7 @@ def show_history_section():
                     if record:
                         cfg = _migrate_config(record['config'])
                         st.session_state['backtest_prefill'] = cfg
-                        st.success(f"Đã load config từ {record_id} — scroll lên để xem params.")
+                        st.session_state['_flash_success'] = f"✅ Đã load config từ **{record_id}** — scroll lên để xem params đã được điền."
                         st.rerun()
             with col_dl:
                 if record:
