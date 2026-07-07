@@ -52,6 +52,18 @@ def _pf(key, default=None):
     return pf.get(key, default)
 
 
+def _parse_wick(s: str) -> float | None:
+    """Parse wick filter input. Returns None (disabled) if empty or <= 0."""
+    s = s.strip()
+    if not s:
+        return None
+    try:
+        v = float(s)
+        return v if v > 0 else None
+    except ValueError:
+        return None
+
+
 def _migrate_config(cfg: dict) -> dict:
     """Migrate legacy backtest config keys to current schema."""
     cfg = dict(cfg)
@@ -354,14 +366,14 @@ def main():
                                                value="" if _wk_bu_raw is None else str(_wk_bu_raw),
                                                placeholder="VD: 30  (để trống = tắt)",
                                                help="BUY: (high-close) < body × n%.")
-                    c2_buy_upper_wick_max_pct = float(_wk_bu_str) if _wk_bu_str.strip() else None
+                    c2_buy_upper_wick_max_pct = _parse_wick(_wk_bu_str)
                 with wc_buy2:
                     _wk_bl_raw = _pf('c2_buy_lower_wick_max_pct', None)
                     _wk_bl_str = st.text_input("BUY — Râu dưới tối đa % body",
                                                value="" if _wk_bl_raw is None else str(_wk_bl_raw),
                                                placeholder="VD: 30  (để trống = tắt)",
                                                help="BUY: (close-low) < body × n%.")
-                    c2_buy_lower_wick_max_pct = float(_wk_bl_str) if _wk_bl_str.strip() else None
+                    c2_buy_lower_wick_max_pct = _parse_wick(_wk_bl_str)
                 wc_sell1, wc_sell2 = st.columns(2)
                 with wc_sell1:
                     _wk_su_raw = _pf('c2_sell_upper_wick_max_pct', None)
@@ -369,14 +381,14 @@ def main():
                                                value="" if _wk_su_raw is None else str(_wk_su_raw),
                                                placeholder="VD: 30  (để trống = tắt)",
                                                help="SELL: (high-close) < body × n%.")
-                    c2_sell_upper_wick_max_pct = float(_wk_su_str) if _wk_su_str.strip() else None
+                    c2_sell_upper_wick_max_pct = _parse_wick(_wk_su_str)
                 with wc_sell2:
                     _wk_sl_raw = _pf('c2_sell_lower_wick_max_pct', None)
                     _wk_sl_str = st.text_input("SELL — Râu dưới tối đa % body",
                                                value="" if _wk_sl_raw is None else str(_wk_sl_raw),
                                                placeholder="VD: 30  (để trống = tắt)",
                                                help="SELL: (close-low) < body × n%.")
-                    c2_sell_lower_wick_max_pct = float(_wk_sl_str) if _wk_sl_str.strip() else None
+                    c2_sell_lower_wick_max_pct = _parse_wick(_wk_sl_str)
                 st.divider()
                 if lot_mode == "fixed":
                     lc1, _ = st.columns(2)
@@ -581,7 +593,7 @@ def main():
                                                placeholder="VD: 30  (để trống = tắt)",
                                                help="BUY: (high-close) < body × n%.",
                                                key="bt_c2_buy_upper_wick")
-                c2_buy_upper_wick_max_pct = float(_so_wk_bu_str) if _so_wk_bu_str.strip() else None
+                c2_buy_upper_wick_max_pct = _parse_wick(_so_wk_bu_str)
             with so_wc_buy2:
                 _so_wk_bl_raw = _pf('c2_buy_lower_wick_max_pct', None)
                 _so_wk_bl_str = st.text_input("BUY — Râu dưới tối đa % body",
@@ -589,7 +601,7 @@ def main():
                                                placeholder="VD: 30  (để trống = tắt)",
                                                help="BUY: (close-low) < body × n%.",
                                                key="bt_c2_buy_lower_wick")
-                c2_buy_lower_wick_max_pct = float(_so_wk_bl_str) if _so_wk_bl_str.strip() else None
+                c2_buy_lower_wick_max_pct = _parse_wick(_so_wk_bl_str)
             so_wc_sell1, so_wc_sell2 = st.columns(2)
             with so_wc_sell1:
                 _so_wk_su_raw = _pf('c2_sell_upper_wick_max_pct', None)
@@ -598,7 +610,7 @@ def main():
                                                placeholder="VD: 30  (để trống = tắt)",
                                                help="SELL: (high-close) < body × n%.",
                                                key="bt_c2_sell_upper_wick")
-                c2_sell_upper_wick_max_pct = float(_so_wk_su_str) if _so_wk_su_str.strip() else None
+                c2_sell_upper_wick_max_pct = _parse_wick(_so_wk_su_str)
             with so_wc_sell2:
                 _so_wk_sl_raw = _pf('c2_sell_lower_wick_max_pct', None)
                 _so_wk_sl_str = st.text_input("SELL — Râu dưới tối đa % body",
@@ -606,7 +618,7 @@ def main():
                                                placeholder="VD: 30  (để trống = tắt)",
                                                help="SELL: (close-low) < body × n%.",
                                                key="bt_c2_sell_lower_wick")
-                c2_sell_lower_wick_max_pct = float(_so_wk_sl_str) if _so_wk_sl_str.strip() else None
+                c2_sell_lower_wick_max_pct = _parse_wick(_so_wk_sl_str)
             st.divider()
     
             st.subheader("Lot Size")
@@ -740,7 +752,7 @@ def main():
                                                  placeholder="VD: 30  (để trống = tắt)",
                                                  help="BUY: (high-close) < body × n%.",
                                                  key="new_bt_c2_buy_upper_wick")
-                    c2_buy_upper_wick_max_pct = float(_nwk_bu_str) if _nwk_bu_str.strip() else None
+                    c2_buy_upper_wick_max_pct = _parse_wick(_nwk_bu_str)
                 with new_wc2:
                     _nwk_bl_raw = _pf('c2_buy_lower_wick_max_pct', None)
                     _nwk_bl_str = st.text_input("BUY — Râu dưới tối đa % body",
@@ -748,7 +760,7 @@ def main():
                                                  placeholder="VD: 30  (để trống = tắt)",
                                                  help="BUY: (close-low) < body × n%.",
                                                  key="new_bt_c2_buy_lower_wick")
-                    c2_buy_lower_wick_max_pct = float(_nwk_bl_str) if _nwk_bl_str.strip() else None
+                    c2_buy_lower_wick_max_pct = _parse_wick(_nwk_bl_str)
                 new_wc3, new_wc4 = st.columns(2)
                 with new_wc3:
                     _nwk_su_raw = _pf('c2_sell_upper_wick_max_pct', None)
@@ -757,7 +769,7 @@ def main():
                                                  placeholder="VD: 30  (để trống = tắt)",
                                                  help="SELL: (high-close) < body × n%.",
                                                  key="new_bt_c2_sell_upper_wick")
-                    c2_sell_upper_wick_max_pct = float(_nwk_su_str) if _nwk_su_str.strip() else None
+                    c2_sell_upper_wick_max_pct = _parse_wick(_nwk_su_str)
                 with new_wc4:
                     _nwk_sl_raw = _pf('c2_sell_lower_wick_max_pct', None)
                     _nwk_sl_str = st.text_input("SELL — Râu dưới tối đa % body",
@@ -765,7 +777,7 @@ def main():
                                                  placeholder="VD: 30  (để trống = tắt)",
                                                  help="SELL: (close-low) < body × n%.",
                                                  key="new_bt_c2_sell_lower_wick")
-                    c2_sell_lower_wick_max_pct = float(_nwk_sl_str) if _nwk_sl_str.strip() else None
+                    c2_sell_lower_wick_max_pct = _parse_wick(_nwk_sl_str)
 
                 st.divider()
                 # Sub-section: EMA Direction
