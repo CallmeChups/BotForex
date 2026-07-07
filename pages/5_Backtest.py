@@ -308,16 +308,37 @@ def main():
                     re_entry_after_sl = st.checkbox("Re-Entry After SL", value=bool(_pf('re_entry_after_sl', False)),
                                                     help="Trong lúc lệnh đang chạy, vẫn scan signal song song. "
                                                          "Nếu SL hit đúng tại candle2 của signal mới → vào lệnh tiếp ngay.")
-                wc1, wc2, wc3 = st.columns(3)
-                with wc1:
-                    c2_wick_filter_enabled = st.checkbox("C2 Wick Filter", value=bool(_pf('c2_wick_filter_enabled', False)),
-                                                         help="Râu nến C2 phải nhỏ hơn n% body C2. "
-                                                              "SELL: râu dưới (close-low) < body×n%. BUY: râu trên (high-close) < body×n%.")
-                with wc2:
-                    c2_wick_max_percent = st.number_input("Wick Max % of Body", value=float(_pf('c2_wick_max_percent', 30.0)),
-                                                          min_value=1.0, max_value=200.0, step=1.0, format="%.0f",
-                                                          help="Ngưỡng tối đa của râu so với body C2 (%)",
-                                                          disabled=not c2_wick_filter_enabled)
+                st.caption("Wick Filter — để trống = tắt")
+                wc_buy1, wc_buy2 = st.columns(2)
+                with wc_buy1:
+                    _wk_bu_raw = _pf('c2_buy_upper_wick_max_pct', None)
+                    _wk_bu_str = st.text_input("BUY — Râu trên tối đa % body",
+                                               value="" if _wk_bu_raw is None else str(_wk_bu_raw),
+                                               placeholder="VD: 30  (để trống = tắt)",
+                                               help="BUY: (high-close) < body × n%.")
+                    c2_buy_upper_wick_max_pct = float(_wk_bu_str) if _wk_bu_str.strip() else None
+                with wc_buy2:
+                    _wk_bl_raw = _pf('c2_buy_lower_wick_max_pct', None)
+                    _wk_bl_str = st.text_input("BUY — Râu dưới tối đa % body",
+                                               value="" if _wk_bl_raw is None else str(_wk_bl_raw),
+                                               placeholder="VD: 30  (để trống = tắt)",
+                                               help="BUY: (close-low) < body × n%.")
+                    c2_buy_lower_wick_max_pct = float(_wk_bl_str) if _wk_bl_str.strip() else None
+                wc_sell1, wc_sell2 = st.columns(2)
+                with wc_sell1:
+                    _wk_su_raw = _pf('c2_sell_upper_wick_max_pct', None)
+                    _wk_su_str = st.text_input("SELL — Râu trên tối đa % body",
+                                               value="" if _wk_su_raw is None else str(_wk_su_raw),
+                                               placeholder="VD: 30  (để trống = tắt)",
+                                               help="SELL: (high-close) < body × n%.")
+                    c2_sell_upper_wick_max_pct = float(_wk_su_str) if _wk_su_str.strip() else None
+                with wc_sell2:
+                    _wk_sl_raw = _pf('c2_sell_lower_wick_max_pct', None)
+                    _wk_sl_str = st.text_input("SELL — Râu dưới tối đa % body",
+                                               value="" if _wk_sl_raw is None else str(_wk_sl_raw),
+                                               placeholder="VD: 30  (để trống = tắt)",
+                                               help="SELL: (close-low) < body × n%.")
+                    c2_sell_lower_wick_max_pct = float(_wk_sl_str) if _wk_sl_str.strip() else None
                 st.divider()
                 if lot_mode == "fixed":
                     lc1, _ = st.columns(2)
@@ -509,16 +530,33 @@ def main():
                 re_entry_after_sl = st.checkbox("Re-Entry After SL", value=False,
                                                 help="Trong lúc lệnh đang chạy, vẫn scan signal song song. "
                                                      "Nếu SL hit đúng tại candle2 của signal mới → vào lệnh tiếp ngay.")
-            wkcol1, wkcol2, wkcol3 = st.columns(3)
-            with wkcol1:
-                c2_wick_filter_enabled = st.checkbox("C2 Wick Filter", value=False,
-                                                     help="Râu nến C2 phải nhỏ hơn n% body C2. "
-                                                          "SELL: râu dưới (close-low) < body×n%. BUY: râu trên (high-close) < body×n%.")
-            with wkcol2:
-                c2_wick_max_percent = st.number_input("Wick Max % of Body", value=30.0,
-                                                      min_value=1.0, max_value=200.0, step=1.0, format="%.0f",
-                                                      help="Ngưỡng tối đa của râu so với body C2 (%)",
-                                                      disabled=not c2_wick_filter_enabled)
+            st.caption("Wick Filter — để trống = tắt")
+            so_wc_buy1, so_wc_buy2 = st.columns(2)
+            with so_wc_buy1:
+                _so_wk_bu_str = st.text_input("BUY — Râu trên tối đa % body",
+                                               value="", placeholder="VD: 30  (để trống = tắt)",
+                                               help="BUY: (high-close) < body × n%.",
+                                               key="bt_c2_buy_upper_wick")
+                c2_buy_upper_wick_max_pct = float(_so_wk_bu_str) if _so_wk_bu_str.strip() else None
+            with so_wc_buy2:
+                _so_wk_bl_str = st.text_input("BUY — Râu dưới tối đa % body",
+                                               value="", placeholder="VD: 30  (để trống = tắt)",
+                                               help="BUY: (close-low) < body × n%.",
+                                               key="bt_c2_buy_lower_wick")
+                c2_buy_lower_wick_max_pct = float(_so_wk_bl_str) if _so_wk_bl_str.strip() else None
+            so_wc_sell1, so_wc_sell2 = st.columns(2)
+            with so_wc_sell1:
+                _so_wk_su_str = st.text_input("SELL — Râu trên tối đa % body",
+                                               value="", placeholder="VD: 30  (để trống = tắt)",
+                                               help="SELL: (high-close) < body × n%.",
+                                               key="bt_c2_sell_upper_wick")
+                c2_sell_upper_wick_max_pct = float(_so_wk_su_str) if _so_wk_su_str.strip() else None
+            with so_wc_sell2:
+                _so_wk_sl_str = st.text_input("SELL — Râu dưới tối đa % body",
+                                               value="", placeholder="VD: 30  (để trống = tắt)",
+                                               help="SELL: (close-low) < body × n%.",
+                                               key="bt_c2_sell_lower_wick")
+                c2_sell_lower_wick_max_pct = float(_so_wk_sl_str) if _so_wk_sl_str.strip() else None
             st.divider()
     
             st.subheader("Lot Size")
@@ -643,15 +681,41 @@ def main():
                                                       min_value=0.0, step=1.0,
                                                       help="SELL: L2 phải cách EMA ≥ N pips | BUY: H2 phải cách EMA ≥ N pips")
                     st.caption(_pip_caption(ema_margin_pips, symbol))
-                with em5:
-                    c2_wick_filter_enabled = st.checkbox("C2 Wick Filter",
-                                                         value=bool(_pf('c2_wick_filter_enabled', False)),
-                                                         help="Râu nến C2 phải nhỏ hơn n% body C2.")
-                with em6:
-                    c2_wick_max_percent = st.number_input("Wick Max % of Body",
-                                                          value=float(_pf('c2_wick_max_percent', 30.0)),
-                                                          min_value=1.0, max_value=200.0, step=1.0, format="%.0f",
-                                                          disabled=not c2_wick_filter_enabled)
+                st.caption("Wick Filter — để trống = tắt")
+                new_wc1, new_wc2 = st.columns(2)
+                with new_wc1:
+                    _nwk_bu_raw = _pf('c2_buy_upper_wick_max_pct', None)
+                    _nwk_bu_str = st.text_input("BUY — Râu trên tối đa % body",
+                                                 value="" if _nwk_bu_raw is None else str(_nwk_bu_raw),
+                                                 placeholder="VD: 30  (để trống = tắt)",
+                                                 help="BUY: (high-close) < body × n%.",
+                                                 key="new_bt_c2_buy_upper_wick")
+                    c2_buy_upper_wick_max_pct = float(_nwk_bu_str) if _nwk_bu_str.strip() else None
+                with new_wc2:
+                    _nwk_bl_raw = _pf('c2_buy_lower_wick_max_pct', None)
+                    _nwk_bl_str = st.text_input("BUY — Râu dưới tối đa % body",
+                                                 value="" if _nwk_bl_raw is None else str(_nwk_bl_raw),
+                                                 placeholder="VD: 30  (để trống = tắt)",
+                                                 help="BUY: (close-low) < body × n%.",
+                                                 key="new_bt_c2_buy_lower_wick")
+                    c2_buy_lower_wick_max_pct = float(_nwk_bl_str) if _nwk_bl_str.strip() else None
+                new_wc3, new_wc4 = st.columns(2)
+                with new_wc3:
+                    _nwk_su_raw = _pf('c2_sell_upper_wick_max_pct', None)
+                    _nwk_su_str = st.text_input("SELL — Râu trên tối đa % body",
+                                                 value="" if _nwk_su_raw is None else str(_nwk_su_raw),
+                                                 placeholder="VD: 30  (để trống = tắt)",
+                                                 help="SELL: (high-close) < body × n%.",
+                                                 key="new_bt_c2_sell_upper_wick")
+                    c2_sell_upper_wick_max_pct = float(_nwk_su_str) if _nwk_su_str.strip() else None
+                with new_wc4:
+                    _nwk_sl_raw = _pf('c2_sell_lower_wick_max_pct', None)
+                    _nwk_sl_str = st.text_input("SELL — Râu dưới tối đa % body",
+                                                 value="" if _nwk_sl_raw is None else str(_nwk_sl_raw),
+                                                 placeholder="VD: 30  (để trống = tắt)",
+                                                 help="SELL: (close-low) < body × n%.",
+                                                 key="new_bt_c2_sell_lower_wick")
+                    c2_sell_lower_wick_max_pct = float(_nwk_sl_str) if _nwk_sl_str.strip() else None
 
                 st.divider()
                 # Sub-section: EMA Direction
@@ -717,8 +781,10 @@ def main():
             h2_exceed_pips = 0.0
             c2_gap_pips = 0.0
             ema_margin_pips = 0.0
-            c2_wick_filter_enabled = False
-            c2_wick_max_percent = 30.0
+            c2_buy_upper_wick_max_pct = None
+            c2_buy_lower_wick_max_pct = None
+            c2_sell_upper_wick_max_pct = None
+            c2_sell_lower_wick_max_pct = None
             ema_filter_enabled = True
             buy_ema_side = "below_ema"
             sell_ema_side = "above_ema"
@@ -885,8 +951,10 @@ def main():
                     buy_ema_side=buy_ema_side,
                     sell_ema_side=sell_ema_side,
                     re_entry_after_sl=re_entry_after_sl,
-                    c2_wick_filter_enabled=c2_wick_filter_enabled,
-                    c2_wick_max_percent=c2_wick_max_percent,
+                    c2_buy_upper_wick_max_pct=c2_buy_upper_wick_max_pct,
+                    c2_buy_lower_wick_max_pct=c2_buy_lower_wick_max_pct,
+                    c2_sell_upper_wick_max_pct=c2_sell_upper_wick_max_pct,
+                    c2_sell_lower_wick_max_pct=c2_sell_lower_wick_max_pct,
                 )
 
             # Build config dict for export/history
@@ -914,8 +982,10 @@ def main():
                 'be_enabled': be_enabled,
                 'be_r': be_r,
                 're_entry_after_sl': re_entry_after_sl,
-                'c2_wick_filter_enabled': c2_wick_filter_enabled,
-                'c2_wick_max_percent': c2_wick_max_percent,
+                'c2_buy_upper_wick_max_pct': c2_buy_upper_wick_max_pct,
+                'c2_buy_lower_wick_max_pct': c2_buy_lower_wick_max_pct,
+                'c2_sell_upper_wick_max_pct': c2_sell_upper_wick_max_pct,
+                'c2_sell_lower_wick_max_pct': c2_sell_lower_wick_max_pct,
             }
 
             if lot_mode == 'fixed':

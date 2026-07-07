@@ -104,12 +104,14 @@ def get_args():
                         help='Re-entry after SL: scan signal in parallel while trade is open. '
                              'If SL hits exactly at candle2 of pending signal → re-entry limit immediately. '
                              '1=enabled, 0=disabled (default 0)')
-    parser.add_argument('--c2_wick_filter_enabled', type=int, default=0,
-                        help='C2 wick filter: râu C2 phải nhỏ hơn n%% body C2. '
-                             'SELL: râu dưới (close-low) < body*n%%. BUY: râu trên (high-close) < body*n%%. '
-                             '1=enabled, 0=disabled (default 0)')
-    parser.add_argument('--c2_wick_max_percent', type=float, default=30.0,
-                        help='Wick max %% of body C2 (default 30.0, used when c2_wick_filter_enabled=1)')
+    parser.add_argument('--c2_buy_upper_wick_max_pct', type=float, default=None,
+                        help='BUY — Râu trên C2 (high-close) tối đa n%% body. None = tắt. (default: tắt)')
+    parser.add_argument('--c2_buy_lower_wick_max_pct', type=float, default=None,
+                        help='BUY — Râu dưới C2 (close-low) tối đa n%% body. None = tắt. (default: tắt)')
+    parser.add_argument('--c2_sell_upper_wick_max_pct', type=float, default=None,
+                        help='SELL — Râu trên C2 (high-close) tối đa n%% body. None = tắt. (default: tắt)')
+    parser.add_argument('--c2_sell_lower_wick_max_pct', type=float, default=None,
+                        help='SELL — Râu dưới C2 (close-low) tối đa n%% body. None = tắt. (default: tắt)')
     parser.add_argument('--log_file', type=str, default=None,
                         help='Path to log file (default: stderr only)')
 
@@ -476,7 +478,8 @@ def feg_entry_decision(
     rr_ratio, buffer_k, lot_size, entry_mode, entry_percent,
     h2_exceed_pips=0.0, c2_gap_pips=0.0, ema_margin_pips=0.0,
     ema_filter_enabled=True, buy_ema_side="below_ema", sell_ema_side="above_ema",
-    c2_wick_filter_enabled=False, c2_wick_max_percent=30.0,
+    c2_buy_upper_wick_max_pct=None, c2_buy_lower_wick_max_pct=None,
+    c2_sell_upper_wick_max_pct=None, c2_sell_lower_wick_max_pct=None,
 ):
     """Quyết định vào lệnh FEG. None nếu đang có lệnh (1 lệnh/lúc) hoặc không có pattern."""
     from src.feg_strategy import analyze_feg
@@ -488,7 +491,10 @@ def feg_entry_decision(
         entry_mode=entry_mode, entry_percent=entry_percent,
         h2_exceed_pips=h2_exceed_pips, c2_gap_pips=c2_gap_pips, ema_margin_pips=ema_margin_pips,
         ema_filter_enabled=ema_filter_enabled, buy_ema_side=buy_ema_side, sell_ema_side=sell_ema_side,
-        c2_wick_filter_enabled=c2_wick_filter_enabled, c2_wick_max_percent=c2_wick_max_percent,
+        c2_buy_upper_wick_max_pct=c2_buy_upper_wick_max_pct,
+        c2_buy_lower_wick_max_pct=c2_buy_lower_wick_max_pct,
+        c2_sell_upper_wick_max_pct=c2_sell_upper_wick_max_pct,
+        c2_sell_lower_wick_max_pct=c2_sell_lower_wick_max_pct,
     )
 
 
@@ -498,7 +504,8 @@ def feg_stop_order_entry_decision(
     h2_exceed_pips=0.0, c2_gap_pips=0.0,
     ema_filter_enabled=True, buy_ema_side="below_ema", sell_ema_side="above_ema",
     ema_margin_pips=0.0,
-    c2_wick_filter_enabled=False, c2_wick_max_percent=30.0,
+    c2_buy_upper_wick_max_pct=None, c2_buy_lower_wick_max_pct=None,
+    c2_sell_upper_wick_max_pct=None, c2_sell_lower_wick_max_pct=None,
 ):
     """Quyết định vào lệnh FEG Stop Order. None nếu đang có lệnh (1 lệnh/lúc) hoặc không có pattern."""
     from src.feg_stop_order_strategy import analyze_feg_stop_order
@@ -511,7 +518,10 @@ def feg_stop_order_entry_decision(
         ema_filter_enabled=ema_filter_enabled,
         buy_ema_side=buy_ema_side, sell_ema_side=sell_ema_side,
         ema_margin_pips=ema_margin_pips,
-        c2_wick_filter_enabled=c2_wick_filter_enabled, c2_wick_max_percent=c2_wick_max_percent,
+        c2_buy_upper_wick_max_pct=c2_buy_upper_wick_max_pct,
+        c2_buy_lower_wick_max_pct=c2_buy_lower_wick_max_pct,
+        c2_sell_upper_wick_max_pct=c2_sell_upper_wick_max_pct,
+        c2_sell_lower_wick_max_pct=c2_sell_lower_wick_max_pct,
     )
 
 
@@ -719,8 +729,10 @@ def run_feg_bot(args, strategy, params, credentials,
     risk_percent = args.risk_percent
     risk_amount = args.risk_amount
     re_entry_after_sl = bool(args.re_entry_after_sl)
-    c2_wick_filter_enabled = bool(args.c2_wick_filter_enabled)
-    c2_wick_max_percent = args.c2_wick_max_percent
+    c2_buy_upper_wick_max_pct  = args.c2_buy_upper_wick_max_pct
+    c2_buy_lower_wick_max_pct  = args.c2_buy_lower_wick_max_pct
+    c2_sell_upper_wick_max_pct = args.c2_sell_upper_wick_max_pct
+    c2_sell_lower_wick_max_pct = args.c2_sell_lower_wick_max_pct
 
     # Auto-detect symbol min lot and clamp (only for fixed mode)
     mt5_tmp, err_tmp = get_mt5_connection(credentials)
@@ -735,7 +747,13 @@ def run_feg_bot(args, strategy, params, credentials,
     be_log = f"BE=ON(r={args.be_r})" if args.be_enabled else "BE=OFF"
     ema_filter_str = f"EMA_filter=ON(buy={buy_ema_side},sell={sell_ema_side},margin={ema_margin_pips}p)" if ema_filter_enabled else "EMA_filter=OFF"
     re_entry_log = "ReEntry=ON" if re_entry_after_sl else "ReEntry=OFF"
-    wick_log = f"WickFilter=ON({c2_wick_max_percent}%)" if c2_wick_filter_enabled else "WickFilter=OFF"
+    _wick_buy = []
+    if c2_buy_upper_wick_max_pct is not None: _wick_buy.append(f"upper={c2_buy_upper_wick_max_pct}%")
+    if c2_buy_lower_wick_max_pct is not None: _wick_buy.append(f"lower={c2_buy_lower_wick_max_pct}%")
+    _wick_sell = []
+    if c2_sell_upper_wick_max_pct is not None: _wick_sell.append(f"upper={c2_sell_upper_wick_max_pct}%")
+    if c2_sell_lower_wick_max_pct is not None: _wick_sell.append(f"lower={c2_sell_lower_wick_max_pct}%")
+    wick_log = f"WickFilter=BUY({','.join(_wick_buy) or 'OFF'}) SELL({','.join(_wick_sell) or 'OFF'})"
     log(f"FEG params: EMA{ema_period}, RR={rr_ratio}, buffer_k={buffer_k}, "
         f"lot={lot_log}, max_candles={max_candles or 'unlimited'}, "
         f"h2_exceed={h2_exceed_pips}p, c2_gap={c2_gap_pips}p, {ema_filter_str}, {be_log}, {re_entry_log}, {wick_log}")
@@ -992,7 +1010,8 @@ def run_feg_bot(args, strategy, params, credentials,
                         rr_ratio, buffer_k, lot_size, entry_mode, entry_percent,
                         h2_exceed_pips, c2_gap_pips, ema_margin_pips,
                         ema_filter_enabled, buy_ema_side, sell_ema_side,
-                        c2_wick_filter_enabled, c2_wick_max_percent,
+                        c2_buy_upper_wick_max_pct, c2_buy_lower_wick_max_pct,
+                        c2_sell_upper_wick_max_pct, c2_sell_lower_wick_max_pct,
                     )
                     log(f"Signal scan: {signal['direction'] if signal else 'NO SIGNAL'}"
                         + (f" entry={signal['entry_price']:.2f} sl={signal['stop_loss']:.2f} tp={signal['take_profit']:.2f}" if signal else ""))
@@ -1126,8 +1145,10 @@ def run_feg_stop_order_bot(args, strategy, params, credentials,
     risk_percent = args.risk_percent
     risk_amount = args.risk_amount
     re_entry_after_sl = bool(args.re_entry_after_sl)
-    c2_wick_filter_enabled = bool(args.c2_wick_filter_enabled)
-    c2_wick_max_percent = args.c2_wick_max_percent
+    c2_buy_upper_wick_max_pct  = args.c2_buy_upper_wick_max_pct
+    c2_buy_lower_wick_max_pct  = args.c2_buy_lower_wick_max_pct
+    c2_sell_upper_wick_max_pct = args.c2_sell_upper_wick_max_pct
+    c2_sell_lower_wick_max_pct = args.c2_sell_lower_wick_max_pct
 
     # Auto-detect symbol min lot and clamp (only for fixed mode)
     mt5_tmp, err_tmp = get_mt5_connection(credentials)
@@ -1142,7 +1163,13 @@ def run_feg_stop_order_bot(args, strategy, params, credentials,
     lot_log = f"flex({risk_mode} {risk_percent}%/{risk_amount}$)" if lot_mode == "flex" else f"fixed={lot_size}"
     be_log = f"BE=ON(r={args.be_r})" if args.be_enabled else "BE=OFF"
     re_entry_log = "ReEntry=ON" if re_entry_after_sl else "ReEntry=OFF"
-    wick_log = f"WickFilter=ON({c2_wick_max_percent}%)" if c2_wick_filter_enabled else "WickFilter=OFF"
+    _wick_buy2 = []
+    if c2_buy_upper_wick_max_pct is not None: _wick_buy2.append(f"upper={c2_buy_upper_wick_max_pct}%")
+    if c2_buy_lower_wick_max_pct is not None: _wick_buy2.append(f"lower={c2_buy_lower_wick_max_pct}%")
+    _wick_sell2 = []
+    if c2_sell_upper_wick_max_pct is not None: _wick_sell2.append(f"upper={c2_sell_upper_wick_max_pct}%")
+    if c2_sell_lower_wick_max_pct is not None: _wick_sell2.append(f"lower={c2_sell_lower_wick_max_pct}%")
+    wick_log = f"WickFilter=BUY({','.join(_wick_buy2) or 'OFF'}) SELL({','.join(_wick_sell2) or 'OFF'})"
     log(f"FEG Stop Order params: EMA{ema_period}, RR={rr_ratio}, buffer_k={buffer_k}, "
         f"lot={lot_log}, max_candles={max_candles or 'unlimited'}, "
         f"h2_exceed={h2_exceed_pips}p, c2_gap={c2_gap_pips}p, {ema_filter_str}, {be_log}, {re_entry_log}, {wick_log}")
@@ -1395,7 +1422,8 @@ def run_feg_stop_order_bot(args, strategy, params, credentials,
                         rr_ratio, buffer_k, lot_size,
                         h2_exceed_pips, c2_gap_pips,
                         ema_filter_enabled, buy_ema_side, sell_ema_side, ema_margin_pips,
-                        c2_wick_filter_enabled, c2_wick_max_percent,
+                        c2_buy_upper_wick_max_pct, c2_buy_lower_wick_max_pct,
+                        c2_sell_upper_wick_max_pct, c2_sell_lower_wick_max_pct,
                     )
                     log(f"Signal scan: {signal['direction'] if signal else 'NO SIGNAL'}"
                         + (f" entry={signal['entry_price']:.2f} sl={signal['stop_loss']:.2f} tp={signal['take_profit']:.2f}" if signal else ""))

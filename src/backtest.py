@@ -320,8 +320,10 @@ def run_backtest(
     buy_ema_side: str = "below_ema",
     sell_ema_side: str = "above_ema",
     re_entry_after_sl: bool = False,
-    c2_wick_filter_enabled: bool = False,
-    c2_wick_max_percent: float = 30.0,
+    c2_buy_upper_wick_max_pct: float | None = None,
+    c2_buy_lower_wick_max_pct: float | None = None,
+    c2_sell_upper_wick_max_pct: float | None = None,
+    c2_sell_lower_wick_max_pct: float | None = None,
 ) -> dict:
     """
     Run backtest on historical data
@@ -369,7 +371,8 @@ def run_backtest(
                 limit_order_candles=limit_order_candles,
                 be_enabled=be_enabled, be_r=be_r,
                 re_entry_after_sl=re_entry_after_sl,
-                c2_wick_filter_enabled=c2_wick_filter_enabled, c2_wick_max_percent=c2_wick_max_percent,
+                c2_buy_upper_wick_max_pct=c2_buy_upper_wick_max_pct, c2_buy_lower_wick_max_pct=c2_buy_lower_wick_max_pct,
+                c2_sell_upper_wick_max_pct=c2_sell_upper_wick_max_pct, c2_sell_lower_wick_max_pct=c2_sell_lower_wick_max_pct,
             )
         else:
             result = _run_feg_backtest(
@@ -385,7 +388,8 @@ def run_backtest(
                 ema_filter_enabled=ema_filter_enabled, buy_ema_side=buy_ema_side,
                 sell_ema_side=sell_ema_side,
                 re_entry_after_sl=re_entry_after_sl,
-                c2_wick_filter_enabled=c2_wick_filter_enabled, c2_wick_max_percent=c2_wick_max_percent,
+                c2_buy_upper_wick_max_pct=c2_buy_upper_wick_max_pct, c2_buy_lower_wick_max_pct=c2_buy_lower_wick_max_pct,
+                c2_sell_upper_wick_max_pct=c2_sell_upper_wick_max_pct, c2_sell_lower_wick_max_pct=c2_sell_lower_wick_max_pct,
             )
         result["run_id"] = run_id
         return result
@@ -466,7 +470,8 @@ def _scan_feg_pending(df, ema, idx, pip_value,
                       ema_filter_enabled, buy_ema_side, sell_ema_side,
                       entry_mode, entry_percent, buffer_k, rr_ratio,
                       entry_start_time, entry_end_time,
-                      c2_wick_filter_enabled=False, c2_wick_max_percent=30.0):
+                      c2_buy_upper_wick_max_pct=None, c2_buy_lower_wick_max_pct=None,
+                      c2_sell_upper_wick_max_pct=None, c2_sell_lower_wick_max_pct=None):
     """Scan 1 candle cho FEG signal. Trả về pending dict hoặc None."""
     if idx < 1 or idx >= len(df):
         return None
@@ -480,7 +485,8 @@ def _scan_feg_pending(df, ema, idx, pip_value,
     direction = detect_feg_signal(
         c1, c2, ema[idx], pip_value, h2_exceed_pips, c2_gap_pips, ema_margin_pips,
         ema_filter_enabled, buy_ema_side, sell_ema_side,
-        c2_wick_filter_enabled, c2_wick_max_percent,
+        c2_buy_upper_wick_max_pct, c2_buy_lower_wick_max_pct,
+        c2_sell_upper_wick_max_pct, c2_sell_lower_wick_max_pct,
     )
     if not direction:
         return None
@@ -509,8 +515,10 @@ def _run_feg_backtest(
     buy_ema_side: str = "below_ema",
     sell_ema_side: str = "above_ema",
     re_entry_after_sl: bool = False,
-    c2_wick_filter_enabled: bool = False,
-    c2_wick_max_percent: float = 30.0,
+    c2_buy_upper_wick_max_pct: float | None = None,
+    c2_buy_lower_wick_max_pct: float | None = None,
+    c2_sell_upper_wick_max_pct: float | None = None,
+    c2_sell_lower_wick_max_pct: float | None = None,
 ):
     """Backtest FEG: quét tuần tự, 1 lệnh tại 1 thời điểm.
 
@@ -544,7 +552,8 @@ def _run_feg_backtest(
         direction = detect_feg_signal(
             c1, c2, ema[i], pip_value, h2_exceed_pips, c2_gap_pips, ema_margin_pips,
             ema_filter_enabled, buy_ema_side, sell_ema_side,
-            c2_wick_filter_enabled, c2_wick_max_percent,
+            c2_buy_upper_wick_max_pct, c2_buy_lower_wick_max_pct,
+            c2_sell_upper_wick_max_pct, c2_sell_lower_wick_max_pct,
         )
         if direction:
             levels = compute_trade_levels(
@@ -605,7 +614,8 @@ def _run_feg_backtest(
                             ema_filter_enabled, buy_ema_side, sell_ema_side,
                             entry_mode, entry_percent, buffer_k, rr_ratio,
                             entry_start_time, entry_end_time,
-                            c2_wick_filter_enabled, c2_wick_max_percent,
+                            c2_buy_upper_wick_max_pct, c2_buy_lower_wick_max_pct,
+                            c2_sell_upper_wick_max_pct, c2_sell_lower_wick_max_pct,
                         )
                         if sig:
                             pending = sig  # overwrite với signal mới nhất
@@ -662,7 +672,8 @@ def _scan_feg_stop_order_pending(df, ema, idx, pip_value,
                                   ema_filter_enabled, buy_ema_side, sell_ema_side,
                                   ema_margin_pips, buffer_k, rr_ratio,
                                   entry_start_time, entry_end_time,
-                                  c2_wick_filter_enabled=False, c2_wick_max_percent=30.0):
+                                  c2_buy_upper_wick_max_pct=None, c2_buy_lower_wick_max_pct=None,
+                                  c2_sell_upper_wick_max_pct=None, c2_sell_lower_wick_max_pct=None):
     """Scan 1 candle cho FEG Stop Order signal. Trả về pending dict hoặc None."""
     if idx < 1 or idx >= len(df):
         return None
@@ -677,7 +688,8 @@ def _scan_feg_stop_order_pending(df, ema, idx, pip_value,
         c1, c2, ema[idx], pip_value,
         h2_exceed_pips, c2_gap_pips,
         ema_filter_enabled, buy_ema_side, sell_ema_side, ema_margin_pips,
-        c2_wick_filter_enabled, c2_wick_max_percent,
+        c2_buy_upper_wick_max_pct, c2_buy_lower_wick_max_pct,
+        c2_sell_upper_wick_max_pct, c2_sell_lower_wick_max_pct,
     )
     if not direction:
         return None
@@ -712,8 +724,10 @@ def _run_feg_stop_order_backtest(
     be_enabled: bool = False,
     be_r: float = 1.0,
     re_entry_after_sl: bool = False,
-    c2_wick_filter_enabled: bool = False,
-    c2_wick_max_percent: float = 30.0,
+    c2_buy_upper_wick_max_pct: float | None = None,
+    c2_buy_lower_wick_max_pct: float | None = None,
+    c2_sell_upper_wick_max_pct: float | None = None,
+    c2_sell_lower_wick_max_pct: float | None = None,
 ):
     """Backtest FEG Stop Order: entry = H2+buffer (BUY) / L2-buffer (SELL), SL = L2 / H2."""
     pip_value = get_pip_value(symbol)
@@ -744,7 +758,8 @@ def _run_feg_stop_order_backtest(
             c1, c2, ema[i], pip_value,
             h2_exceed_pips, c2_gap_pips,
             ema_filter_enabled, buy_ema_side, sell_ema_side, ema_margin_pips,
-            c2_wick_filter_enabled, c2_wick_max_percent,
+            c2_buy_upper_wick_max_pct, c2_buy_lower_wick_max_pct,
+            c2_sell_upper_wick_max_pct, c2_sell_lower_wick_max_pct,
         )
 
         if direction:
@@ -824,7 +839,8 @@ def _run_feg_stop_order_backtest(
                             ema_filter_enabled, buy_ema_side, sell_ema_side,
                             ema_margin_pips, buffer_k, rr_ratio,
                             entry_start_time, entry_end_time,
-                            c2_wick_filter_enabled, c2_wick_max_percent,
+                            c2_buy_upper_wick_max_pct, c2_buy_lower_wick_max_pct,
+                            c2_sell_upper_wick_max_pct, c2_sell_lower_wick_max_pct,
                         )
                         if sig:
                             pending = sig  # overwrite với signal mới nhất

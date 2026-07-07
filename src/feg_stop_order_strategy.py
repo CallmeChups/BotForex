@@ -30,8 +30,10 @@ def detect_feg_stop_order_signal(
     buy_ema_side: str = "below_ema",
     sell_ema_side: str = "above_ema",
     ema_margin_pips: float = 0.0,
-    c2_wick_filter_enabled: bool = False,
-    c2_wick_max_percent: float = 30.0,
+    c2_buy_upper_wick_max_pct: float | None = None,
+    c2_buy_lower_wick_max_pct: float | None = None,
+    c2_sell_upper_wick_max_pct: float | None = None,
+    c2_sell_lower_wick_max_pct: float | None = None,
 ) -> str | None:
     """
     Phát hiện tín hiệu FEG Stop Order từ 2 nến đã đóng.
@@ -47,6 +49,10 @@ def detect_feg_stop_order_signal(
         buy_ema_side: "above_ema" | "below_ema" — điều kiện EMA cho BUY
         sell_ema_side: "above_ema" | "below_ema" — điều kiện EMA cho SELL
         ema_margin_pips: khoảng cách tối thiểu từ candle đến EMA
+        c2_buy_upper_wick_max_pct:  BUY — râu trên (high-close) phải < n% body C2. None = tắt.
+        c2_buy_lower_wick_max_pct:  BUY — râu dưới (close-low)  phải < n% body C2. None = tắt.
+        c2_sell_upper_wick_max_pct: SELL — râu trên (high-close) phải < n% body C2. None = tắt.
+        c2_sell_lower_wick_max_pct: SELL — râu dưới (close-low)  phải < n% body C2. None = tắt.
 
     Returns:
         "BUY", "SELL", hoặc None
@@ -64,9 +70,10 @@ def detect_feg_stop_order_signal(
     # SELL: cả 2 nến giảm, body C2 > C1, H2>H1, C2<L1
     if not bullish1 and not bullish2 and body2 > body1:
         if h2 > h1 + h2_exceed and c2 < l1 - c2_gap:
-            # Wick filter SELL: râu dưới C2 (close - low) < body2 * n%
-            if c2_wick_filter_enabled and body2 > 0:
-                if (c2 - l2) >= body2 * (c2_wick_max_percent / 100.0):
+            if body2 > 0:
+                if c2_sell_upper_wick_max_pct is not None and (h2 - c2) >= body2 * (c2_sell_upper_wick_max_pct / 100.0):
+                    return None
+                if c2_sell_lower_wick_max_pct is not None and (c2 - l2) >= body2 * (c2_sell_lower_wick_max_pct / 100.0):
                     return None
             if not ema_filter_enabled:
                 return "SELL"
@@ -78,9 +85,10 @@ def detect_feg_stop_order_signal(
     # BUY: cả 2 nến tăng, body C2 > C1, L2<L1, C2>H1
     if bullish1 and bullish2 and body2 > body1:
         if l2 < l1 - h2_exceed and c2 > h1 + c2_gap:
-            # Wick filter BUY: râu trên C2 (high - close) < body2 * n%
-            if c2_wick_filter_enabled and body2 > 0:
-                if (h2 - c2) >= body2 * (c2_wick_max_percent / 100.0):
+            if body2 > 0:
+                if c2_buy_upper_wick_max_pct is not None and (h2 - c2) >= body2 * (c2_buy_upper_wick_max_pct / 100.0):
+                    return None
+                if c2_buy_lower_wick_max_pct is not None and (c2 - l2) >= body2 * (c2_buy_lower_wick_max_pct / 100.0):
                     return None
             if not ema_filter_enabled:
                 return "BUY"
@@ -106,8 +114,10 @@ def analyze_feg_stop_order(
     buy_ema_side: str = "below_ema",
     sell_ema_side: str = "above_ema",
     ema_margin_pips: float = 0.0,
-    c2_wick_filter_enabled: bool = False,
-    c2_wick_max_percent: float = 30.0,
+    c2_buy_upper_wick_max_pct: float | None = None,
+    c2_buy_lower_wick_max_pct: float | None = None,
+    c2_sell_upper_wick_max_pct: float | None = None,
+    c2_sell_lower_wick_max_pct: float | None = None,
 ) -> dict | None:
     """
     Dựng signal đầy đủ (entry/SL/TP) từ pattern FEG Stop Order.
@@ -122,7 +132,8 @@ def analyze_feg_stop_order(
         candle1, candle2, ema2, pip_value,
         h2_exceed_pips, c2_gap_pips,
         ema_filter_enabled, buy_ema_side, sell_ema_side, ema_margin_pips,
-        c2_wick_filter_enabled, c2_wick_max_percent,
+        c2_buy_upper_wick_max_pct, c2_buy_lower_wick_max_pct,
+        c2_sell_upper_wick_max_pct, c2_sell_lower_wick_max_pct,
     )
     if direction is None:
         return None

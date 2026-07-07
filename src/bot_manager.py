@@ -98,7 +98,8 @@ def build_bot_command(
     be_enabled=False, be_r=1.0,
     ema_filter_enabled=True, buy_ema_side="below_ema", sell_ema_side="above_ema",
     re_entry_after_sl=False,
-    c2_wick_filter_enabled=False, c2_wick_max_percent=30.0,
+    c2_buy_upper_wick_max_pct=None, c2_buy_lower_wick_max_pct=None,
+    c2_sell_upper_wick_max_pct=None, c2_sell_lower_wick_max_pct=None,
 ):
     """Build command list to run bot_runner (separated for testability)."""
     cmd = [
@@ -149,8 +150,14 @@ def build_bot_command(
     cmd.extend(["--buy_ema_side", buy_ema_side])
     cmd.extend(["--sell_ema_side", sell_ema_side])
     cmd.extend(["--re_entry_after_sl", "1" if re_entry_after_sl else "0"])
-    cmd.extend(["--c2_wick_filter_enabled", "1" if c2_wick_filter_enabled else "0"])
-    cmd.extend(["--c2_wick_max_percent", str(c2_wick_max_percent)])
+    if c2_buy_upper_wick_max_pct is not None:
+        cmd.extend(["--c2_buy_upper_wick_max_pct", str(c2_buy_upper_wick_max_pct)])
+    if c2_buy_lower_wick_max_pct is not None:
+        cmd.extend(["--c2_buy_lower_wick_max_pct", str(c2_buy_lower_wick_max_pct)])
+    if c2_sell_upper_wick_max_pct is not None:
+        cmd.extend(["--c2_sell_upper_wick_max_pct", str(c2_sell_upper_wick_max_pct)])
+    if c2_sell_lower_wick_max_pct is not None:
+        cmd.extend(["--c2_sell_lower_wick_max_pct", str(c2_sell_lower_wick_max_pct)])
     return cmd
 
 
@@ -186,8 +193,10 @@ def start_bot(
     buy_ema_side: str = "below_ema",
     sell_ema_side: str = "above_ema",
     re_entry_after_sl: bool = False,
-    c2_wick_filter_enabled: bool = False,
-    c2_wick_max_percent: float = 30.0,
+    c2_buy_upper_wick_max_pct: float | None = None,
+    c2_buy_lower_wick_max_pct: float | None = None,
+    c2_sell_upper_wick_max_pct: float | None = None,
+    c2_sell_lower_wick_max_pct: float | None = None,
 ) -> tuple:
     """
     Start a new bot process
@@ -217,7 +226,8 @@ def start_bot(
         be_enabled, be_r,
         ema_filter_enabled, buy_ema_side, sell_ema_side,
         re_entry_after_sl,
-        c2_wick_filter_enabled, c2_wick_max_percent,
+        c2_buy_upper_wick_max_pct, c2_buy_lower_wick_max_pct,
+        c2_sell_upper_wick_max_pct, c2_sell_lower_wick_max_pct,
     )
 
     try:
@@ -270,8 +280,10 @@ def start_bot(
             'be_enabled': be_enabled,
             'be_r': be_r,
             're_entry_after_sl': re_entry_after_sl,
-            'c2_wick_filter_enabled': c2_wick_filter_enabled,
-            'c2_wick_max_percent': c2_wick_max_percent,
+            'c2_buy_upper_wick_max_pct': c2_buy_upper_wick_max_pct,
+            'c2_buy_lower_wick_max_pct': c2_buy_lower_wick_max_pct,
+            'c2_sell_upper_wick_max_pct': c2_sell_upper_wick_max_pct,
+            'c2_sell_lower_wick_max_pct': c2_sell_lower_wick_max_pct,
             'started_at': datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M:%S'),
             'log_path': log_path,
             'command': ' '.join(cmd)
@@ -412,8 +424,10 @@ def switch_bot_mode(pid: int, live: bool) -> tuple:
         be_enabled=bot.get('be_enabled', False),
         be_r=bot.get('be_r', 1.0),
         re_entry_after_sl=bot.get('re_entry_after_sl', False),
-        c2_wick_filter_enabled=bot.get('c2_wick_filter_enabled', False),
-        c2_wick_max_percent=bot.get('c2_wick_max_percent', 30.0),
+        c2_buy_upper_wick_max_pct=bot.get('c2_buy_upper_wick_max_pct', None),
+        c2_buy_lower_wick_max_pct=bot.get('c2_buy_lower_wick_max_pct', None),
+        c2_sell_upper_wick_max_pct=bot.get('c2_sell_upper_wick_max_pct', None),
+        c2_sell_lower_wick_max_pct=bot.get('c2_sell_lower_wick_max_pct', None),
     )
 
 
@@ -516,8 +530,10 @@ def restart_bot(pid: int) -> tuple:
         be_enabled=bot.get('be_enabled', False),
         be_r=bot.get('be_r', 1.0),
         re_entry_after_sl=bot.get('re_entry_after_sl', False),
-        c2_wick_filter_enabled=bot.get('c2_wick_filter_enabled', False),
-        c2_wick_max_percent=bot.get('c2_wick_max_percent', 30.0),
+        c2_buy_upper_wick_max_pct=bot.get('c2_buy_upper_wick_max_pct', None),
+        c2_buy_lower_wick_max_pct=bot.get('c2_buy_lower_wick_max_pct', None),
+        c2_sell_upper_wick_max_pct=bot.get('c2_sell_upper_wick_max_pct', None),
+        c2_sell_lower_wick_max_pct=bot.get('c2_sell_lower_wick_max_pct', None),
     )
 
 
