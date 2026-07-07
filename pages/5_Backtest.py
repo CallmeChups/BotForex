@@ -52,6 +52,44 @@ def _pf(key, default=None):
     return pf.get(key, default)
 
 
+def _migrate_config(cfg: dict) -> dict:
+    """Migrate legacy backtest config keys to current schema."""
+    cfg = dict(cfg)
+    # ema_dist_pips → ema_margin_pips (removed ema_dist_enabled flag)
+    if 'ema_dist_pips' in cfg and 'ema_margin_pips' not in cfg:
+        cfg['ema_margin_pips'] = cfg.pop('ema_dist_pips')
+    cfg.pop('ema_dist_enabled', None)
+    # c2_upper/lower_wick_max_pct → per-direction 4 keys
+    if 'c2_upper_wick_max_pct' in cfg:
+        v = cfg.pop('c2_upper_wick_max_pct')
+        cfg.setdefault('c2_buy_upper_wick_max_pct', v)
+        cfg.setdefault('c2_sell_upper_wick_max_pct', v)
+    if 'c2_lower_wick_max_pct' in cfg:
+        v = cfg.pop('c2_lower_wick_max_pct')
+        cfg.setdefault('c2_buy_lower_wick_max_pct', v)
+        cfg.setdefault('c2_sell_lower_wick_max_pct', v)
+    # Defaults for keys missing in old records
+    cfg.setdefault('entry_type', 'pattern')
+    cfg.setdefault('ema_period', 21)
+    cfg.setdefault('h2_exceed_pips', 0.0)
+    cfg.setdefault('c2_gap_pips', 0.0)
+    cfg.setdefault('ema_margin_pips', 0.0)
+    cfg.setdefault('ema_filter_enabled', True)
+    cfg.setdefault('buy_ema_side', 'below_ema')
+    cfg.setdefault('sell_ema_side', 'above_ema')
+    cfg.setdefault('entry_start_time', '00:00')
+    cfg.setdefault('entry_end_time', '23:59')
+    cfg.setdefault('limit_order_candles', 1)
+    cfg.setdefault('be_enabled', False)
+    cfg.setdefault('be_r', 1.0)
+    cfg.setdefault('re_entry_after_sl', False)
+    cfg.setdefault('c2_buy_upper_wick_max_pct', None)
+    cfg.setdefault('c2_buy_lower_wick_max_pct', None)
+    cfg.setdefault('c2_sell_upper_wick_max_pct', None)
+    cfg.setdefault('c2_sell_lower_wick_max_pct', None)
+    return cfg
+
+
 def main():
     st.title("Backtest Strategy")
 
@@ -172,7 +210,7 @@ def main():
             with r2c4:
                 use_max_candles = st.checkbox("Max Candles", value=bool(_pf('max_candles', params.get('max_candles', 7))), help="Uncheck = TP/SL only")
                 if use_max_candles:
-                    max_candles = st.number_input("", value=int(_pf('max_candles', params.get('max_candles', 7))),
+                    max_candles = st.number_input("Max candles value", value=int(_pf('max_candles', params.get('max_candles', 7))),
                                                   min_value=1, max_value=50, label_visibility="collapsed")
                 else:
                     max_candles = 0
@@ -467,10 +505,14 @@ def main():
             st.subheader("Entry Time Window")
             tw_col1, tw_col2 = st.columns(2)
             with tw_col1:
-                entry_start_time = st.time_input("Entry Start Time (HCM)", value=time(0, 0),
+                _pf_start2 = _pf('entry_start_time', '00:00')
+                entry_start_time = st.time_input("Entry Start Time (HCM)",
+                                                 value=datetime.strptime(_pf_start2, "%H:%M").time() if isinstance(_pf_start2, str) else _pf_start2,
                                                  help="Only enter new positions at or after this time. Default 00:00 = no filter.")
             with tw_col2:
-                entry_end_time = st.time_input("Entry End Time (HCM)", value=time(23, 59),
+                _pf_end2 = _pf('entry_end_time', '23:59')
+                entry_end_time = st.time_input("Entry End Time (HCM)",
+                                               value=datetime.strptime(_pf_end2, "%H:%M").time() if isinstance(_pf_end2, str) else _pf_end2,
                                                help="Only enter new positions at or before this time. Default 23:59 = no filter.")
             st.caption("Active trade continues holding if window ends. Window only gates new entries.")
             st.divider()
@@ -519,41 +561,49 @@ def main():
                     st.caption("SL triggers when candle CLOSES beyond SL (exits at close price)")
             bcol1, bcol2, bcol3 = st.columns(3)
             with bcol1:
-                be_enabled = st.checkbox("Break-Even (BE)", value=False,
+                be_enabled = st.checkbox("Break-Even (BE)", value=bool(_pf('be_enabled', False)),
                                          help="Dời SL về entry khi lời đủ be_r × SL distance")
             with bcol2:
-                be_r = st.number_input("BE Trigger (R)", value=1.0, min_value=0.1, max_value=10.0,
+                be_r = st.number_input("BE Trigger (R)", value=float(_pf('be_r', 1.0)), min_value=0.1, max_value=10.0,
                                        step=0.1, format="%.1f",
                                        help="BE kích hoạt khi lời đạt be_r × SL distance",
                                        disabled=not be_enabled)
             with bcol3:
-                re_entry_after_sl = st.checkbox("Re-Entry After SL", value=False,
+                re_entry_after_sl = st.checkbox("Re-Entry After SL", value=bool(_pf('re_entry_after_sl', False)),
                                                 help="Trong lúc lệnh đang chạy, vẫn scan signal song song. "
                                                      "Nếu SL hit đúng tại candle2 của signal mới → vào lệnh tiếp ngay.")
             st.caption("Wick Filter — để trống = tắt")
             so_wc_buy1, so_wc_buy2 = st.columns(2)
             with so_wc_buy1:
+                _so_wk_bu_raw = _pf('c2_buy_upper_wick_max_pct', None)
                 _so_wk_bu_str = st.text_input("BUY — Râu trên tối đa % body",
-                                               value="", placeholder="VD: 30  (để trống = tắt)",
+                                               value="" if _so_wk_bu_raw is None else str(_so_wk_bu_raw),
+                                               placeholder="VD: 30  (để trống = tắt)",
                                                help="BUY: (high-close) < body × n%.",
                                                key="bt_c2_buy_upper_wick")
                 c2_buy_upper_wick_max_pct = float(_so_wk_bu_str) if _so_wk_bu_str.strip() else None
             with so_wc_buy2:
+                _so_wk_bl_raw = _pf('c2_buy_lower_wick_max_pct', None)
                 _so_wk_bl_str = st.text_input("BUY — Râu dưới tối đa % body",
-                                               value="", placeholder="VD: 30  (để trống = tắt)",
+                                               value="" if _so_wk_bl_raw is None else str(_so_wk_bl_raw),
+                                               placeholder="VD: 30  (để trống = tắt)",
                                                help="BUY: (close-low) < body × n%.",
                                                key="bt_c2_buy_lower_wick")
                 c2_buy_lower_wick_max_pct = float(_so_wk_bl_str) if _so_wk_bl_str.strip() else None
             so_wc_sell1, so_wc_sell2 = st.columns(2)
             with so_wc_sell1:
+                _so_wk_su_raw = _pf('c2_sell_upper_wick_max_pct', None)
                 _so_wk_su_str = st.text_input("SELL — Râu trên tối đa % body",
-                                               value="", placeholder="VD: 30  (để trống = tắt)",
+                                               value="" if _so_wk_su_raw is None else str(_so_wk_su_raw),
+                                               placeholder="VD: 30  (để trống = tắt)",
                                                help="SELL: (high-close) < body × n%.",
                                                key="bt_c2_sell_upper_wick")
                 c2_sell_upper_wick_max_pct = float(_so_wk_su_str) if _so_wk_su_str.strip() else None
             with so_wc_sell2:
+                _so_wk_sl_raw = _pf('c2_sell_lower_wick_max_pct', None)
                 _so_wk_sl_str = st.text_input("SELL — Râu dưới tối đa % body",
-                                               value="", placeholder="VD: 30  (để trống = tắt)",
+                                               value="" if _so_wk_sl_raw is None else str(_so_wk_sl_raw),
+                                               placeholder="VD: 30  (để trống = tắt)",
                                                help="SELL: (close-low) < body × n%.",
                                                key="bt_c2_sell_lower_wick")
                 c2_sell_lower_wick_max_pct = float(_so_wk_sl_str) if _so_wk_sl_str.strip() else None
@@ -742,10 +792,14 @@ def main():
                 st.caption("**Time Window**")
                 tw1, tw2 = st.columns(2)
                 with tw1:
-                    entry_start_time = st.time_input("Entry Start (HCM)", value=time(0, 0),
+                    _pf_start3 = _pf('entry_start_time', '00:00')
+                    entry_start_time = st.time_input("Entry Start (HCM)",
+                                                     value=datetime.strptime(_pf_start3, "%H:%M").time() if isinstance(_pf_start3, str) else _pf_start3,
                                                      help="Gate entries from this time. 00:00 = no filter.")
                 with tw2:
-                    entry_end_time = st.time_input("Entry End (HCM)", value=time(23, 59),
+                    _pf_end3 = _pf('entry_end_time', '23:59')
+                    entry_end_time = st.time_input("Entry End (HCM)",
+                                                   value=datetime.strptime(_pf_end3, "%H:%M").time() if isinstance(_pf_end3, str) else _pf_end3,
                                                    help="Gate entries until this time. 23:59 = no filter.")
                 entry_time = datetime.strptime("00:00", "%H:%M").time()  # pattern strategies use entry_start_time/entry_end_time window; entry_time unused
 
@@ -1670,11 +1724,7 @@ def show_history_section():
             with col_load:
                 if st.button("Load Config", type="primary", key="btn_reuse_config"):
                     if record:
-                        cfg = dict(record['config'])
-                        # migrate legacy keys
-                        if 'ema_dist_pips' in cfg and 'ema_margin_pips' not in cfg:
-                            cfg['ema_margin_pips'] = cfg.pop('ema_dist_pips')
-                        cfg.pop('ema_dist_enabled', None)
+                        cfg = _migrate_config(record['config'])
                         st.session_state['backtest_prefill'] = cfg
                         st.success(f"Đã load config từ {record_id} — scroll lên để xem params.")
                         st.rerun()
