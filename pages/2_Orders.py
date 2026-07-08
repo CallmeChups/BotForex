@@ -1,4 +1,4 @@
-"""
+﻿"""
 Orders Page - View and manage open positions
 """
 
@@ -116,7 +116,7 @@ def show_open_positions(user_creds: dict):
     col1, col2, col3 = st.columns([1, 1, 2])
 
     with col1:
-        if st.button("Refresh Positions", use_container_width=True, type="primary"):
+        if st.button("Refresh Positions", width='stretch', type="primary"):
             st.rerun()
 
     with col2:
@@ -203,7 +203,7 @@ def show_open_positions(user_creds: dict):
         col1, col2, col3 = st.columns([2, 1, 2])
 
         with col2:
-            if st.button("Close All Positions", type="secondary", use_container_width=True):
+            if st.button("Close All Positions", type="secondary", width='stretch'):
                 try:
                     closed, error = close_all_positions(credentials=user_creds)
                     if error:
@@ -349,7 +349,7 @@ def show_place_order(user_creds: dict):
         if st.button(
             f"Place {direction} Order",
             type="primary",
-            use_container_width=True,
+            width='stretch',
             key="place_order_btn"
         ):
             try:

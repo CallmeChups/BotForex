@@ -1,4 +1,4 @@
-"""
+﻿"""
 Backtest Page - Test strategy on historical data
 """
 
@@ -965,7 +965,7 @@ def main():
     sl_pips = 0  # always calculated from candle + buffer_k
 
     # Run backtest button
-    if st.button("Run Backtest", type="primary", use_container_width=True):
+    if st.button("Run Backtest", type="primary", width='stretch'):
         try:
             with st.spinner("Fetching historical data..."):
                 # Convert dates to datetime
@@ -1512,7 +1512,7 @@ def show_interactive_chart(trades: list, ohlc_data: pd.DataFrame, symbol: str):
         )
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
     # Trade details
     col1, col2, col3, col4 = st.columns(4)
@@ -1716,7 +1716,7 @@ def show_history_section():
     for col, func in style_subsets:
         styled_history = styled_history.map(func, subset=[col])
 
-    st.dataframe(styled_history, use_container_width=True, hide_index=True)
+    st.dataframe(styled_history, width='stretch', hide_index=True)
 
     st.caption(f"Showing {len(filtered_df)} of {len(history_df)} records | {len(display_cols)} columns")
 

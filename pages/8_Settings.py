@@ -1,4 +1,4 @@
-"""
+﻿"""
 Settings Page - Configure bot settings
 """
 
@@ -79,7 +79,7 @@ def main():
                 help="Use XAUUSDm for Standard account, XAUUSD for Pro/Raw"
             )
 
-        if st.form_submit_button("Save MT5 Credentials", type="primary", use_container_width=True):
+        if st.form_submit_button("Save MT5 Credentials", type="primary", width='stretch'):
             if not mt5_login or not mt5_password or not mt5_server:
                 st.error("Please fill in all MT5 fields")
             else:
@@ -99,7 +99,7 @@ def main():
     # Test MT5 connection
     st.subheader("Test Connection")
 
-    if st.button("Test MT5 Connection", use_container_width=True):
+    if st.button("Test MT5 Connection", width='stretch'):
         try:
             import MetaTrader5 as mt5
         except ImportError:
@@ -163,7 +163,7 @@ def main():
                 help="Group for testing"
             )
 
-        if st.button("Test Telegram", use_container_width=True):
+        if st.button("Test Telegram", width='stretch'):
             try:
                 import requests
 

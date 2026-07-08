@@ -1,4 +1,4 @@
-"""
+﻿"""
 Bots Page - Manage trading bot processes
 """
 
@@ -121,21 +121,21 @@ def show_running_bots():
     # ── Toolbar ───────────────────────────────────────────────────────────────
     col1, col2, col3, col4, col5, col6 = st.columns([1, 1, 1, 1, 1, 2])
     with col1:
-        if st.button("Refresh", type="primary", use_container_width=True):
+        if st.button("Refresh", type="primary", width='stretch'):
             st.rerun()
     with col2:
         stop_label = "Stop All" if admin else "Stop All Mine"
-        if st.button(stop_label, type="secondary", use_container_width=True):
+        if st.button(stop_label, type="secondary", width='stretch'):
             _request_confirm("stop_all")
     with col3:
         restart_label = "Restart All" if admin else "Restart Mine"
-        if st.button(restart_label, type="secondary", use_container_width=True):
+        if st.button(restart_label, type="secondary", width='stretch'):
             _request_confirm("restart_all")
     with col4:
-        if st.button("Tất cả → Live", type="primary", use_container_width=True, key="btn_all_live"):
+        if st.button("Tất cả → Live", type="primary", width='stretch', key="btn_all_live"):
             _request_confirm("all_live")
     with col5:
-        if st.button("Tất cả → Test", type="secondary", use_container_width=True, key="btn_all_test"):
+        if st.button("Tất cả → Test", type="secondary", width='stretch', key="btn_all_test"):
             _request_confirm("all_test")
     with col6:
         filter_mode = st.radio("Mode", ["All", "Live Only", "Test Only"],
@@ -1256,7 +1256,7 @@ def show_create_bot():
     # sl_pips not used for pattern strategies (SL from candle + buffer_k)
     sl_pips = None if is_pattern else int(params.get('sl_pips', 30))
 
-    if st.button("Start Bot", type="primary", use_container_width=True):
+    if st.button("Start Bot", type="primary", width='stretch'):
         if not symbol:
             st.error("Symbol is required")
         else:
@@ -1316,7 +1316,7 @@ def show_create_bot():
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        if st.button("XAUUSD", use_container_width=True):
+        if st.button("XAUUSD", width='stretch'):
             try:
                 success, msg, _ = start_bot(
                     strategy=enabled_strategies[0]['id'],
@@ -1334,7 +1334,7 @@ def show_create_bot():
                 st.error(f"Lỗi: {type(e).__name__}: {e}")
 
     with col2:
-        if st.button("BTCUSD", use_container_width=True):
+        if st.button("BTCUSD", width='stretch'):
             try:
                 success, msg, _ = start_bot(
                     strategy=enabled_strategies[0]['id'],
@@ -1352,7 +1352,7 @@ def show_create_bot():
                 st.error(f"Lỗi: {type(e).__name__}: {e}")
 
     with col3:
-        if st.button("ETHUSD", use_container_width=True):
+        if st.button("ETHUSD", width='stretch'):
             try:
                 success, msg, _ = start_bot(
                     strategy=enabled_strategies[0]['id'],
@@ -1470,7 +1470,7 @@ def show_bot_history():
                     ["order_id", "direction", "entry", "exit_price", "exit_type", "lot", "pnl_usd", "closed_at"]
                 ]
                 df_t.columns = ["Order ID", "Dir", "Entry", "Exit", "Type", "Lot", "PNL ($)", "Closed At"]
-                st.dataframe(df_t, use_container_width=True, hide_index=True)
+                st.dataframe(df_t, width='stretch', hide_index=True)
 
             # Log viewer
             log_path = s.get("log_path", "")

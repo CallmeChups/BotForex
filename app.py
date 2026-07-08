@@ -1,4 +1,4 @@
-"""
+﻿"""
 BotForex - Multi-Strategy MT5 Trading Dashboard
 """
 
@@ -191,11 +191,11 @@ def show_dashboard():
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        if st.button("🔄 Refresh Data", use_container_width=True):
+        if st.button("🔄 Refresh Data", width='stretch'):
             st.rerun()
 
     with col2:
-        if st.button("📤 Test Telegram", use_container_width=True):
+        if st.button("📤 Test Telegram", width='stretch'):
             try:
                 import requests
                 token = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -215,7 +215,7 @@ def show_dashboard():
                 st.error(f"Error: {e}")
 
     with col3:
-        if st.button("📊 Run Simulation", use_container_width=True):
+        if st.button("📊 Run Simulation", width='stretch'):
             st.info("Go to Strategy page to run simulation")
 
     # Footer
