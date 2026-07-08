@@ -105,13 +105,21 @@ def get_args():
                              'If SL hits exactly at candle2 of pending signal → re-entry limit immediately. '
                              '1=enabled, 0=disabled (default 0)')
     parser.add_argument('--c2_buy_upper_wick_max_pct', type=float, default=None,
-                        help='BUY — Râu trên C2 (high-close) tối đa n%% body. None = tắt. (default: tắt)')
+                        help='BUY — Ngưỡng %% body C2 cho râu trên (high-close). None = tắt.')
     parser.add_argument('--c2_buy_lower_wick_max_pct', type=float, default=None,
-                        help='BUY — Râu dưới C2 (close-low) tối đa n%% body. None = tắt. (default: tắt)')
+                        help='BUY — Ngưỡng %% body C2 cho râu dưới (open-low). None = tắt.')
     parser.add_argument('--c2_sell_upper_wick_max_pct', type=float, default=None,
-                        help='SELL — Râu trên C2 (high-close) tối đa n%% body. None = tắt. (default: tắt)')
+                        help='SELL — Ngưỡng %% body C2 cho râu trên (high-open). None = tắt.')
     parser.add_argument('--c2_sell_lower_wick_max_pct', type=float, default=None,
-                        help='SELL — Râu dưới C2 (close-low) tối đa n%% body. None = tắt. (default: tắt)')
+                        help='SELL — Ngưỡng %% body C2 cho râu dưới (close-low). None = tắt.')
+    parser.add_argument('--c2_buy_upper_wick_cmp', type=str, default='lt',
+                        help='BUY râu trên: "lt" = râu < pct%% body (default) | "gt" = râu > pct%% body')
+    parser.add_argument('--c2_buy_lower_wick_cmp', type=str, default='lt',
+                        help='BUY râu dưới: "lt" = râu < pct%% body (default) | "gt" = râu > pct%% body')
+    parser.add_argument('--c2_sell_upper_wick_cmp', type=str, default='lt',
+                        help='SELL râu trên: "lt" = râu < pct%% body (default) | "gt" = râu > pct%% body')
+    parser.add_argument('--c2_sell_lower_wick_cmp', type=str, default='lt',
+                        help='SELL râu dưới: "lt" = râu < pct%% body (default) | "gt" = râu > pct%% body')
     parser.add_argument('--log_file', type=str, default=None,
                         help='Path to log file (default: stderr only)')
 
@@ -152,7 +160,7 @@ def send_telegram(text: str, is_error: bool = False) -> bool:
 
 
 def get_mt5_connection(credentials: dict):
-    """Initialize MT5 connection"""
+    """Initialize MT5 connection (fresh connect — use _ensure_mt5_connected for persistent sessions)."""
     try:
         import MetaTrader5 as mt5
     except ImportError:
@@ -175,6 +183,63 @@ def get_mt5_connection(credentials: dict):
         return None, f"MT5 login failed: {error}"
 
     return mt5, None
+
+
+def _ensure_mt5_connected(mt5_ref: list, credentials: dict) -> tuple:
+    """Return live MT5 module, reconnecting only when the terminal lost connection.
+
+    mt5_ref is a 1-element list used as a mutable cell so callers can share the
+    same connection across loop iterations without a global variable.
+
+    Usage:
+        _mt5_ref = [None]
+        while True:
+            mt5, err = _ensure_mt5_connected(_mt5_ref, credentials)
+            if err: ...
+    """
+    try:
+        import MetaTrader5 as mt5_mod
+    except ImportError:
+        return None, "MT5 not available (Windows only)"
+
+    mt5 = mt5_ref[0]
+
+    # Fast-path: already initialized — just ping terminal_info
+    if mt5 is not None:
+        try:
+            info = mt5_mod.terminal_info()
+            if info is not None and info.connected:
+                return mt5_mod, None
+        except Exception:
+            pass
+        # Terminal gone — fall through to reconnect
+        try:
+            mt5_mod.shutdown()
+        except Exception:
+            pass
+
+    # Reconnect
+    if not mt5_mod.initialize():
+        mt5_ref[0] = None
+        return None, "MT5 initialization failed"
+
+    login = int(credentials.get('login') or 0)
+    password = credentials.get('password', '')
+    server = credentials.get('server', '')
+
+    if not login or not password or not server:
+        mt5_mod.shutdown()
+        mt5_ref[0] = None
+        return None, "MT5 credentials not configured"
+
+    if not mt5_mod.login(login=login, password=password, server=server):
+        error = mt5_mod.last_error()
+        mt5_mod.shutdown()
+        mt5_ref[0] = None
+        return None, f"MT5 login failed: {error}"
+
+    mt5_ref[0] = mt5_mod
+    return mt5_mod, None
 
 
 def get_pip_value(symbol: str) -> float:
@@ -480,6 +545,8 @@ def feg_entry_decision(
     ema_filter_enabled=True, buy_ema_side="below_ema", sell_ema_side="above_ema",
     c2_buy_upper_wick_max_pct=None, c2_buy_lower_wick_max_pct=None,
     c2_sell_upper_wick_max_pct=None, c2_sell_lower_wick_max_pct=None,
+    c2_buy_upper_wick_cmp="lt", c2_buy_lower_wick_cmp="lt",
+    c2_sell_upper_wick_cmp="lt", c2_sell_lower_wick_cmp="lt",
 ):
     """Quyết định vào lệnh FEG. None nếu đang có lệnh (1 lệnh/lúc) hoặc không có pattern."""
     from src.feg_strategy import analyze_feg
@@ -495,6 +562,10 @@ def feg_entry_decision(
         c2_buy_lower_wick_max_pct=c2_buy_lower_wick_max_pct,
         c2_sell_upper_wick_max_pct=c2_sell_upper_wick_max_pct,
         c2_sell_lower_wick_max_pct=c2_sell_lower_wick_max_pct,
+        c2_buy_upper_wick_cmp=c2_buy_upper_wick_cmp,
+        c2_buy_lower_wick_cmp=c2_buy_lower_wick_cmp,
+        c2_sell_upper_wick_cmp=c2_sell_upper_wick_cmp,
+        c2_sell_lower_wick_cmp=c2_sell_lower_wick_cmp,
     )
 
 
@@ -506,6 +577,8 @@ def feg_stop_order_entry_decision(
     ema_margin_pips=0.0,
     c2_buy_upper_wick_max_pct=None, c2_buy_lower_wick_max_pct=None,
     c2_sell_upper_wick_max_pct=None, c2_sell_lower_wick_max_pct=None,
+    c2_buy_upper_wick_cmp="lt", c2_buy_lower_wick_cmp="lt",
+    c2_sell_upper_wick_cmp="lt", c2_sell_lower_wick_cmp="lt",
 ):
     """Quyết định vào lệnh FEG Stop Order. None nếu đang có lệnh (1 lệnh/lúc) hoặc không có pattern."""
     from src.feg_stop_order_strategy import analyze_feg_stop_order
@@ -522,6 +595,10 @@ def feg_stop_order_entry_decision(
         c2_buy_lower_wick_max_pct=c2_buy_lower_wick_max_pct,
         c2_sell_upper_wick_max_pct=c2_sell_upper_wick_max_pct,
         c2_sell_lower_wick_max_pct=c2_sell_lower_wick_max_pct,
+        c2_buy_upper_wick_cmp=c2_buy_upper_wick_cmp,
+        c2_buy_lower_wick_cmp=c2_buy_lower_wick_cmp,
+        c2_sell_upper_wick_cmp=c2_sell_upper_wick_cmp,
+        c2_sell_lower_wick_cmp=c2_sell_lower_wick_cmp,
     )
 
 
@@ -678,6 +755,30 @@ def _clear_pending_restart(pid: int):
         pass
 
 
+def _estimate_pnl_usd(mt5, symbol: str, direction: str, entry: float, exit_price: float,
+                       lot: float, pip_value: float) -> float | None:
+    """Estimate P&L in USD using broker tick value (correct for all symbols including XAU/BTC).
+
+    Returns None when MT5 symbol info is unavailable (caller should omit USD figure).
+    """
+    try:
+        sym_info = mt5.symbol_info(symbol)
+        if sym_info is None:
+            return None
+        tick_value = sym_info.trade_tick_value
+        tick_size = sym_info.trade_tick_size
+        if not tick_size or not tick_value:
+            return None
+        pip_value_per_lot = tick_value * (pip_value / tick_size)
+        pnl_pips = (
+            (exit_price - entry) / pip_value if direction == "BUY"
+            else (entry - exit_price) / pip_value
+        )
+        return pnl_pips * pip_value_per_lot * lot
+    except Exception:
+        return None
+
+
 def _get_exit_deal(mt5, ticket: int, retries: int = 3, delay: float = 1.0):
     """Tìm deal đóng lệnh (DEAL_ENTRY_OUT=1) từ history theo position ticket.
 
@@ -733,6 +834,10 @@ def run_feg_bot(args, strategy, params, credentials,
     c2_buy_lower_wick_max_pct  = args.c2_buy_lower_wick_max_pct
     c2_sell_upper_wick_max_pct = args.c2_sell_upper_wick_max_pct
     c2_sell_lower_wick_max_pct = args.c2_sell_lower_wick_max_pct
+    c2_buy_upper_wick_cmp  = args.c2_buy_upper_wick_cmp  or "lt"
+    c2_buy_lower_wick_cmp  = args.c2_buy_lower_wick_cmp  or "lt"
+    c2_sell_upper_wick_cmp = args.c2_sell_upper_wick_cmp or "lt"
+    c2_sell_lower_wick_cmp = args.c2_sell_lower_wick_cmp or "lt"
 
     # Auto-detect symbol min lot and clamp (only for fixed mode)
     mt5_tmp, err_tmp = get_mt5_connection(credentials)
@@ -747,13 +852,13 @@ def run_feg_bot(args, strategy, params, credentials,
     be_log = f"BE=ON(r={args.be_r})" if args.be_enabled else "BE=OFF"
     ema_filter_str = f"EMA_filter=ON(buy={buy_ema_side},sell={sell_ema_side},margin={ema_margin_pips}p)" if ema_filter_enabled else "EMA_filter=OFF"
     re_entry_log = "ReEntry=ON" if re_entry_after_sl else "ReEntry=OFF"
-    _wick_buy = []
-    if c2_buy_upper_wick_max_pct is not None: _wick_buy.append(f"upper={c2_buy_upper_wick_max_pct}%")
-    if c2_buy_lower_wick_max_pct is not None: _wick_buy.append(f"lower={c2_buy_lower_wick_max_pct}%")
-    _wick_sell = []
-    if c2_sell_upper_wick_max_pct is not None: _wick_sell.append(f"upper={c2_sell_upper_wick_max_pct}%")
-    if c2_sell_lower_wick_max_pct is not None: _wick_sell.append(f"lower={c2_sell_lower_wick_max_pct}%")
-    wick_log = f"WickFilter=BUY({','.join(_wick_buy) or 'OFF'}) SELL({','.join(_wick_sell) or 'OFF'})"
+    _wb = []
+    if c2_buy_upper_wick_max_pct is not None: _wb.append(f"upper{c2_buy_upper_wick_cmp}{c2_buy_upper_wick_max_pct}%")
+    if c2_buy_lower_wick_max_pct is not None: _wb.append(f"lower{c2_buy_lower_wick_cmp}{c2_buy_lower_wick_max_pct}%")
+    _ws = []
+    if c2_sell_upper_wick_max_pct is not None: _ws.append(f"upper{c2_sell_upper_wick_cmp}{c2_sell_upper_wick_max_pct}%")
+    if c2_sell_lower_wick_max_pct is not None: _ws.append(f"lower{c2_sell_lower_wick_cmp}{c2_sell_lower_wick_max_pct}%")
+    wick_log = f"WickFilter=BUY({','.join(_wb) or 'OFF'}) SELL({','.join(_ws) or 'OFF'})"
     log(f"FEG params: EMA{ema_period}, RR={rr_ratio}, buffer_k={buffer_k}, "
         f"lot={lot_log}, max_candles={max_candles or 'unlimited'}, "
         f"h2_exceed={h2_exceed_pips}p, c2_gap={c2_gap_pips}p, {ema_filter_str}, {be_log}, {re_entry_log}, {wick_log}")
@@ -785,10 +890,11 @@ def run_feg_bot(args, strategy, params, credentials,
     pending_orders = []
     active_trades  = []
     last_candle_time = None
+    _mt5_ref = [None]  # persistent MT5 connection — reconnects only when terminal disconnects
 
     try:
         while True:
-            mt5, error = get_mt5_connection(credentials)
+            mt5, error = _ensure_mt5_connected(_mt5_ref, credentials)
             if error:
                 log(f"MT5 connection failed: {error}", "ERROR")
                 send_telegram(f"MT5 Error: {error}", is_error=True)
@@ -799,7 +905,6 @@ def run_feg_bot(args, strategy, params, credentials,
             if df is None or len(df) < ema_period + 2:
                 log(f"Insufficient candle data for {args.symbol} (got {len(df) if df is not None else 0})", "ERROR")
                 send_telegram(f"❌ Insufficient candle data\nSymbol: {args.symbol}", is_error=True)
-                mt5.shutdown()
                 time.sleep(args.interval)
                 continue
 
@@ -967,10 +1072,10 @@ def run_feg_bot(args, strategy, params, credentials,
                             verified = True
                         else:
                             actual_price = exit_price  # candle-based estimate
-                            actual_pnl_usd = (
-                                (exit_price - trade["entry"]) / pv if trade["direction"] == "BUY"
-                                else (trade["entry"] - exit_price) / pv
-                            ) * pv * trade_lot * 100000
+                            actual_pnl_usd = _estimate_pnl_usd(
+                                mt5, args.symbol, trade["direction"],
+                                trade["entry"], exit_price, trade_lot, pv,
+                            )  # None when symbol info unavailable
                             verified = False
 
                         actual_pips = (
@@ -980,7 +1085,8 @@ def run_feg_bot(args, strategy, params, credentials,
 
                         # Step 4: Log, Telegram, record — mark estimated data clearly
                         price_str = f"{actual_price:.2f}"
-                        pnl_str = f"{actual_pips:.1f} pips (${actual_pnl_usd:.2f})"
+                        usd_part = f" (${actual_pnl_usd:.2f})" if actual_pnl_usd is not None else ""
+                        pnl_str = f"{actual_pips:.1f} pips{usd_part}"
                         if not verified:
                             price_str += " ~est"
                             pnl_str = "~" + pnl_str + " ⚠️"
@@ -1012,6 +1118,8 @@ def run_feg_bot(args, strategy, params, credentials,
                         ema_filter_enabled, buy_ema_side, sell_ema_side,
                         c2_buy_upper_wick_max_pct, c2_buy_lower_wick_max_pct,
                         c2_sell_upper_wick_max_pct, c2_sell_lower_wick_max_pct,
+                        c2_buy_upper_wick_cmp, c2_buy_lower_wick_cmp,
+                        c2_sell_upper_wick_cmp, c2_sell_lower_wick_cmp,
                     )
                     log(f"Signal scan: {signal['direction'] if signal else 'NO SIGNAL'}"
                         + (f" entry={signal['entry_price']:.2f} sl={signal['stop_loss']:.2f} tp={signal['take_profit']:.2f}" if signal else ""))
@@ -1094,10 +1202,8 @@ def run_feg_bot(args, strategy, params, credentials,
                     _write_bot_state(os.getpid(), args.symbol, args.strategy, 0, 0)
                     _unregister_from_running_bots(os.getpid())
                     close_session(_session_id)
-                    mt5.shutdown()
                     raise _GracefulRestart()
 
-            mt5.shutdown()
             time.sleep(args.interval)
 
     except KeyboardInterrupt:
@@ -1117,6 +1223,13 @@ def run_feg_bot(args, strategy, params, credentials,
         close_session(_session_id)
         send_telegram(f"❌ FEG Bot crashed\nSymbol: {args.symbol}\nError: {e}\n\n<pre>{tb[-800:]}</pre>", is_error=True)
         raise
+    finally:
+        # Shutdown MT5 once when the bot loop exits (any reason)
+        try:
+            import MetaTrader5 as _mt5_mod
+            _mt5_mod.shutdown()
+        except Exception:
+            pass
 
 
 def run_feg_stop_order_bot(args, strategy, params, credentials,
@@ -1149,6 +1262,10 @@ def run_feg_stop_order_bot(args, strategy, params, credentials,
     c2_buy_lower_wick_max_pct  = args.c2_buy_lower_wick_max_pct
     c2_sell_upper_wick_max_pct = args.c2_sell_upper_wick_max_pct
     c2_sell_lower_wick_max_pct = args.c2_sell_lower_wick_max_pct
+    c2_buy_upper_wick_cmp  = args.c2_buy_upper_wick_cmp  or "lt"
+    c2_buy_lower_wick_cmp  = args.c2_buy_lower_wick_cmp  or "lt"
+    c2_sell_upper_wick_cmp = args.c2_sell_upper_wick_cmp or "lt"
+    c2_sell_lower_wick_cmp = args.c2_sell_lower_wick_cmp or "lt"
 
     # Auto-detect symbol min lot and clamp (only for fixed mode)
     mt5_tmp, err_tmp = get_mt5_connection(credentials)
@@ -1201,10 +1318,11 @@ def run_feg_stop_order_bot(args, strategy, params, credentials,
     pending_orders = []
     active_trades  = []
     last_candle_time = None
+    _mt5_ref = [None]  # persistent MT5 connection — reconnects only when terminal disconnects
 
     try:
         while True:
-            mt5, error = get_mt5_connection(credentials)
+            mt5, error = _ensure_mt5_connected(_mt5_ref, credentials)
             if error:
                 log(f"MT5 connection failed: {error}", "ERROR")
                 send_telegram(f"MT5 Error: {error}", is_error=True)
@@ -1215,7 +1333,6 @@ def run_feg_stop_order_bot(args, strategy, params, credentials,
             if df is None or len(df) < ema_period + 2:
                 log(f"Insufficient candle data for {args.symbol} (got {len(df) if df is not None else 0})", "ERROR")
                 send_telegram(f"❌ Insufficient candle data\nSymbol: {args.symbol}", is_error=True)
-                mt5.shutdown()
                 time.sleep(args.interval)
                 continue
 
@@ -1379,10 +1496,10 @@ def run_feg_stop_order_bot(args, strategy, params, credentials,
                             verified = True
                         else:
                             actual_price = exit_price
-                            actual_pnl_usd = (
-                                (exit_price - trade["entry"]) / pv if trade["direction"] == "BUY"
-                                else (trade["entry"] - exit_price) / pv
-                            ) * pv * trade_lot * 100000
+                            actual_pnl_usd = _estimate_pnl_usd(
+                                mt5, args.symbol, trade["direction"],
+                                trade["entry"], exit_price, trade_lot, pv,
+                            )  # None when symbol info unavailable
                             verified = False
 
                         actual_pips = (
@@ -1392,7 +1509,8 @@ def run_feg_stop_order_bot(args, strategy, params, credentials,
 
                         # Step 4: Log, Telegram, record
                         price_str = f"{actual_price:.2f}"
-                        pnl_str = f"{actual_pips:.1f} pips (${actual_pnl_usd:.2f})"
+                        usd_part = f" (${actual_pnl_usd:.2f})" if actual_pnl_usd is not None else ""
+                        pnl_str = f"{actual_pips:.1f} pips{usd_part}"
                         if not verified:
                             price_str += " ~est"
                             pnl_str = "~" + pnl_str + " ⚠️"
@@ -1424,6 +1542,8 @@ def run_feg_stop_order_bot(args, strategy, params, credentials,
                         ema_filter_enabled, buy_ema_side, sell_ema_side, ema_margin_pips,
                         c2_buy_upper_wick_max_pct, c2_buy_lower_wick_max_pct,
                         c2_sell_upper_wick_max_pct, c2_sell_lower_wick_max_pct,
+                        c2_buy_upper_wick_cmp, c2_buy_lower_wick_cmp,
+                        c2_sell_upper_wick_cmp, c2_sell_lower_wick_cmp,
                     )
                     log(f"Signal scan: {signal['direction'] if signal else 'NO SIGNAL'}"
                         + (f" entry={signal['entry_price']:.2f} sl={signal['stop_loss']:.2f} tp={signal['take_profit']:.2f}" if signal else ""))
@@ -1505,10 +1625,8 @@ def run_feg_stop_order_bot(args, strategy, params, credentials,
                     _write_bot_state(os.getpid(), args.symbol, args.strategy, 0, 0)
                     _unregister_from_running_bots(os.getpid())
                     close_session(_session_id)
-                    mt5.shutdown()
                     raise _GracefulRestart()
 
-            mt5.shutdown()
             time.sleep(args.interval)
 
     except KeyboardInterrupt:
@@ -1528,6 +1646,13 @@ def run_feg_stop_order_bot(args, strategy, params, credentials,
         close_session(_session_id)
         send_telegram(f"❌ FEG SO Bot crashed\nSymbol: {args.symbol}\nError: {e}\n\n<pre>{tb[-800:]}</pre>", is_error=True)
         raise
+    finally:
+        # Shutdown MT5 once when the bot loop exits (any reason)
+        try:
+            import MetaTrader5 as _mt5_mod
+            _mt5_mod.shutdown()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

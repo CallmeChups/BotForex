@@ -34,6 +34,10 @@ def detect_feg_stop_order_signal(
     c2_buy_lower_wick_max_pct: float | None = None,
     c2_sell_upper_wick_max_pct: float | None = None,
     c2_sell_lower_wick_max_pct: float | None = None,
+    c2_buy_upper_wick_cmp: str = "lt",
+    c2_buy_lower_wick_cmp: str = "lt",
+    c2_sell_upper_wick_cmp: str = "lt",
+    c2_sell_lower_wick_cmp: str = "lt",
 ) -> str | None:
     """
     Phát hiện tín hiệu FEG Stop Order từ 2 nến đã đóng.
@@ -49,10 +53,8 @@ def detect_feg_stop_order_signal(
         buy_ema_side: "above_ema" | "below_ema" — điều kiện EMA cho BUY
         sell_ema_side: "above_ema" | "below_ema" — điều kiện EMA cho SELL
         ema_margin_pips: khoảng cách tối thiểu từ candle đến EMA
-        c2_buy_upper_wick_max_pct:  BUY — râu trên (high-close) phải < n% body C2. None = tắt.
-        c2_buy_lower_wick_max_pct:  BUY — wick dưới (open-low) < n% body C2. None = tắt.
-        c2_sell_upper_wick_max_pct: SELL — wick trên (high-open) < n% body C2. None = tắt.
-        c2_sell_lower_wick_max_pct: SELL — râu dưới (close-low)  phải < n% body C2. None = tắt.
+        c2_*_wick_max_pct: ngưỡng % body C2 cho từng râu. None = tắt.
+        c2_*_wick_cmp: hướng so sánh — "lt" (nhỏ hơn, default) | "gt" (lớn hơn).
 
     Returns:
         "BUY", "SELL", hoặc None
@@ -67,14 +69,20 @@ def detect_feg_stop_order_signal(
     bullish1, bullish2 = c1 > o1, c2 > o2
     body1, body2 = abs(c1 - o1), abs(c2 - o2)
 
+    def _wick_reject(wick_size: float, pct: float | None, cmp: str, body: float) -> bool:
+        """True = reject signal. cmp 'lt': reject khi râu >= pct% body. 'gt': reject khi râu <= pct%."""
+        if pct is None or body == 0:
+            return False
+        threshold = body * (pct / 100.0)
+        return wick_size >= threshold if cmp == "lt" else wick_size <= threshold
+
     # SELL: cả 2 nến giảm, body C2 > C1, H2>H1, C2<L1
     if not bullish1 and not bullish2 and body2 > body1:
         if h2 > h1 + h2_exceed and c2 < l1 - c2_gap:
-            if body2 > 0:
-                if c2_sell_upper_wick_max_pct is not None and (h2 - o2) >= body2 * (c2_sell_upper_wick_max_pct / 100.0):
-                    return None
-                if c2_sell_lower_wick_max_pct is not None and (c2 - l2) >= body2 * (c2_sell_lower_wick_max_pct / 100.0):
-                    return None
+            if _wick_reject(h2 - o2, c2_sell_upper_wick_max_pct, c2_sell_upper_wick_cmp, body2):
+                return None
+            if _wick_reject(c2 - l2, c2_sell_lower_wick_max_pct, c2_sell_lower_wick_cmp, body2):
+                return None
             if not ema_filter_enabled:
                 return "SELL"
             if sell_ema_side == "above_ema" and l2 > ema2 + ema_margin:
@@ -85,11 +93,10 @@ def detect_feg_stop_order_signal(
     # BUY: cả 2 nến tăng, body C2 > C1, L2<L1, C2>H1
     if bullish1 and bullish2 and body2 > body1:
         if l2 < l1 - h2_exceed and c2 > h1 + c2_gap:
-            if body2 > 0:
-                if c2_buy_upper_wick_max_pct is not None and (h2 - c2) >= body2 * (c2_buy_upper_wick_max_pct / 100.0):
-                    return None
-                if c2_buy_lower_wick_max_pct is not None and (o2 - l2) >= body2 * (c2_buy_lower_wick_max_pct / 100.0):
-                    return None
+            if _wick_reject(h2 - c2, c2_buy_upper_wick_max_pct, c2_buy_upper_wick_cmp, body2):
+                return None
+            if _wick_reject(o2 - l2, c2_buy_lower_wick_max_pct, c2_buy_lower_wick_cmp, body2):
+                return None
             if not ema_filter_enabled:
                 return "BUY"
             if buy_ema_side == "below_ema" and h2 < ema2 - ema_margin:
@@ -118,6 +125,10 @@ def analyze_feg_stop_order(
     c2_buy_lower_wick_max_pct: float | None = None,
     c2_sell_upper_wick_max_pct: float | None = None,
     c2_sell_lower_wick_max_pct: float | None = None,
+    c2_buy_upper_wick_cmp: str = "lt",
+    c2_buy_lower_wick_cmp: str = "lt",
+    c2_sell_upper_wick_cmp: str = "lt",
+    c2_sell_lower_wick_cmp: str = "lt",
 ) -> dict | None:
     """
     Dựng signal đầy đủ (entry/SL/TP) từ pattern FEG Stop Order.
@@ -134,6 +145,8 @@ def analyze_feg_stop_order(
         ema_filter_enabled, buy_ema_side, sell_ema_side, ema_margin_pips,
         c2_buy_upper_wick_max_pct, c2_buy_lower_wick_max_pct,
         c2_sell_upper_wick_max_pct, c2_sell_lower_wick_max_pct,
+        c2_buy_upper_wick_cmp, c2_buy_lower_wick_cmp,
+        c2_sell_upper_wick_cmp, c2_sell_lower_wick_cmp,
     )
     if direction is None:
         return None

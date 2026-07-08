@@ -1,19 +1,23 @@
 # BotForex - Lộ Trình Phát Triển
 
-**Cập Nhật Lần Cuối**: 2026-06-27
-**Phiên Bản**: 0.3.0
-**Trạng Thái**: Production-ready (CI/CD + Trace IDs + Full Error Coverage)
+**Cập Nhật Lần Cuối**: 2026-07-08
+**Phiên Bản**: 0.3.1
+**Trạng Thái**: Production-ready (CI/CD + Trace IDs + Full Error Coverage + Layout Redesign)
 
 ## Tóm Tắt Thực Hiện
 
 BotForex đã vượt qua giai đoạn PoC và đạt trạng thái production-ready với:
-- Dashboard Streamlit đa trang đầy đủ (auth, bots, backtest, orders, strategies)
+- Dashboard Streamlit đa trang với layout 2 cột compacted (auth, bots, backtest, orders, strategies)
+- Colored section headers (indigo/emerald/amber/red) thay st.expander zones
 - Hai chiến lược hoạt động: Master Candle và FEG EMA21 (same-type candle rule)
 - Backtest engine + lịch sử + Excel export + EMA chart overlay + run_id trace
 - Live bot runner (test mode + live mode + order IDs + auto-restart + full error coverage)
 - CI/CD pipeline (GitHub Actions + Tailscale SSH → Windows server)
 - Verification script (per-trade trace từ MT5 data)
 - 25 unit tests (pytest)
+- Vietnamese UI labels throughout
+- FEG wick formula fix (SELL h2-o2, BUY o2-l2)
+- Streamlit deprecated API fix (use_container_width → width)
 
 ---
 

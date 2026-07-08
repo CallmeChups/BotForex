@@ -100,6 +100,8 @@ def build_bot_command(
     re_entry_after_sl=False,
     c2_buy_upper_wick_max_pct=None, c2_buy_lower_wick_max_pct=None,
     c2_sell_upper_wick_max_pct=None, c2_sell_lower_wick_max_pct=None,
+    c2_buy_upper_wick_cmp="lt", c2_buy_lower_wick_cmp="lt",
+    c2_sell_upper_wick_cmp="lt", c2_sell_lower_wick_cmp="lt",
 ):
     """Build command list to run bot_runner (separated for testability)."""
     cmd = [
@@ -158,6 +160,10 @@ def build_bot_command(
         cmd.extend(["--c2_sell_upper_wick_max_pct", str(c2_sell_upper_wick_max_pct)])
     if c2_sell_lower_wick_max_pct is not None:
         cmd.extend(["--c2_sell_lower_wick_max_pct", str(c2_sell_lower_wick_max_pct)])
+    cmd.extend(["--c2_buy_upper_wick_cmp", c2_buy_upper_wick_cmp or "lt"])
+    cmd.extend(["--c2_buy_lower_wick_cmp", c2_buy_lower_wick_cmp or "lt"])
+    cmd.extend(["--c2_sell_upper_wick_cmp", c2_sell_upper_wick_cmp or "lt"])
+    cmd.extend(["--c2_sell_lower_wick_cmp", c2_sell_lower_wick_cmp or "lt"])
     return cmd
 
 
@@ -197,6 +203,10 @@ def start_bot(
     c2_buy_lower_wick_max_pct: float | None = None,
     c2_sell_upper_wick_max_pct: float | None = None,
     c2_sell_lower_wick_max_pct: float | None = None,
+    c2_buy_upper_wick_cmp: str = "lt",
+    c2_buy_lower_wick_cmp: str = "lt",
+    c2_sell_upper_wick_cmp: str = "lt",
+    c2_sell_lower_wick_cmp: str = "lt",
 ) -> tuple:
     """
     Start a new bot process
@@ -228,6 +238,8 @@ def start_bot(
         re_entry_after_sl,
         c2_buy_upper_wick_max_pct, c2_buy_lower_wick_max_pct,
         c2_sell_upper_wick_max_pct, c2_sell_lower_wick_max_pct,
+        c2_buy_upper_wick_cmp, c2_buy_lower_wick_cmp,
+        c2_sell_upper_wick_cmp, c2_sell_lower_wick_cmp,
     )
 
     try:
@@ -239,21 +251,19 @@ def start_bot(
         # Pass log path as arg so bot_runner writes via logging module (not stdout redirect)
         cmd = cmd + ["--log_file", log_path]
 
-        devnull = open(os.devnull, 'wb')
-
         # Start process
         if platform.system() == "Windows":
             process = subprocess.Popen(
                 cmd,
-                stdout=devnull,
-                stderr=devnull,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
             )
         else:
             process = subprocess.Popen(
                 cmd,
-                stdout=devnull,
-                stderr=devnull,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 start_new_session=True
             )
 
@@ -276,14 +286,32 @@ def start_bot(
             'h2_exceed_pips': h2_exceed_pips,
             'c2_gap_pips': c2_gap_pips,
             'ema_margin_pips': ema_margin_pips,
+            'entry_mode': entry_mode,
+            'entry_percent': entry_percent,
+            'tp_type': tp_type,
+            'sl_type': sl_type,
+            'buffer_k': buffer_k,
+            'lot_mode': lot_mode,
+            'risk_mode': risk_mode,
+            'risk_percent': risk_percent,
+            'risk_amount': risk_amount,
+            'entry_start_time': entry_start_time,
+            'entry_end_time': entry_end_time,
             'limit_order_candles': limit_order_candles,
             'be_enabled': be_enabled,
             'be_r': be_r,
+            'ema_filter_enabled': ema_filter_enabled,
+            'buy_ema_side': buy_ema_side,
+            'sell_ema_side': sell_ema_side,
             're_entry_after_sl': re_entry_after_sl,
             'c2_buy_upper_wick_max_pct': c2_buy_upper_wick_max_pct,
             'c2_buy_lower_wick_max_pct': c2_buy_lower_wick_max_pct,
             'c2_sell_upper_wick_max_pct': c2_sell_upper_wick_max_pct,
             'c2_sell_lower_wick_max_pct': c2_sell_lower_wick_max_pct,
+            'c2_buy_upper_wick_cmp': c2_buy_upper_wick_cmp,
+            'c2_buy_lower_wick_cmp': c2_buy_lower_wick_cmp,
+            'c2_sell_upper_wick_cmp': c2_sell_upper_wick_cmp,
+            'c2_sell_lower_wick_cmp': c2_sell_lower_wick_cmp,
             'started_at': datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M:%S'),
             'log_path': log_path,
             'command': ' '.join(cmd)
@@ -420,14 +448,32 @@ def switch_bot_mode(pid: int, live: bool) -> tuple:
         h2_exceed_pips=bot.get('h2_exceed_pips', 0.0),
         c2_gap_pips=bot.get('c2_gap_pips', 0.0),
         ema_margin_pips=bot.get('ema_margin_pips', 0.0),
+        entry_mode=bot.get('entry_mode'),
+        entry_percent=bot.get('entry_percent'),
+        tp_type=bot.get('tp_type'),
+        sl_type=bot.get('sl_type'),
+        buffer_k=bot.get('buffer_k'),
+        lot_mode=bot.get('lot_mode'),
+        risk_mode=bot.get('risk_mode'),
+        risk_percent=bot.get('risk_percent'),
+        risk_amount=bot.get('risk_amount'),
+        entry_start_time=bot.get('entry_start_time', '00:00'),
+        entry_end_time=bot.get('entry_end_time', '23:59'),
         limit_order_candles=bot.get('limit_order_candles', 1),
         be_enabled=bot.get('be_enabled', False),
         be_r=bot.get('be_r', 1.0),
+        ema_filter_enabled=bot.get('ema_filter_enabled', True),
+        buy_ema_side=bot.get('buy_ema_side', 'below_ema'),
+        sell_ema_side=bot.get('sell_ema_side', 'above_ema'),
         re_entry_after_sl=bot.get('re_entry_after_sl', False),
-        c2_buy_upper_wick_max_pct=bot.get('c2_buy_upper_wick_max_pct', None),
-        c2_buy_lower_wick_max_pct=bot.get('c2_buy_lower_wick_max_pct', None),
-        c2_sell_upper_wick_max_pct=bot.get('c2_sell_upper_wick_max_pct', None),
-        c2_sell_lower_wick_max_pct=bot.get('c2_sell_lower_wick_max_pct', None),
+        c2_buy_upper_wick_max_pct=bot.get('c2_buy_upper_wick_max_pct'),
+        c2_buy_lower_wick_max_pct=bot.get('c2_buy_lower_wick_max_pct'),
+        c2_sell_upper_wick_max_pct=bot.get('c2_sell_upper_wick_max_pct'),
+        c2_sell_lower_wick_max_pct=bot.get('c2_sell_lower_wick_max_pct'),
+        c2_buy_upper_wick_cmp=bot.get('c2_buy_upper_wick_cmp', 'lt'),
+        c2_buy_lower_wick_cmp=bot.get('c2_buy_lower_wick_cmp', 'lt'),
+        c2_sell_upper_wick_cmp=bot.get('c2_sell_upper_wick_cmp', 'lt'),
+        c2_sell_lower_wick_cmp=bot.get('c2_sell_lower_wick_cmp', 'lt'),
     )
 
 
@@ -526,14 +572,32 @@ def restart_bot(pid: int) -> tuple:
         h2_exceed_pips=bot.get('h2_exceed_pips', 0.0),
         c2_gap_pips=bot.get('c2_gap_pips', 0.0),
         ema_margin_pips=bot.get('ema_margin_pips', 0.0),
+        entry_mode=bot.get('entry_mode'),
+        entry_percent=bot.get('entry_percent'),
+        tp_type=bot.get('tp_type'),
+        sl_type=bot.get('sl_type'),
+        buffer_k=bot.get('buffer_k'),
+        lot_mode=bot.get('lot_mode'),
+        risk_mode=bot.get('risk_mode'),
+        risk_percent=bot.get('risk_percent'),
+        risk_amount=bot.get('risk_amount'),
+        entry_start_time=bot.get('entry_start_time', '00:00'),
+        entry_end_time=bot.get('entry_end_time', '23:59'),
         limit_order_candles=bot.get('limit_order_candles', 1),
         be_enabled=bot.get('be_enabled', False),
         be_r=bot.get('be_r', 1.0),
+        ema_filter_enabled=bot.get('ema_filter_enabled', True),
+        buy_ema_side=bot.get('buy_ema_side', 'below_ema'),
+        sell_ema_side=bot.get('sell_ema_side', 'above_ema'),
         re_entry_after_sl=bot.get('re_entry_after_sl', False),
-        c2_buy_upper_wick_max_pct=bot.get('c2_buy_upper_wick_max_pct', None),
-        c2_buy_lower_wick_max_pct=bot.get('c2_buy_lower_wick_max_pct', None),
-        c2_sell_upper_wick_max_pct=bot.get('c2_sell_upper_wick_max_pct', None),
-        c2_sell_lower_wick_max_pct=bot.get('c2_sell_lower_wick_max_pct', None),
+        c2_buy_upper_wick_max_pct=bot.get('c2_buy_upper_wick_max_pct'),
+        c2_buy_lower_wick_max_pct=bot.get('c2_buy_lower_wick_max_pct'),
+        c2_sell_upper_wick_max_pct=bot.get('c2_sell_upper_wick_max_pct'),
+        c2_sell_lower_wick_max_pct=bot.get('c2_sell_lower_wick_max_pct'),
+        c2_buy_upper_wick_cmp=bot.get('c2_buy_upper_wick_cmp', 'lt'),
+        c2_buy_lower_wick_cmp=bot.get('c2_buy_lower_wick_cmp', 'lt'),
+        c2_sell_upper_wick_cmp=bot.get('c2_sell_upper_wick_cmp', 'lt'),
+        c2_sell_lower_wick_cmp=bot.get('c2_sell_lower_wick_cmp', 'lt'),
     )
 
 

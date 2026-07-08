@@ -1,17 +1,19 @@
 # BotForex - MT5 Forex Bot
 
-**Phiên Bản**: 0.3.0 | **Trạng Thái**: Production-ready
+**Phiên Bản**: 0.3.1 | **Trạng Thái**: Production-ready
 
-Bot trading forex tự động sử dụng Python và MetaTrader 5. Dashboard Streamlit để quản lý bot, chạy backtest và theo dõi lệnh. Deploy tự động qua GitHub Actions + Tailscale SSH.
+Bot trading forex tự động sử dụng Python và MetaTrader 5. Dashboard Streamlit với layout 2 cột compacted để quản lý bot, chạy backtest và theo dõi lệnh. Deploy tự động qua GitHub Actions + Tailscale SSH.
 
 ## Tính Năng
 
 - **Hai chiến lược**: Master Candle (vào lệnh 21:05 HCM) + FEG EMA21 (pattern 2 nến cùng hướng + EMA21 filter)
+- **Layout 2 cột compacted**: Streamlit form zones (General/Entry/Order Settings & Risk/Exit) với colored headers, FEG Margins + Wick Filter split
 - **Backtest engine**: EMA indicator overlay, trace ID (BT-...) copyable, per-trade debug fields
 - **Live bot**: order trace ID (ORD-...), auto-restart sau crash, mọi lỗi gửi Telegram
 - **CI/CD**: GitHub Actions → Tailscale SSH → Windows server, auto restart Streamlit
 - **Telegram**: kênh main (trade alerts) + kênh error (mọi lỗi server)
 - **Test suite**: 25 pytest tests
+- **Vietnamese labels**: Full translated UI with approved translation table
 
 ## Cài Đặt
 

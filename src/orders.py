@@ -446,7 +446,8 @@ def place_limit_order(
             "magic": magic,
             "comment": comment,
             "type_time": mt5_module.ORDER_TIME_GTC,
-            "type_filling": mt5_module.ORDER_FILLING_IOC,
+            # RETURN is the correct fill policy for pending orders; IOC can cause broker rejection
+            "type_filling": mt5_module.ORDER_FILLING_RETURN,
         }
 
         if sl is not None and sl > 0:
@@ -525,7 +526,8 @@ def place_stop_order(
             "magic": magic,
             "comment": comment,
             "type_time": mt5_module.ORDER_TIME_GTC,
-            "type_filling": mt5_module.ORDER_FILLING_IOC,
+            # RETURN is the correct fill policy for pending orders; IOC can cause broker rejection
+            "type_filling": mt5_module.ORDER_FILLING_RETURN,
         }
 
         if sl is not None and sl > 0:

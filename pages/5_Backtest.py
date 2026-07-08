@@ -99,6 +99,10 @@ def _migrate_config(cfg: dict) -> dict:
     cfg.setdefault('c2_buy_lower_wick_max_pct', None)
     cfg.setdefault('c2_sell_upper_wick_max_pct', None)
     cfg.setdefault('c2_sell_lower_wick_max_pct', None)
+    cfg.setdefault('c2_buy_upper_wick_cmp', 'lt')
+    cfg.setdefault('c2_buy_lower_wick_cmp', 'lt')
+    cfg.setdefault('c2_sell_upper_wick_cmp', 'lt')
+    cfg.setdefault('c2_sell_lower_wick_cmp', 'lt')
     return cfg
 
 
@@ -114,7 +118,7 @@ def _section_header(icon: str, title: str, color: str) -> None:
 
 def _vdivider() -> None:
     st.markdown(
-        '<div style="border-left:1px solid #e2e8f0;min-height:400px;margin:0 auto;"></div>',
+        '<div style="border-left:1px solid #e2e8f0;min-height:600px;margin:0 auto;"></div>',
         unsafe_allow_html=True,
     )
 
@@ -196,171 +200,176 @@ def main():
     with left:
         # ── ZONE 1: GENERAL ──────────────────────────────────────────────
         _section_header("⚙", "GENERAL", "#6366f1")
-        gc1, gc2, gc3, gc4, gc5, gc6 = st.columns([2, 2, 1, 1, 1, 1])
         strategy_symbols = params.get('symbols', [])
         strategy_timeframe = params.get('timeframe', 'M5')
-        with gc1:
+        timeframe_options = ["M1", "M5", "M15", "M30", "H1", "H4", "D1"]
+        # Row 1: checkboxes / toggles
+        gr1c1, gr1c2, gr1c3, gr1c4, gr1c5, gr1c6 = st.columns([2, 2, 2, 2, 1, 2])
+        with gr1c1:
             use_custom_symbol = st.checkbox("Tùy chọn symbol", value=False)
-            if use_custom_symbol:
-                symbol = st.text_input("Symbol", value=os.getenv("SYMBOL", "XAUUSD"))
-            elif strategy_symbols:
-                symbol = st.selectbox("Symbol", options=strategy_symbols)
-            else:
-                symbol = st.text_input("Symbol", value=os.getenv("SYMBOL", "XAUUSD"))
-        with gc2:
-            timeframe_options = ["M1", "M5", "M15", "M30", "H1", "H4", "D1"]
-            use_custom_timeframe = st.checkbox("Tùy chọn khung thời gian", value=False)
-            if use_custom_timeframe:
-                timeframe = st.selectbox("Timeframe", options=timeframe_options,
-                                         index=timeframe_options.index(strategy_timeframe)
-                                         if strategy_timeframe in timeframe_options else 0)
-            else:
-                timeframe = strategy_timeframe
-                st.selectbox("Timeframe", options=[strategy_timeframe], disabled=True)
-        with gc3:
+        with gr1c2:
+            use_custom_timeframe = st.checkbox("Tùy chọn timeframe", value=False)
+        with gr1c3:
             start_date = st.date_input("Ngày bắt đầu", value=default_start, max_value=default_end)
-        with gc4:
+        with gr1c4:
             end_date = st.date_input("Ngày kết thúc", value=default_end, max_value=default_end)
-        with gc5:
+        with gr1c5:
             rr_ratio = st.number_input("RR Ratio",
                                        value=float(_pf('rr_ratio', params.get('rr_ratio', 2.0))),
                                        min_value=0.1, max_value=20.0, step=0.1, format="%.1f")
-        with gc6:
+        with gr1c6:
             _use_mc = st.checkbox("Giới hạn số nến", value=True)
-            if _use_mc:
-                max_candles = st.number_input("Max Candles",
-                                              value=int(_pf('max_candles', params.get('max_candles', 7))),
-                                              min_value=1, max_value=500)
+        # Row 2: inputs that depend on row-1 toggles
+        gr2c1, gr2c2, gr2c3, gr2c4 = st.columns([2, 2, 1, 2])
+        with gr2c1:
+            if use_custom_symbol:
+                symbol = st.text_input("Symbol", value=os.getenv("SYMBOL", "XAUUSD"), label_visibility="collapsed")
+            elif strategy_symbols:
+                symbol = st.selectbox("Symbol", options=strategy_symbols, label_visibility="collapsed")
             else:
+                symbol = st.text_input("Symbol", value=os.getenv("SYMBOL", "XAUUSD"), label_visibility="collapsed")
+        with gr2c2:
+            if use_custom_timeframe:
+                timeframe = st.selectbox("Timeframe", options=timeframe_options,
+                                         index=timeframe_options.index(strategy_timeframe)
+                                         if strategy_timeframe in timeframe_options else 0,
+                                         label_visibility="collapsed")
+            else:
+                timeframe = strategy_timeframe
+                st.selectbox("Timeframe", options=[strategy_timeframe], disabled=True, label_visibility="collapsed")
+        with gr2c3:
+            st.empty()
+        with gr2c4:
+            max_candles = st.number_input("Max Candles", label_visibility="collapsed",
+                                          value=int(_pf('max_candles', params.get('max_candles', 7))),
+                                          min_value=1, max_value=500,
+                                          disabled=not _use_mc)
+            if not _use_mc:
                 max_candles = 0
 
         # ── ZONE 2: ENTRY ─────────────────────────────────────────────────
         if is_pattern:
             _section_header("📈", "ENTRY", "#10b981")
-            e_left, e_right = st.columns(2)
-            with e_left:
-                # Sub-section: FEG Margins
-                st.caption("**FEG Margins**")
-                em1, em2, em3, em4 = st.columns(4)
-                with em1:
-                    ema_period = st.number_input("EMA Period",
-                                                 value=int(_pf('ema_period', params.get('ema_period', 21))),
-                                                 min_value=2, max_value=200)
-                with em2:
-                    h2_exceed_pips = st.number_input("H2 vượt H1 (pips)",
-                                                     value=float(_pf('h2_exceed_pips', params.get('h2_exceed_pips', 0.0))),
-                                                     min_value=0.0, step=1.0,
-                                                     help="SELL: H2 phải vượt H1 thêm N pips | BUY: L2 phải thấp hơn L1 thêm N pips")
-                    st.caption(_pip_caption(h2_exceed_pips, symbol))
-                with em3:
-                    c2_gap_pips = st.number_input("C2 vượt L1/H1 + N pips",
-                                                  value=float(_pf('c2_gap_pips', params.get('c2_gap_pips', 0.0))),
+            _ema_side_opts = ["above_ema", "below_ema"]
+            # Row 1: FEG Margins + EMA Direction (7 cols)
+            er1, er2, er3, er4, er5 = st.columns(5)
+            with er1:
+                ema_period = st.number_input("EMA Period",
+                                             value=int(_pf('ema_period', params.get('ema_period', 21))),
+                                             min_value=2, max_value=200)
+            with er2:
+                h2_exceed_pips = st.number_input("H2 vượt H1 (pips)",
+                                                 value=float(_pf('h2_exceed_pips', params.get('h2_exceed_pips', 0.0))),
+                                                 min_value=0.0, step=1.0,
+                                                 help="SELL: H2 phải vượt H1 thêm N pips | BUY: L2 phải thấp hơn L1 thêm N pips")
+                st.caption(_pip_caption(h2_exceed_pips, symbol))
+            with er3:
+                c2_gap_pips = st.number_input("C2 vượt L1/H1 (pips)",
+                                              value=float(_pf('c2_gap_pips', params.get('c2_gap_pips', 0.0))),
+                                              min_value=0.0, step=1.0,
+                                              help="SELL: C2 phải đóng thấp hơn L1 thêm N pips | BUY: C2 phải đóng cao hơn H1 thêm N pips")
+                st.caption(_pip_caption(c2_gap_pips, symbol))
+            with er4:
+                ema_margin_pips = st.number_input("L2/H2 cách EMA (pips)",
+                                                  value=float(_pf('ema_margin_pips', params.get('ema_margin_pips', 0.0))),
                                                   min_value=0.0, step=1.0,
-                                                  help="SELL: C2 phải đóng thấp hơn L1 thêm N pips | BUY: C2 phải đóng cao hơn H1 thêm N pips")
-                    st.caption(_pip_caption(c2_gap_pips, symbol))
-                with em4:
-                    ema_margin_pips = st.number_input("L2/H2 cách EMA + N pips",
-                                                      value=float(_pf('ema_margin_pips', params.get('ema_margin_pips', 0.0))),
-                                                      min_value=0.0, step=1.0,
-                                                      help="SELL: L2 phải cách EMA ≥ N pips | BUY: H2 phải cách EMA ≥ N pips")
-                    st.caption(_pip_caption(ema_margin_pips, symbol))
-                st.divider()
-                # Sub-section: Wick Filter
-                st.caption("**Wick Filter — để trống = tắt**")
-                new_wc1, new_wc2 = st.columns(2)
-                with new_wc1:
-                    _nwk_bu_raw = _pf('c2_buy_upper_wick_max_pct', None)
-                    _nwk_bu_str = st.text_input("BUY — Râu trên tối đa % body",
-                                                 value="" if _nwk_bu_raw is None else str(_nwk_bu_raw),
-                                                 placeholder="VD: 30  (để trống = tắt)",
-                                                 help="BUY: (high-close) < body × n%.",
-                                                 key="new_bt_c2_buy_upper_wick")
-                    c2_buy_upper_wick_max_pct = _parse_wick(_nwk_bu_str)
-                with new_wc2:
-                    _nwk_bl_raw = _pf('c2_buy_lower_wick_max_pct', None)
-                    _nwk_bl_str = st.text_input("BUY — Râu dưới tối đa % body",
-                                                 value="" if _nwk_bl_raw is None else str(_nwk_bl_raw),
-                                                 placeholder="VD: 30  (để trống = tắt)",
-                                                 help="BUY: (close-low) < body × n%.",
-                                                 key="new_bt_c2_buy_lower_wick")
-                    c2_buy_lower_wick_max_pct = _parse_wick(_nwk_bl_str)
-                new_wc3, new_wc4 = st.columns(2)
-                with new_wc3:
-                    _nwk_su_raw = _pf('c2_sell_upper_wick_max_pct', None)
-                    _nwk_su_str = st.text_input("SELL — Râu trên tối đa % body",
-                                                 value="" if _nwk_su_raw is None else str(_nwk_su_raw),
-                                                 placeholder="VD: 30  (để trống = tắt)",
-                                                 help="SELL: (high-close) < body × n%.",
-                                                 key="new_bt_c2_sell_upper_wick")
-                    c2_sell_upper_wick_max_pct = _parse_wick(_nwk_su_str)
-                with new_wc4:
-                    _nwk_sl_raw = _pf('c2_sell_lower_wick_max_pct', None)
-                    _nwk_sl_str = st.text_input("SELL — Râu dưới tối đa % body",
-                                                 value="" if _nwk_sl_raw is None else str(_nwk_sl_raw),
-                                                 placeholder="VD: 30  (để trống = tắt)",
-                                                 help="SELL: (close-low) < body × n%.",
-                                                 key="new_bt_c2_sell_lower_wick")
-                    c2_sell_lower_wick_max_pct = _parse_wick(_nwk_sl_str)
-
-            with e_right:
-                # Sub-section: EMA Direction
-                st.caption("**EMA Direction**")
-                ed1, ed2, ed3 = st.columns(3)
-                with ed1:
-                    ema_filter_enabled = st.checkbox("Bộ lọc EMA",
-                                                     value=bool(_pf('ema_filter_enabled', params.get('ema_filter_enabled', True))),
-                                                     help="Bật/tắt điều kiện EMA cho tín hiệu entry")
-                with ed2:
-                    _ema_side_opts = ["above_ema", "below_ema"]
-                    buy_ema_side = st.selectbox("BUY EMA side", options=_ema_side_opts,
-                                                index=_ema_side_opts.index(_pf('buy_ema_side', params.get('buy_ema_side', 'below_ema'))),
-                                                format_func=lambda x: "H2 > EMA (above)" if x == "above_ema" else "H2 < EMA (below)",
-                                                disabled=not ema_filter_enabled)
-                with ed3:
-                    sell_ema_side = st.selectbox("SELL EMA side", options=_ema_side_opts,
-                                                 index=_ema_side_opts.index(_pf('sell_ema_side', params.get('sell_ema_side', 'above_ema'))),
-                                                 format_func=lambda x: "L2 > EMA (above)" if x == "above_ema" else "L2 < EMA (below)",
-                                                 disabled=not ema_filter_enabled)
-                st.divider()
-                # Sub-section: Time Window
-                st.caption("**Khung giờ & Kiểu vào lệnh**")
-                tw1, tw2 = st.columns(2)
-                with tw1:
-                    _pf_start3 = _pf('entry_start_time', '00:00')
-                    entry_start_time = st.time_input("Giờ mở cửa sổ (HCM)",
-                                                     value=datetime.strptime(_pf_start3, "%H:%M").time() if isinstance(_pf_start3, str) else _pf_start3,
-                                                     help="Gate entries from this time. 00:00 = no filter.")
-                with tw2:
-                    _pf_end3 = _pf('entry_end_time', '23:59')
-                    entry_end_time = st.time_input("Giờ đóng cửa sổ (HCM)",
-                                                   value=datetime.strptime(_pf_end3, "%H:%M").time() if isinstance(_pf_end3, str) else _pf_end3,
-                                                   help="Gate entries until this time. 23:59 = no filter.")
-                entry_time = datetime.strptime("00:00", "%H:%M").time()  # pattern strategies use entry_start_time/entry_end_time window; entry_time unused
-                # Sub-section: Entry Mode
-                st.caption("**Entry Mode**")
+                                                  help="SELL: L2 phải cách EMA ≥ N pips | BUY: H2 phải cách EMA ≥ N pips")
+                st.caption(_pip_caption(ema_margin_pips, symbol))
+            with er5:
+                ema_filter_enabled = st.checkbox("Bộ lọc EMA",
+                                                 value=bool(_pf('ema_filter_enabled', params.get('ema_filter_enabled', True))))
+                buy_ema_side = st.selectbox("BUY EMA side", options=_ema_side_opts,
+                                            index=_ema_side_opts.index(_pf('buy_ema_side', params.get('buy_ema_side', 'below_ema'))),
+                                            format_func=lambda x: "H2 > EMA" if x == "above_ema" else "H2 < EMA",
+                                            disabled=not ema_filter_enabled)
+                sell_ema_side = st.selectbox("SELL EMA side", options=_ema_side_opts,
+                                             index=_ema_side_opts.index(_pf('sell_ema_side', params.get('sell_ema_side', 'above_ema'))),
+                                             format_func=lambda x: "L2 > EMA" if x == "above_ema" else "L2 < EMA",
+                                             disabled=not ema_filter_enabled)
+            # Row 2: Time window + Entry mode (4 cols)
+            entry_time = datetime.strptime("00:00", "%H:%M").time()
+            st.write("")
+            er2_1, er2_2, er2_3, er2_4 = st.columns(4)
+            with er2_1:
+                _pf_start3 = _pf('entry_start_time', '00:00')
+                entry_start_time = st.time_input("Giờ mở cửa sổ (HCM)",
+                                                 value=datetime.strptime(_pf_start3, "%H:%M").time() if isinstance(_pf_start3, str) else _pf_start3,
+                                                 help="Gate entries from this time. 00:00 = no filter.")
+            with er2_2:
+                _pf_end3 = _pf('entry_end_time', '23:59')
+                entry_end_time = st.time_input("Giờ đóng cửa sổ (HCM)",
+                                               value=datetime.strptime(_pf_end3, "%H:%M").time() if isinstance(_pf_end3, str) else _pf_end3,
+                                               help="Gate entries until this time. 23:59 = no filter.")
+            with er2_3:
                 if not is_feg_stop_order:
-                    enm1, enm2 = st.columns(2)
-                    with enm1:
-                        _em_opts = ["close", "range_percent"]
-                        entry_mode = st.radio("Entry Mode", options=_em_opts,
-                                              index=_em_opts.index(_pf('entry_mode', params.get('entry_mode', 'close'))),
-                                              format_func=lambda x: "Market (close)" if x == "close" else "Limit (body%)",
-                                              horizontal=True)
-                    with enm2:
-                        if entry_mode == "range_percent":
-                            entry_percent = st.number_input("Entry %",
-                                                            value=float(_pf('entry_percent', params.get('entry_percent', 10.0))),
-                                                            min_value=0.0, max_value=100.0, step=1.0, format="%.0f")
-                        else:
-                            entry_percent = 0.0
-                    limit_order_candles = 1
+                    _em_opts = ["close", "range_percent"]
+                    entry_mode = st.radio("Entry Mode", options=_em_opts,
+                                          index=_em_opts.index(_pf('entry_mode', params.get('entry_mode', 'close'))),
+                                          format_func=lambda x: "Market (close)" if x == "close" else "Limit (body%)",
+                                          horizontal=False)
                 else:
                     entry_mode = "close"
+                    st.caption("Entry Mode: Market (Stop Order)")
+            with er2_4:
+                if not is_feg_stop_order:
+                    if entry_mode == "range_percent":
+                        entry_percent = st.number_input("Entry %",
+                                                        value=float(_pf('entry_percent', params.get('entry_percent', 10.0))),
+                                                        min_value=0.0, max_value=100.0, step=1.0, format="%.0f")
+                    else:
+                        entry_percent = 0.0
+                    limit_order_candles = 1
+                else:
                     entry_percent = 0.0
                     limit_order_candles = st.number_input("Limit Order Candles",
                                                           value=int(_pf('limit_order_candles', 1)),
                                                           min_value=1, max_value=50,
                                                           help="Số nến tối đa để chờ stop order fill")
+            # Full-width Wick Filter (outside e_left/e_right to avoid narrow columns)
+            st.divider()
+            st.caption("**Wick Filter** — để trống = tắt  |  < râu nhỏ hơn body × n%  |  > râu lớn hơn body × n%")
+            _BT_CMP = ["< nhỏ hơn", "> lớn hơn"]
+            _bt_c1, _bt_c2, _bt_c3, _bt_c4 = st.columns(4)
+            with _bt_c1:
+                _bt_bu_cmp_sel = st.radio("BUY — Râu trên", _BT_CMP,
+                                          index=0 if _pf('c2_buy_upper_wick_cmp', 'lt') == 'lt' else 1,
+                                          horizontal=True, key="bt_c2_buy_upper_wick_cmp_sel")
+                c2_buy_upper_wick_cmp = "lt" if _bt_bu_cmp_sel == "< nhỏ hơn" else "gt"
+                _nwk_bu_raw = _pf('c2_buy_upper_wick_max_pct', None)
+                c2_buy_upper_wick_max_pct = _parse_wick(st.text_input(
+                    "% body", value="" if _nwk_bu_raw is None else str(_nwk_bu_raw),
+                    placeholder="VD: 30", help="BUY: (high−close) so với body × n%.",
+                    key="bt_c2_buy_upper_wick_max_pct"))
+            with _bt_c2:
+                _bt_bl_cmp_sel = st.radio("BUY — Râu dưới", _BT_CMP,
+                                          index=0 if _pf('c2_buy_lower_wick_cmp', 'lt') == 'lt' else 1,
+                                          horizontal=True, key="bt_c2_buy_lower_wick_cmp_sel")
+                c2_buy_lower_wick_cmp = "lt" if _bt_bl_cmp_sel == "< nhỏ hơn" else "gt"
+                _nwk_bl_raw = _pf('c2_buy_lower_wick_max_pct', None)
+                c2_buy_lower_wick_max_pct = _parse_wick(st.text_input(
+                    "% body", value="" if _nwk_bl_raw is None else str(_nwk_bl_raw),
+                    placeholder="VD: 30", help="BUY: (open−low) so với body × n%.",
+                    key="bt_c2_buy_lower_wick_max_pct"))
+            with _bt_c3:
+                _bt_su_cmp_sel = st.radio("SELL — Râu trên", _BT_CMP,
+                                          index=0 if _pf('c2_sell_upper_wick_cmp', 'lt') == 'lt' else 1,
+                                          horizontal=True, key="bt_c2_sell_upper_wick_cmp_sel")
+                c2_sell_upper_wick_cmp = "lt" if _bt_su_cmp_sel == "< nhỏ hơn" else "gt"
+                _nwk_su_raw = _pf('c2_sell_upper_wick_max_pct', None)
+                c2_sell_upper_wick_max_pct = _parse_wick(st.text_input(
+                    "% body", value="" if _nwk_su_raw is None else str(_nwk_su_raw),
+                    placeholder="VD: 30", help="SELL: (high−open) so với body × n%.",
+                    key="bt_c2_sell_upper_wick_max_pct"))
+            with _bt_c4:
+                _bt_sl_cmp_sel = st.radio("SELL — Râu dưới", _BT_CMP,
+                                          index=0 if _pf('c2_sell_lower_wick_cmp', 'lt') == 'lt' else 1,
+                                          horizontal=True, key="bt_c2_sell_lower_wick_cmp_sel")
+                c2_sell_lower_wick_cmp = "lt" if _bt_sl_cmp_sel == "< nhỏ hơn" else "gt"
+                _nwk_sl_raw = _pf('c2_sell_lower_wick_max_pct', None)
+                c2_sell_lower_wick_max_pct = _parse_wick(st.text_input(
+                    "% body", value="" if _nwk_sl_raw is None else str(_nwk_sl_raw),
+                    placeholder="VD: 30", help="SELL: (close−low) so với body × n%.",
+                    key="bt_c2_sell_lower_wick_max_pct"))
         else:
             # Master Candle — no Entry zone
             ema_period = int(params.get('ema_period', 21))
@@ -371,6 +380,10 @@ def main():
             c2_buy_lower_wick_max_pct = None
             c2_sell_upper_wick_max_pct = None
             c2_sell_lower_wick_max_pct = None
+            c2_buy_upper_wick_cmp = "lt"
+            c2_buy_lower_wick_cmp = "lt"
+            c2_sell_upper_wick_cmp = "lt"
+            c2_sell_lower_wick_cmp = "lt"
             ema_filter_enabled = True
             buy_ema_side = "below_ema"
             sell_ema_side = "above_ema"
@@ -545,6 +558,10 @@ def main():
                     c2_buy_lower_wick_max_pct=c2_buy_lower_wick_max_pct,
                     c2_sell_upper_wick_max_pct=c2_sell_upper_wick_max_pct,
                     c2_sell_lower_wick_max_pct=c2_sell_lower_wick_max_pct,
+                    c2_buy_upper_wick_cmp=c2_buy_upper_wick_cmp,
+                    c2_buy_lower_wick_cmp=c2_buy_lower_wick_cmp,
+                    c2_sell_upper_wick_cmp=c2_sell_upper_wick_cmp,
+                    c2_sell_lower_wick_cmp=c2_sell_lower_wick_cmp,
                 )
 
             # Build config dict for export/history
@@ -576,6 +593,10 @@ def main():
                 'c2_buy_lower_wick_max_pct': c2_buy_lower_wick_max_pct,
                 'c2_sell_upper_wick_max_pct': c2_sell_upper_wick_max_pct,
                 'c2_sell_lower_wick_max_pct': c2_sell_lower_wick_max_pct,
+                'c2_buy_upper_wick_cmp': c2_buy_upper_wick_cmp,
+                'c2_buy_lower_wick_cmp': c2_buy_lower_wick_cmp,
+                'c2_sell_upper_wick_cmp': c2_sell_upper_wick_cmp,
+                'c2_sell_lower_wick_cmp': c2_sell_lower_wick_cmp,
             }
 
             if lot_mode == 'fixed':

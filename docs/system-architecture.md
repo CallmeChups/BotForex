@@ -1,17 +1,17 @@
 # BotForex - Kiến Trúc Hệ Thống
 
-**Cập Nhật Lần Cuối**: 2026-06-27
-**Phiên Bản**: 0.3.0
+**Cập Nhật Lần Cuối**: 2026-07-08
+**Phiên Bản**: 0.3.1
 
 ## Tổng Quan
 
-BotForex là ứng dụng giao dịch tự động đa chiến lược trên MT5, gồm hai thành phần chính:
+BotForex là ứng dụng giao dịch tự động đa chiến lược trên MT5, gồm ba thành phần chính:
 
-1. **Dashboard (Streamlit)** — UI đa trang cho quản lý bot, backtest, cài đặt.
+1. **Dashboard (Streamlit)** — UI đa trang với layout 2 cột compacted, colored section headers cho quản lý bot, backtest, cài đặt.
 2. **Bot Runner (subprocess)** — Live trading loop chạy tách biệt với MT5.
 3. **CI/CD Pipeline** — GitHub Actions + Tailscale SSH tự động deploy lên Windows server.
 
-Hai thành phần giao tiếp qua: `data/running_bots.json` (state), file log, và Telegram.
+Các thành phần giao tiếp qua: `data/running_bots.json` (state), file log, và Telegram.
 
 ## Kiến Trúc Tổng Quát
 
@@ -27,12 +27,15 @@ Hai thành phần giao tiếp qua: `data/running_bots.json` (state), file log, v
 │              Windows Server (home, Tailscale IP)            │
 │                                                             │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │               Streamlit Dashboard                    │   │
+│  │         Streamlit Dashboard (2-col layout)           │   │
 │  │  app.py (auth) → pages/ (Bots, Backtest, …)         │   │
+│  │  Layout: [left 58% | divider 2% | right 40%]        │   │
+│  │  Headers: _section_header() + colors (indigo/...)    │   │
 │  │                                                      │   │
 │  │  ┌────────────┐  ┌──────────────┐  ┌─────────────┐  │   │
 │  │  │ 1_Bots.py  │  │ 5_Backtest  │  │4_Strategies │  │   │
 │  │  │ Start/Stop │  │ Run + Chart  │  │ Read-only   │  │   │
+│  │  │ (2-col)    │  │ (2-col)      │  │  (2-col)    │  │   │
 │  │  └─────┬──────┘  └──────┬──────┘  └─────────────┘  │   │
 │  └────────┼────────────────┼──────────────────────────┘   │
 │           │ subprocess     │ MT5 historical data            │
@@ -139,6 +142,10 @@ Shared helpers:
 
 Data fetched via `fetch_historical_data(symbol, start, end, credentials, timeframe)` từ MT5.
 
+**Wick formula fix (v0.3.1)**:
+- SELL: Use true upper wick = `(h2 - o2)` for bearish candle
+- BUY: Use true lower wick = `(o2 - l2)` for bullish candle
+
 ### 5. FEG Signal Layer (`src/feg_strategy.py`)
 
 ```
@@ -148,10 +155,13 @@ detect_feg_signal(candle1, candle2, ema2, pip_value, ema_distance_enabled, ema_d
     bullish2 = c2 > o2
 
     # Same-type rule (v0.3.0): cả 2 nến phải cùng hướng
+    # Wick formula fix (v0.3.1): true wick not close-based
     SELL (not bullish1 and not bullish2):
         H2>H1, C2<L1, L2 > ema2 + dist
+        wick = h2 - o2  # true upper wick for bearish
     BUY (bullish1 and bullish2):
         L2<L1, C2>H1, H2 < ema2 - dist
+        wick = o2 - l2  # true lower wick for bullish
 
     → "SELL" | "BUY" | None
 
@@ -282,9 +292,11 @@ create_excel_export(config, results, trades_df)
     → BytesIO (Sheet1: Config+Summary, Sheet2: Trades)
 ```
 
-### 12. Backtest UI (`pages/5_Backtest.py`)
+### 12. Backtest UI (`pages/5_Backtest.py` - v0.3.1)
 
 ```
+2-column layout with _section_header() and _vdivider()
+
 display_results(stats, ohlc_data, params):
     st.code(stats["run_id"])           # copyable Trace ID
     show_interactive_chart(ohlc_data):
@@ -293,6 +305,12 @@ display_results(stats, ohlc_data, params):
         with st.expander("Indicators"):
             checkbox per EMA → go.Scatter overlay (EMA21 = #FF6B00)
     show trade table + equity curve
+
+Layout: left (58%) | divider (2%) | right (40%)
+- Left: General params, entry controls
+- Right: Chart, results summary
+- All `st.button()` use width='stretch'
+- All `st.dataframe()` use width='content'
 ```
 
 ### 13. Verification Script (`scripts/verify_backtest.py`)

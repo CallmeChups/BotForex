@@ -1,7 +1,7 @@
 # MT5 Forex Trading Bot - Tiêu Chuẩn Code & Cấu Trúc Codebase
 
-**Cập Nhật Lần Cuối**: 2026-01-17
-**Phiên Bản**: 0.1.0
+**Cập Nhật Lần Cuối**: 2026-07-08
+**Phiên Bản**: 0.3.1
 **Áp Dụng Cho**: Tất cả Python code trong project
 
 ## Cấu Trúc Thư Mục
@@ -205,12 +205,92 @@ class TelegramNotificationError(Exception):
     pass
 ```
 
+## Streamlit Widget Standards (v0.3.1)
+
+### Width Parameter (Replaces Deprecated `use_container_width`)
+
+**Deprecated (old code)**:
+```python
+st.button("Click", use_container_width=True)
+st.dataframe(df, use_container_width=False)
+```
+
+**New standard (v0.3.1+)**:
+```python
+st.button("Click", width='stretch')  # Full width
+st.dataframe(df, width='content')    # Content-based width
+```
+
+Apply to:
+- `st.button()`, `st.form_submit_button()`
+- `st.dataframe()`
+- `plotly.streamlit.plotly_chart()`
+- Any widget accepting width parameter
+
+### Layout Helpers (v0.3.1)
+
+**`_section_header(title, color)` — Colored section divider**:
+```python
+def _section_header(title, color):
+    """Render HTML colored section header."""
+    colors = {
+        "indigo": "#4F46E5",
+        "emerald": "#10B981", 
+        "amber": "#F59E0B",
+        "red": "#EF4444"
+    }
+    st.html(f'<h3 style="color: {colors[color]}; border-bottom: 2px solid {colors[color]}; padding-bottom: 8px">{title}</h3>')
+
+# Usage
+_section_header("General Settings", "indigo")
+```
+
+**`_vdivider()` — Vertical CSS divider**:
+```python
+def _vdivider():
+    """Render vertical divider for column split."""
+    st.html('<div style="width: 100%; height: 100%; border-left: 2px solid #ccc"></div>')
+
+# Usage in 2-column layout
+left, div_col, right = st.columns([0.58, 0.02, 0.40])
+with div_col:
+    _vdivider()
+```
+
+### Page Layout Pattern (v0.3.1)
+
+2-column form layout standard:
+```python
+left, div_col, right = st.columns([0.58, 0.02, 0.40])
+
+with left:
+    _section_header("General", "indigo")
+    # ... general inputs
+    _section_header("Entry", "emerald")
+    # ... entry inputs (FEG Margins + Wick Filter)
+
+with div_col:
+    _vdivider()
+
+with right:
+    _section_header("Order Settings & Risk", "amber")
+    # ... order settings
+    _section_header("Exit", "red")
+    # ... exit inputs
+```
+
+**Color scheme**:
+- Indigo: General parameters
+- Emerald: Entry conditions
+- Amber: Order settings & risk sizing
+- Red: Exit conditions
+
 ## Testing Standards
 
 ### Test File Organization
-- **Unit Tests**: `test/test.py` hoặc `test/unit/`
-- **Integration Tests**: `test/integration/`
-- **Strategy Tests**: `test/strategy/`
+- **Unit Tests**: `tests/` directory (pytest)
+- **Integration Tests**: `tests/` with integration markers
+- **Strategy Tests**: `tests/test_*_strategy.py`
 
 ### Test Naming Convention
 ```python
@@ -631,10 +711,57 @@ Include when reporting bugs:
 - [Conventional Commits](https://conventionalcommits.org/)
 - [MetaTrader5 Python API](https://www.mql5.com/en/docs/integration/python_metatrader5)
 
+## FEG Strategy Wick Formula (v0.3.1)
+
+### Correct Wick Calculation
+
+For pattern detection, use **true wick** not close-based ranges:
+
+**SELL (bearish candle)**:
+- Upper wick: `h2 - o2` (not `h2 - c2`)
+- Lower wick: `c2 - l2`
+- Example: OHLC=[100, 105, 95, 98] → upper_wick = 105-100 = 5, lower_wick = 98-95 = 3
+
+**BUY (bullish candle)**:
+- Upper wick: `h2 - c2`
+- Lower wick: `o2 - l2` (not `c2 - l2`)
+- Example: OHLC=[100, 105, 95, 102] → lower_wick = 100-95 = 5, upper_wick = 105-102 = 3
+
+This ensures wick filters correctly reflect actual price rejection levels.
+
+## Version Changes Summary
+
+**v0.3.1 (2026-07-08)**:
+- Layout redesign: 2-column compacted form with colored section headers
+- Removed Classic layout variants (no more compact vs verbose)
+- Added `_section_header()` and `_vdivider()` helpers
+- Replaced `use_container_width` with `width` parameter across all widgets
+- Fixed FEG wick formulas: SELL=(h2-o2), BUY=(o2-l2)
+- Vietnamese UI labels throughout
+- Flash message success state pattern
+
+**v0.3.0 (2026-06-27)**:
+- Same-type candle rule for FEG strategy
+- Trace ID system (BT-..., ORD-...)
+- Full Telegram error coverage
+- Auto-restart bot with 30s delay
+- CI/CD pipeline with GitHub Actions
+- Verification script for backtest trace
+
+**v0.2.0 (2026-06-21)**:
+- FEG EMA21 strategy added
+- Multi-strategy architecture
+- 25 unit tests
+
+**v0.1.0 (2026-01)**:
+- Foundation: Master Candle strategy
+- Streamlit dashboard
+- Backtest engine
+
 ## Unresolved Questions
 
 1. **Type Checking**: Enforce mypy for type hints?
 2. **Linting**: Which linter (black, flake8, pylint)?
-3. **Testing Framework**: pytest vs unittest?
-4. **CI/CD**: GitHub Actions workflow?
+3. **Testing Framework**: pytest is standard (25 tests passing)
+4. **CI/CD**: GitHub Actions workflow is implemented ✅
 5. **Pre-commit Hooks**: Setup husky/pre-commit?

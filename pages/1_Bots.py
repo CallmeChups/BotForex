@@ -493,6 +493,10 @@ def show_create_bot():
                         f"{sk}_c2_buy_lower_wick_max_pct": _cfg.get('c2_buy_lower_wick_max_pct', None),
                         f"{sk}_c2_sell_upper_wick_max_pct": _cfg.get('c2_sell_upper_wick_max_pct', None),
                         f"{sk}_c2_sell_lower_wick_max_pct": _cfg.get('c2_sell_lower_wick_max_pct', None),
+                        f"{sk}_c2_buy_upper_wick_cmp": _cfg.get('c2_buy_upper_wick_cmp', 'lt'),
+                        f"{sk}_c2_buy_lower_wick_cmp": _cfg.get('c2_buy_lower_wick_cmp', 'lt'),
+                        f"{sk}_c2_sell_upper_wick_cmp": _cfg.get('c2_sell_upper_wick_cmp', 'lt'),
+                        f"{sk}_c2_sell_lower_wick_cmp": _cfg.get('c2_sell_lower_wick_cmp', 'lt'),
                         f"{sk}_lot_mode": _cfg.get('lot_mode', 'fixed'),
                     }
                     if _cfg.get('lot_mode') == 'fixed':
@@ -577,42 +581,6 @@ def show_create_bot():
                                                       min_value=0.0, step=1.0, key=f"{sk}_emam",
                                                       help="SELL: L2 phải cách EMA ≥ N pips | BUY: H2 phải cách EMA ≥ N pips")
                     st.caption(_pip_caption(ema_margin_pips, symbol))
-                # Wick Filter
-                st.caption("**Wick Filter** — để trống = tắt")
-                _nw_wk1 = st.columns(2)
-                with _nw_wk1[0]:
-                    _raw_nw_bu = st.session_state.get(f"{sk}_c2_buy_upper_wick_max_pct")
-                    _nw_wk_bu_str = st.text_input("BUY — Râu trên tối đa % body",
-                                                   value="" if _raw_nw_bu is None else str(_raw_nw_bu),
-                                                   key=f"{sk}_c2_buy_upper_wick_max_pct_str",
-                                                   placeholder="VD: 30  (để trống = tắt)",
-                                                   help="BUY: (high-close) < body × n%.")
-                    c2_buy_upper_wick_max_pct = _parse_wick(_nw_wk_bu_str)
-                with _nw_wk1[1]:
-                    _raw_nw_bl = st.session_state.get(f"{sk}_c2_buy_lower_wick_max_pct")
-                    _nw_wk_bl_str = st.text_input("BUY — Râu dưới tối đa % body",
-                                                   value="" if _raw_nw_bl is None else str(_raw_nw_bl),
-                                                   key=f"{sk}_c2_buy_lower_wick_max_pct_str",
-                                                   placeholder="VD: 30  (để trống = tắt)",
-                                                   help="BUY: (close-low) < body × n%.")
-                    c2_buy_lower_wick_max_pct = _parse_wick(_nw_wk_bl_str)
-                _nw_wk2 = st.columns(2)
-                with _nw_wk2[0]:
-                    _raw_nw_su = st.session_state.get(f"{sk}_c2_sell_upper_wick_max_pct")
-                    _nw_wk_su_str = st.text_input("SELL — Râu trên tối đa % body",
-                                                   value="" if _raw_nw_su is None else str(_raw_nw_su),
-                                                   key=f"{sk}_c2_sell_upper_wick_max_pct_str",
-                                                   placeholder="VD: 30  (để trống = tắt)",
-                                                   help="SELL: (high-close) < body × n%.")
-                    c2_sell_upper_wick_max_pct = _parse_wick(_nw_wk_su_str)
-                with _nw_wk2[1]:
-                    _raw_nw_sl = st.session_state.get(f"{sk}_c2_sell_lower_wick_max_pct")
-                    _nw_wk_sl_str = st.text_input("SELL — Râu dưới tối đa % body",
-                                                   value="" if _raw_nw_sl is None else str(_raw_nw_sl),
-                                                   key=f"{sk}_c2_sell_lower_wick_max_pct_str",
-                                                   placeholder="VD: 30  (để trống = tắt)",
-                                                   help="SELL: (close-low) < body × n%.")
-                    c2_sell_lower_wick_max_pct = _parse_wick(_nw_wk_sl_str)
             with e_right:
                 # Sub-section: EMA Direction
                 st.caption("**Bộ lọc EMA**")
@@ -674,6 +642,54 @@ def show_create_bot():
                                                           value=int(st.session_state.get(f"{sk}_loc", 1)),
                                                           min_value=1, max_value=50, key=f"{sk}_loc",
                                                           help="Số nến tối đa để chờ stop order fill")
+            # Wick Filter — full width, 4 equal cols (each col: radio < > on top, number input below)
+            st.caption("**Wick Filter** — để trống = tắt  |  < râu nhỏ hơn body × n%  |  > râu lớn hơn body × n%")
+            _CMP_OPTS = ["< nhỏ hơn", "> lớn hơn"]
+            _wk_c1, _wk_c2, _wk_c3, _wk_c4 = st.columns(4)
+            with _wk_c1:
+                _nw_bu_cmp = "lt" if st.session_state.get(f"{sk}_c2_buy_upper_wick_cmp", "lt") == "lt" else "gt"
+                _nw_bu_cmp_sel = st.radio("BUY — Râu trên", _CMP_OPTS,
+                                          index=0 if _nw_bu_cmp == "lt" else 1,
+                                          horizontal=True, key=f"{sk}_c2_buy_upper_wick_cmp_sel")
+                c2_buy_upper_wick_cmp = "lt" if _nw_bu_cmp_sel == "< nhỏ hơn" else "gt"
+                _raw_nw_bu = st.session_state.get(f"{sk}_c2_buy_upper_wick_max_pct")
+                c2_buy_upper_wick_max_pct = _parse_wick(st.text_input(
+                    "% body", value="" if _raw_nw_bu is None else str(_raw_nw_bu),
+                    key=f"{sk}_c2_buy_upper_wick_max_pct_str", placeholder="VD: 30",
+                    help="BUY: (high−close) so với body × n%."))
+            with _wk_c2:
+                _nw_bl_cmp = "lt" if st.session_state.get(f"{sk}_c2_buy_lower_wick_cmp", "lt") == "lt" else "gt"
+                _nw_bl_cmp_sel = st.radio("BUY — Râu dưới", _CMP_OPTS,
+                                          index=0 if _nw_bl_cmp == "lt" else 1,
+                                          horizontal=True, key=f"{sk}_c2_buy_lower_wick_cmp_sel")
+                c2_buy_lower_wick_cmp = "lt" if _nw_bl_cmp_sel == "< nhỏ hơn" else "gt"
+                _raw_nw_bl = st.session_state.get(f"{sk}_c2_buy_lower_wick_max_pct")
+                c2_buy_lower_wick_max_pct = _parse_wick(st.text_input(
+                    "% body", value="" if _raw_nw_bl is None else str(_raw_nw_bl),
+                    key=f"{sk}_c2_buy_lower_wick_max_pct_str", placeholder="VD: 30",
+                    help="BUY: (open−low) so với body × n%."))
+            with _wk_c3:
+                _nw_su_cmp = "lt" if st.session_state.get(f"{sk}_c2_sell_upper_wick_cmp", "lt") == "lt" else "gt"
+                _nw_su_cmp_sel = st.radio("SELL — Râu trên", _CMP_OPTS,
+                                          index=0 if _nw_su_cmp == "lt" else 1,
+                                          horizontal=True, key=f"{sk}_c2_sell_upper_wick_cmp_sel")
+                c2_sell_upper_wick_cmp = "lt" if _nw_su_cmp_sel == "< nhỏ hơn" else "gt"
+                _raw_nw_su = st.session_state.get(f"{sk}_c2_sell_upper_wick_max_pct")
+                c2_sell_upper_wick_max_pct = _parse_wick(st.text_input(
+                    "% body", value="" if _raw_nw_su is None else str(_raw_nw_su),
+                    key=f"{sk}_c2_sell_upper_wick_max_pct_str", placeholder="VD: 30",
+                    help="SELL: (high−open) so với body × n%."))
+            with _wk_c4:
+                _nw_sl_cmp = "lt" if st.session_state.get(f"{sk}_c2_sell_lower_wick_cmp", "lt") == "lt" else "gt"
+                _nw_sl_cmp_sel = st.radio("SELL — Râu dưới", _CMP_OPTS,
+                                          index=0 if _nw_sl_cmp == "lt" else 1,
+                                          horizontal=True, key=f"{sk}_c2_sell_lower_wick_cmp_sel")
+                c2_sell_lower_wick_cmp = "lt" if _nw_sl_cmp_sel == "< nhỏ hơn" else "gt"
+                _raw_nw_sl = st.session_state.get(f"{sk}_c2_sell_lower_wick_max_pct")
+                c2_sell_lower_wick_max_pct = _parse_wick(st.text_input(
+                    "% body", value="" if _raw_nw_sl is None else str(_raw_nw_sl),
+                    key=f"{sk}_c2_sell_lower_wick_max_pct_str", placeholder="VD: 30",
+                    help="SELL: (close−low) so với body × n%."))
         else:
             # Master Candle — no Entry zone, set defaults
             ema_period = None
@@ -684,6 +700,10 @@ def show_create_bot():
             c2_buy_lower_wick_max_pct = None
             c2_sell_upper_wick_max_pct = None
             c2_sell_lower_wick_max_pct = None
+            c2_buy_upper_wick_cmp = "lt"
+            c2_buy_lower_wick_cmp = "lt"
+            c2_sell_upper_wick_cmp = "lt"
+            c2_sell_lower_wick_cmp = "lt"
             ema_filter_enabled = True
             buy_ema_side = "below_ema"
             sell_ema_side = "above_ema"
@@ -815,6 +835,10 @@ def show_create_bot():
                     c2_buy_lower_wick_max_pct=c2_buy_lower_wick_max_pct,
                     c2_sell_upper_wick_max_pct=c2_sell_upper_wick_max_pct,
                     c2_sell_lower_wick_max_pct=c2_sell_lower_wick_max_pct,
+                    c2_buy_upper_wick_cmp=c2_buy_upper_wick_cmp,
+                    c2_buy_lower_wick_cmp=c2_buy_lower_wick_cmp,
+                    c2_sell_upper_wick_cmp=c2_sell_upper_wick_cmp,
+                    c2_sell_lower_wick_cmp=c2_sell_lower_wick_cmp,
                 )
 
                 if success:
