@@ -226,7 +226,7 @@ def main():
         _section_header("📈", "ENTRY", "#10b981")
         # Sub-section: FEG Margins
         st.caption("**FEG Margins**")
-        em1, em2, em3, em4, em5, em6 = st.columns(6)
+        em1, em2, em3, em4 = st.columns(4)
         with em1:
             ema_period = st.number_input("EMA Period",
                                          value=int(_pf('ema_period', params.get('ema_period', 21))),
@@ -287,7 +287,7 @@ def main():
 
         st.divider()
         # Sub-section: EMA Direction
-        st.caption("**Bộ lọc EMA**")
+        st.caption("**EMA Direction**")
         ed1, ed2, ed3 = st.columns(3)
         with ed1:
             ema_filter_enabled = st.checkbox("Bộ lọc EMA",
