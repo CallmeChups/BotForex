@@ -1,4 +1,4 @@
-"""
+﻿"""
 Strategies Page - Manage trading strategies
 """
 
@@ -186,7 +186,7 @@ def show_create_form():
             value="XAUUSD, BTCUSD, ETHUSD"
         )
 
-        submitted = st.form_submit_button("Create Strategy", type="primary", use_container_width=True)
+        submitted = st.form_submit_button("Create Strategy", type="primary", width='stretch')
 
         if submitted:
             if not strat_id or not strat_name:
@@ -359,7 +359,7 @@ def show_view_edit():
 
             edit_symbols = st.text_input("Symbols", value=", ".join(strategy.get('symbols', [])))
 
-            if st.form_submit_button("Save Changes", type="primary", use_container_width=True):
+            if st.form_submit_button("Save Changes", type="primary", width='stretch'):
                 try:
                     # Update strategy
                     strategy['name'] = edit_name

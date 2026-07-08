@@ -1,4 +1,4 @@
-"""
+﻿"""
 Backtest Page - Test strategy on historical data
 """
 
@@ -486,7 +486,7 @@ def main():
     sl_pips = 0  # always calculated from candle + buffer_k
 
     # Run backtest button
-    if st.button("▶ Run Backtest", type="primary", use_container_width=True, key="run_backtest"):
+    if st.button("▶ Run Backtest", type="primary", width='stretch', key="run_backtest"):
         try:
             with st.spinner("Fetching historical data..."):
                 # Convert dates to datetime
