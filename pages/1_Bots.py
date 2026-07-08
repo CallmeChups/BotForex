@@ -988,7 +988,7 @@ def show_bot_history():
                     ["order_id", "direction", "entry", "exit_price", "exit_type", "lot", "pnl_usd", "closed_at"]
                 ]
                 df_t.columns = ["Order ID", "Dir", "Entry", "Exit", "Type", "Lot", "PNL ($)", "Closed At"]
-                st.dataframe(df_t, use_container_width=True, hide_index=True)
+                st.dataframe(df_t, width='stretch', hide_index=True)
 
             # Log viewer
             log_path = s.get("log_path", "")

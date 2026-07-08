@@ -349,7 +349,7 @@ def show_place_order(user_creds: dict):
         if st.button(
             f"Place {direction} Order",
             type="primary",
-            use_container_width=True,
+            width='stretch',
             key="place_order_btn"
         ):
             try:
