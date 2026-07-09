@@ -532,6 +532,47 @@ def _scan_feg_pending(df, ema, idx, pip_value,
     }
 
 
+def _scan_feg_reverse_pending(df, ema, idx, pip_value,
+                               h2_exceed_pips, c2_gap_pips, ema_margin_pips,
+                               ema_filter_enabled, buy_ema_side, sell_ema_side,
+                               entry_mode, entry_percent, buffer_k, rr_ratio,
+                               entry_start_time, entry_end_time,
+                               c2_buy_upper_wick_max_pct=None, c2_buy_lower_wick_max_pct=None,
+                               c2_sell_upper_wick_max_pct=None, c2_sell_lower_wick_max_pct=None,
+                               c2_buy_upper_wick_cmp="lt", c2_buy_lower_wick_cmp="lt",
+                               c2_sell_upper_wick_cmp="lt", c2_sell_lower_wick_cmp="lt"):
+    """Scan 1 candle cho FEG Reverse signal. Trả về pending dict hoặc None."""
+    from src.feg_reverse_strategy import detect_feg_reverse_signal as detect_feg_signal
+    if idx < 1 or idx >= len(df):
+        return None
+    candle_time = df.at[idx, "time"]
+    if not _in_time_window(candle_time, entry_start_time, entry_end_time):
+        return None
+    c1 = {"open": df.at[idx - 1, "open"], "high": df.at[idx - 1, "high"],
+          "low": df.at[idx - 1, "low"], "close": df.at[idx - 1, "close"]}
+    c2 = {"open": df.at[idx, "open"], "high": df.at[idx, "high"],
+          "low": df.at[idx, "low"], "close": df.at[idx, "close"]}
+    direction = detect_feg_signal(
+        c1, c2, ema[idx], pip_value, h2_exceed_pips, c2_gap_pips, ema_margin_pips,
+        ema_filter_enabled, buy_ema_side, sell_ema_side,
+        c2_buy_upper_wick_max_pct, c2_buy_lower_wick_max_pct,
+        c2_sell_upper_wick_max_pct, c2_sell_lower_wick_max_pct,
+        c2_buy_upper_wick_cmp, c2_buy_lower_wick_cmp,
+        c2_sell_upper_wick_cmp, c2_sell_lower_wick_cmp,
+    )
+    if not direction:
+        return None
+    levels = compute_trade_levels(direction, c2, entry_mode, entry_percent, buffer_k, rr_ratio, pip_value)
+    return {
+        "direction": direction,
+        "candle2_idx": idx,
+        "levels": levels,
+        "_c1": {**c1, "time": df.at[idx - 1, "time"]},
+        "_c2": {**c2, "time": df.at[idx, "time"]},
+        "_ema": ema[idx],
+    }
+
+
 def _run_feg_backtest(
     df, symbol, rr_ratio, max_candles, lot_mode, fixed_lot, risk_percent,
     risk_amount, risk_mode, buffer_k, starting_equity, tp_type, sl_type,
@@ -820,7 +861,7 @@ def _run_feg_reverse_backtest(
 
                     # Re-entry scan: update pending signal (overwrite với signal mới nhất)
                     if re_entry_after_sl and k >= 1:
-                        sig = _scan_feg_pending(
+                        sig = _scan_feg_reverse_pending(
                             df, ema, k, pip_value,
                             h2_exceed_pips, c2_gap_pips, ema_margin_pips,
                             ema_filter_enabled, buy_ema_side, sell_ema_side,
