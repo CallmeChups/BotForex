@@ -1,0 +1,49 @@
+id: feg_reverse
+name: FEG Reverse
+version: "1.0"
+description: |
+  FEG 2-candle pattern + flipped direction. SELL pattern → BUY order. BUY pattern → SELL order.
+  Wick filter dung params cua pattern goc. SL/TP neo theo chieu lenh moi.
+author: admin
+created: "2026-07-09"
+enabled: true
+
+entry:
+  type: pattern
+  timeframe: M1
+  pattern: feg_reverse
+  ema_period: 21
+  h2_exceed_pips: 0.0
+  c2_gap_pips: 0.0
+  ema_filter_enabled: true
+  buy_ema_side: below_ema
+  sell_ema_side: above_ema
+  ema_margin_pips: 0.0
+
+exit:
+  tp:
+    type: price_based
+  sl:
+    type: close_based
+  time_limit:
+    enabled: true
+    max_candles: 7
+
+parameters:
+  rr_ratio: 2.0
+  buffer_k: 50
+  lot_size: 0.01
+  entry_mode: close
+  entry_percent: 10
+  re_entry_after_sl: false
+
+symbols:
+  - XAUUSD
+  - BTCUSD
+  - ETHUSD
+  - XAUUSDm
+  - BTCUSDm
+  - ETHUSDm
+  - EURUSDm
+  - GBPUSDm
+  - AUDUSDm
