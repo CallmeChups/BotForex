@@ -461,10 +461,15 @@ def place_limit_order(
         if result is None:
             return False, "Limit order failed: No response from MT5", None
 
-        if result.retcode != mt5_module.TRADE_RETCODE_DONE:
+        accepted_retcodes = {mt5_module.TRADE_RETCODE_DONE}
+        placed_retcode = getattr(mt5_module, "TRADE_RETCODE_PLACED", None)
+        if placed_retcode is not None:
+            accepted_retcodes.add(placed_retcode)
+        if result.retcode not in accepted_retcodes:
             return False, f"Limit order failed: {result.comment} (code: {result.retcode})", None
 
-        return True, f"Limit order placed at {price:.5f}", result.order
+        status = "accepted" if result.retcode == mt5_module.TRADE_RETCODE_DONE else "placed"
+        return True, f"Limit order {status} at {price:.5f}", result.order
 
     except Exception as e:
         mt5.shutdown()

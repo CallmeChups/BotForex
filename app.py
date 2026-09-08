@@ -9,7 +9,9 @@ from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 import os
 
-load_dotenv()
+from pathlib import Path
+
+load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
 
 # Page config - MUST be first Streamlit command
 st.set_page_config(
@@ -146,7 +148,7 @@ def show_dashboard():
         - Time: Max N candles (configurable)
         """)
 
-    with st.expander("FEG EMA21 Strategy", expanded=False):
+    with st.expander("FEG Classic", expanded=False):
         st.markdown("""
         **Entry Trigger:** 2-candle FEG pattern (continuous scan, M5)
 
@@ -220,7 +222,7 @@ def show_dashboard():
 
     # Footer
     st.divider()
-    st.caption("BotForex v0.2.0 | Master Candle + FEG EMA21")
+    st.caption("BotForex v0.2.0 | Master Candle + FEG Classic")
 
 
 def main():

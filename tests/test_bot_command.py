@@ -1,4 +1,5 @@
 from src.bot_manager import build_bot_command
+from src import bot_runner
 
 
 def test_command_includes_h2_flags():
@@ -24,6 +25,54 @@ def test_command_default_h2_flags_are_zero():
     )
     assert cmd[cmd.index("--h2_exceed_pips") + 1] == "0.0"
     assert "--ema_period" not in cmd  # None -> not added
+
+
+def test_command_supports_subsecond_interval():
+    cmd = build_bot_command(
+        "python", "bot_runner.py", "flappy_bird", "XAUUSD", "admin",
+        test=True, interval=0.1,
+    )
+    assert cmd[cmd.index("--interval") + 1] == "0.1"
+
+
+def test_command_includes_flappy_father_body_threshold():
+    cmd = build_bot_command(
+        "python", "bot_runner.py", "flappy_bird", "XAUUSD", "admin",
+        test=True, interval=1, min_father_body_points=3.5,
+    )
+    assert cmd[cmd.index("--min_father_body_points") + 1] == "3.5"
+
+
+def test_ui_managed_command_enables_manager_stop_notification():
+    cmd = build_bot_command(
+        "python", "bot_runner.py", "flappy_bird", "XAUUSD", "admin",
+        test=False, interval=1,
+    )
+    assert cmd[cmd.index("--managed_by_ui") + 1] == "1"
+
+
+def test_send_telegram_logs_api_rejection(monkeypatch, caplog):
+    class RejectedResponse:
+        ok = False
+        status_code = 400
+        text = '{"ok":false,"description":"chat not found"}'
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.setattr(bot_runner.requests, "post", lambda *args, **kwargs: RejectedResponse())
+
+    with caplog.at_level("ERROR", logger="bot_runner"):
+        assert bot_runner.send_telegram("test") is False
+
+    assert "Telegram rejected message: HTTP 400" in caplog.text
+
+
+def test_command_includes_timeframe_override():
+    cmd = build_bot_command(
+        "python", "bot_runner.py", "flappy_bird", "XAUUSD", "admin",
+        test=False, interval=60, timeframe="M15",
+    )
+    assert cmd[cmd.index("--timeframe") + 1] == "M15"
 
 
 def test_command_be_flags():

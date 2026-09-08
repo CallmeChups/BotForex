@@ -7,9 +7,13 @@ credentials:
     admin:
       email: admin@botforex.com
       mt5:
-        login: '415929088'
-        password: Hang1970@
-        server: Exness-MT5Trial14
+        login: '463909836'
+        password: Test030926@
+        server: Exness-MT5Trial17
+      mt5_backtest:
+        login: '463909836'
+        password: Test030926@
+        server: Exness-MT5Trial17
       name: Admin
       password: $2b$12$JVO8Nb0r7BfXbnOVWZ91q.qrV9ubS4GU9B6Qv.lhNoElMQitniNTC
       role: admin

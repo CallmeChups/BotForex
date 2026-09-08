@@ -189,7 +189,8 @@ def history_to_dataframe(history: list) -> pd.DataFrame:
             'End Time': config.get('entry_end_time', '23:59'),
             'Entry Mode': config.get('entry_mode', ''),
             'Entry %': round(float(config.get('entry_percent', 0) or 0), 1),
-            'Max Candles': config.get('max_candles', '') or 'Off',
+            # Keep this display/config column homogeneous for Streamlit Arrow serialization.
+            'Max Candles': str(config.get('max_candles', '') or 'Off'),
             'K': round(float(config.get('buffer_k', 0) or 0), 1),
             'Entry Type': config.get('entry_type', 'time'),
             'EMA Period': config.get('ema_period', ''),

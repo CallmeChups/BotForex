@@ -8,10 +8,16 @@ from datetime import datetime, timedelta, time as _time
 from zoneinfo import ZoneInfo
 import uuid
 import pandas as pd
+from typing import Callable
 
 from src.utils import get_pip_value, check_exit, compute_trade_levels, _in_time_window
 from src.feg_strategy import detect_feg_signal
 from src.feg_stop_order_strategy import detect_feg_stop_order_signal
+from src.flappy_bird_strategy import (
+    EMA_WARMUP_WINDOW,
+    analyze_flappy_bird,
+    calculate_flappy_ema_series,
+)
 
 TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
 
@@ -285,6 +291,12 @@ def _make_trade(entry_time, direction, levels, lot, exit_type, exit_price, exit_
     return trade, pnl_pips, pnl_usd
 
 
+def _report_progress(progress_callback: Callable[[dict], None] | None, **payload) -> None:
+    """Report optional progress without coupling the engine to Streamlit."""
+    if progress_callback is not None:
+        progress_callback(payload)
+
+
 def run_backtest(
     df: pd.DataFrame,
     symbol: str,
@@ -328,6 +340,10 @@ def run_backtest(
     c2_buy_lower_wick_cmp: str = "lt",
     c2_sell_upper_wick_cmp: str = "lt",
     c2_sell_lower_wick_cmp: str = "lt",
+    flappy_min_father_body_points: float = 2.0,
+    flappy_sl_buffer_pips: float = 5.0,
+    flappy_entry_body_percent: float = 5.0,
+    progress_callback: Callable[[dict], None] | None = None,
 ) -> dict:
     """
     Run backtest on historical data
@@ -362,7 +378,25 @@ def run_backtest(
     run_id = f"BT-{datetime.now().strftime('%y%m%d-%H%M%S')}-{symbol}-{uuid.uuid4().hex[:4].upper()}"
 
     if entry_type == "pattern":
-        if strategy == "feg_stop_order":
+        if strategy == "flappy_bird":
+            result = _run_flappy_bird_backtest(
+                df=df,
+                symbol=symbol,
+                lot_mode=lot_mode,
+                fixed_lot=fixed_lot,
+                risk_percent=risk_percent,
+                risk_amount=risk_amount,
+                risk_mode=risk_mode,
+                starting_equity=starting_equity,
+                limit_order_candles=limit_order_candles,
+                max_candles=max_candles,
+                min_father_body_points=flappy_min_father_body_points,
+                sl_buffer_pips=flappy_sl_buffer_pips,
+                entry_body_percent=flappy_entry_body_percent,
+                rr_ratio=rr_ratio,
+                progress_callback=progress_callback,
+            )
+        elif strategy == "feg_stop_order":
             result = _run_feg_stop_order_backtest(
                 df=df, symbol=symbol, rr_ratio=rr_ratio, max_candles=max_candles,
                 lot_mode=lot_mode, fixed_lot=fixed_lot, risk_percent=risk_percent,
@@ -911,6 +945,190 @@ def _run_feg_reverse_backtest(
 
         i += 1
 
+    stats = calculate_stats(trades, lot_mode)
+    stats["equity_curve"] = equity_curve_pips
+    stats["equity_curve_usd"] = equity_curve_usd
+    stats["trades"] = trades
+    stats["lot_mode"] = lot_mode
+    stats["final_equity"] = current_equity
+    stats["starting_equity"] = starting_equity
+    stats["ohlc_data"] = df
+    return stats
+
+
+def _run_flappy_bird_backtest(
+    df, symbol, lot_mode, fixed_lot, risk_percent, risk_amount, risk_mode,
+    starting_equity, limit_order_candles, max_candles, min_father_body_points,
+    sl_buffer_pips, entry_body_percent, rr_ratio, progress_callback=None,
+):
+    """Backtest Flappy Bird BUY LIMIT signals with deterministic fills."""
+    df = df.reset_index(drop=True).copy()
+    # Match Live Bot: each EMA is seeded from the latest bounded candle window.
+    df["ema13"] = calculate_flappy_ema_series(
+        df["close"], 13, EMA_WARMUP_WINDOW
+    )
+    df["ema21"] = calculate_flappy_ema_series(
+        df["close"], 21, EMA_WARMUP_WINDOW
+    )
+    df["ema55"] = calculate_flappy_ema_series(
+        df["close"], 55, EMA_WARMUP_WINDOW
+    )
+    opens = df["open"].to_numpy()
+    highs = df["high"].to_numpy()
+    lows = df["low"].to_numpy()
+    closes = df["close"].to_numpy()
+    times = df["time"].to_numpy()
+    ema13_values = df["ema13"].to_numpy()
+    ema21_values = df["ema21"].to_numpy()
+    ema55_values = df["ema55"].to_numpy()
+
+    def candle_at(index: int) -> dict:
+        return {
+            "open": opens[index],
+            "high": highs[index],
+            "low": lows[index],
+            "close": closes[index],
+        }
+
+    trades = []
+    equity_curve_pips = [0]
+    equity_curve_usd = [starting_equity]
+    current_equity = starting_equity
+    i = 55
+    total_candles = max(0, len(df) - i)
+    last_reported = -1
+    _report_progress(
+        progress_callback, phase="scan", current=0, total=total_candles,
+        trades=0, message="Khởi tạo EMA và chuẩn bị quét nến..."
+    )
+    while i < len(df):
+        processed = i - 55
+        if processed == 0 or processed - last_reported >= max(1, total_candles // 100):
+            _report_progress(
+                progress_callback, phase="scan", current=processed,
+                total=total_candles, trades=len(trades),
+                message=f"Đang quét nến {i + 1}/{len(df)}..."
+            )
+            last_reported = processed
+        signal = None
+        signal_child_count = 0
+        ema13 = ema13_values[i]
+        ema21 = ema21_values[i]
+        ema55 = ema55_values[i]
+        if not ((ema13 > ema21 > ema55) or (ema13 < ema21 < ema55)):
+            i += 1
+            continue
+        for child_count in range(7, 1, -1):
+            mother_idx = i - child_count - 1
+            if mother_idx < 0:
+                continue
+            mother = candle_at(mother_idx)
+            children = [candle_at(idx) for idx in range(mother_idx + 1, i)]
+            father = candle_at(i)
+            for direction in ("BUY", "SELL"):
+                signal = analyze_flappy_bird(
+                    symbol, mother, children, father,
+                    ema13, ema21, ema55,
+                    fixed_lot, sl_buffer_pips, entry_body_percent, rr_ratio,
+                    min_father_body_points, direction,
+                )
+                if signal:
+                    signal_child_count = child_count
+                    signal["_mother_idx"] = mother_idx
+                    signal["_father_idx"] = i
+                    break
+            if signal:
+                break
+        if not signal:
+            i += 1
+            continue
+
+        fill_pos = None
+        exit_pos = None
+        exit_type = None
+        exit_price = None
+        pending_end = min(len(df), i + 1 + limit_order_candles)
+        for pos in range(i + 1, pending_end):
+            if signal["direction"] == "BUY":
+                if lows[pos] > signal["entry_price"]:
+                    continue
+            elif highs[pos] < signal["entry_price"]:
+                continue
+            fill_pos = pos
+            # Conservative ordering: SL is checked before TP on every BUY candle.
+            if signal["direction"] == "BUY" and lows[pos] <= signal["stop_loss"]:
+                exit_type, exit_price, exit_pos = "SL", signal["stop_loss"], pos
+            elif signal["direction"] == "BUY" and highs[pos] >= signal["take_profit"]:
+                exit_type, exit_price, exit_pos = "TP", signal["take_profit"], pos
+            elif signal["direction"] == "SELL" and highs[pos] >= signal["stop_loss"]:
+                exit_type, exit_price, exit_pos = "SL", signal["stop_loss"], pos
+            elif signal["direction"] == "SELL" and lows[pos] <= signal["take_profit"]:
+                exit_type, exit_price, exit_pos = "TP", signal["take_profit"], pos
+            else:
+                exit_end = (
+                    len(df)
+                    if max_candles <= 0
+                    else min(len(df), pos + 1 + max_candles)
+                )
+                for later_pos in range(pos + 1, exit_end):
+                    if signal["direction"] == "BUY" and lows[later_pos] <= signal["stop_loss"]:
+                        exit_type, exit_price, exit_pos = "SL", signal["stop_loss"], later_pos
+                        break
+                    if signal["direction"] == "BUY" and highs[later_pos] >= signal["take_profit"]:
+                        exit_type, exit_price, exit_pos = "TP", signal["take_profit"], later_pos
+                        break
+                    if signal["direction"] == "SELL" and highs[later_pos] >= signal["stop_loss"]:
+                        exit_type, exit_price, exit_pos = "SL", signal["stop_loss"], later_pos
+                        break
+                    if signal["direction"] == "SELL" and lows[later_pos] <= signal["take_profit"]:
+                        exit_type, exit_price, exit_pos = "TP", signal["take_profit"], later_pos
+                        break
+                if not exit_type:
+                    if max_candles > 0:
+                        last_pos = min(len(df) - 1, pos + max_candles)
+                        exit_type, exit_price, exit_pos = "TIME", closes[last_pos], last_pos
+            break
+
+        if fill_pos is not None and exit_type:
+            if lot_mode == "flex":
+                lot = calculate_flex_lot_size(
+                    current_equity, risk_percent, signal["sl_pips"], symbol,
+                    risk_amount=risk_amount if risk_mode == "fixed_amount" else 0.0,
+                )
+            else:
+                lot = fixed_lot
+            trade, pnl_pips, pnl_usd = _make_trade(
+                times[fill_pos], signal["direction"], signal, lot, exit_type,
+                exit_price, times[exit_pos], exit_pos - fill_pos + 1,
+                symbol, exit_pos=exit_pos,
+            )
+            trade["_mother"] = {**signal["mother"], "time": times[signal["_mother_idx"]]}
+            trade["_children"] = [
+                {**child, "time": times[signal["_mother_idx"] + child_offset + 1]}
+                for child_offset, child in enumerate(signal["children"])
+            ]
+            trade["_father"] = {**signal["father"], "time": times[signal["_father_idx"]]}
+            trade["_ema13"] = signal["ema13"]
+            trade["_ema21"] = signal["ema21"]
+            trade["_ema55"] = signal["ema55"]
+            trade["_child_count"] = signal_child_count
+            trade["_min_father_body_points"] = min_father_body_points
+            trade["_debug"] = signal["debug"]
+            trade["_signal_mother_idx"] = signal["_mother_idx"]
+            trade["_signal_father_idx"] = signal["_father_idx"]
+            current_equity += pnl_usd
+            trades.append(trade)
+            equity_curve_pips.append(equity_curve_pips[-1] + pnl_pips)
+            equity_curve_usd.append(current_equity)
+            i = exit_pos + 1
+        else:
+            i = pending_end
+
+    _report_progress(
+        progress_callback, phase="finalize", current=total_candles,
+        total=total_candles, trades=len(trades),
+        message=f"Hoàn tất quét {total_candles:,} nến, tìm thấy {len(trades)} trade."
+    )
     stats = calculate_stats(trades, lot_mode)
     stats["equity_curve"] = equity_curve_pips
     stats["equity_curve_usd"] = equity_curve_usd

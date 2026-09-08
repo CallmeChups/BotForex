@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One-shot live signal check for FEG EMA21.
+"""One-shot live signal check for FEG Classic.
 
 Shows exactly what the bot sees on the current candles, whether a signal
 would fire, and what the computed SL/TP would be. Useful for Phase 2

@@ -54,14 +54,31 @@ def _remove_bot_state(pid: int):
     if not os.path.exists(state_path):
         return
     try:
-        with open(state_path, "r", encoding="utf-8") as f:
-            states = json.load(f)
-        states = [s for s in states if s.get("pid") != pid]
-        tmp = state_path + f".{pid}.tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(states, f)
-        os.replace(tmp, state_path)
-    except Exception:
+        from src.state_file import remove_bot_state
+        remove_bot_state(state_path, pid)
+    except OSError:
+        pass
+
+
+def _notify_bot_stopped(bot: dict) -> None:
+    """Notify the main Telegram chat when a bot is stopped from the UI."""
+    strategy_labels = {
+        "flappy_bird": "Flappy Bird",
+        "feg_ema21": "FEG EMA21",
+        "feg_stop_order": "FEG Stop Order",
+        "feg_reverse": "FEG Reverse",
+    }
+    label = strategy_labels.get(bot.get("strategy"), bot.get("strategy", "Bot"))
+    try:
+        from src.bot_runner import send_telegram
+        send_telegram(
+            f"⏹ <b>{label} Bot Stopped</b>\n"
+            f"Symbol: {bot.get('symbol', '?')}\n"
+            f"User: {bot.get('user', '?')}\n"
+            "Reason: stopped from dashboard"
+        )
+    except (ImportError, OSError):
+        # A notification failure must not make the UI report a failed stop.
         pass
 
 
@@ -89,6 +106,7 @@ def is_process_running(pid: int) -> bool:
 
 def build_bot_command(
     python_exe, script_path, strategy, symbol, user, test, interval,
+    timeframe=None,
     lot_size=None, sl_pips=None, rr_ratio=None, max_candles=None,
     ema_period=None, h2_exceed_pips=0.0, c2_gap_pips=0.0, ema_margin_pips=0.0,
     entry_mode=None, entry_percent=None, tp_type=None, sl_type=None,
@@ -102,6 +120,8 @@ def build_bot_command(
     c2_sell_upper_wick_max_pct=None, c2_sell_lower_wick_max_pct=None,
     c2_buy_upper_wick_cmp="lt", c2_buy_lower_wick_cmp="lt",
     c2_sell_upper_wick_cmp="lt", c2_sell_lower_wick_cmp="lt",
+    managed_by_ui=True,
+    min_father_body_points=None,
 ):
     """Build command list to run bot_runner (separated for testability)."""
     cmd = [
@@ -110,11 +130,14 @@ def build_bot_command(
         "--symbol", symbol,
         "--user", user,
         "--test", "1" if test else "0",
+        "--managed_by_ui", "1" if managed_by_ui else "0",
         "--interval", str(interval),
         "--h2_exceed_pips", str(h2_exceed_pips),
         "--c2_gap_pips", str(c2_gap_pips),
         "--ema_margin_pips", str(ema_margin_pips),
     ]
+    if timeframe:
+        cmd.extend(["--timeframe", timeframe])
     if lot_size:
         cmd.extend(["--lot_size", str(lot_size)])
     if sl_pips:
@@ -146,6 +169,8 @@ def build_bot_command(
     cmd.extend(["--entry_start_time", str(entry_start_time)])
     cmd.extend(["--entry_end_time", str(entry_end_time)])
     cmd.extend(["--limit_order_candles", str(limit_order_candles)])
+    if min_father_body_points is not None:
+        cmd.extend(["--min_father_body_points", str(min_father_body_points)])
     cmd.extend(["--be_enabled", "1" if be_enabled else "0"])
     cmd.extend(["--be_r", str(be_r)])
     cmd.extend(["--ema_filter_enabled", "1" if ema_filter_enabled else "0"])
@@ -172,11 +197,12 @@ def start_bot(
     symbol: str,
     user: str,
     test: bool = True,
+    timeframe: str = None,
     lot_size: float = None,
     sl_pips: float = None,
     rr_ratio: float = None,
     max_candles: int = None,
-    interval: int = 60,
+    interval: float = 60.0,
     ema_period: int = None,
     h2_exceed_pips: float = 0.0,
     c2_gap_pips: float = 0.0,
@@ -207,6 +233,8 @@ def start_bot(
     c2_buy_lower_wick_cmp: str = "lt",
     c2_sell_upper_wick_cmp: str = "lt",
     c2_sell_lower_wick_cmp: str = "lt",
+    managed_by_ui: bool = True,
+    min_father_body_points: float = None,
 ) -> tuple:
     """
     Start a new bot process
@@ -228,6 +256,7 @@ def start_bot(
     script_path = os.path.abspath(BOT_SCRIPT)
     cmd = build_bot_command(
         python_exe, script_path, strategy, symbol, user, test, interval,
+        timeframe,
         lot_size, sl_pips, rr_ratio, max_candles,
         ema_period, h2_exceed_pips, c2_gap_pips, ema_margin_pips,
         entry_mode, entry_percent, tp_type, sl_type,
@@ -240,6 +269,8 @@ def start_bot(
         c2_sell_upper_wick_max_pct, c2_sell_lower_wick_max_pct,
         c2_buy_upper_wick_cmp, c2_buy_lower_wick_cmp,
         c2_sell_upper_wick_cmp, c2_sell_lower_wick_cmp,
+        managed_by_ui,
+        min_father_body_points,
     )
 
     try:
@@ -277,6 +308,8 @@ def start_bot(
             'symbol': symbol,
             'user': user,
             'test': test,
+            'managed_by_ui': managed_by_ui,
+            'timeframe': timeframe,
             'lot_size': lot_size,
             'sl_pips': sl_pips,
             'rr_ratio': rr_ratio,
@@ -336,9 +369,11 @@ def stop_bot(pid: int) -> tuple:
     if not is_process_running(pid):
         # Remove from list anyway
         bots = load_bots()
+        stopped_bot = next((bot for bot in bots if bot.get('pid') == pid), {'pid': pid})
         bots = [b for b in bots if b['pid'] != pid]
         save_bots(bots)
         _remove_bot_state(pid)
+        _notify_bot_stopped(stopped_bot)
         return True, f"Process {pid} not running (removed from list)"
 
     try:
@@ -372,6 +407,7 @@ def stop_bot(pid: int) -> tuple:
         bots = [b for b in bots if b['pid'] != pid]
         save_bots(bots)
         _remove_bot_state(pid)
+        _notify_bot_stopped(bot)
 
         return True, f"Bot stopped (PID {pid})"
 
@@ -563,6 +599,7 @@ def restart_bot(pid: int) -> tuple:
         symbol=bot['symbol'],
         user=bot['user'],
         test=bot.get('test', True),
+        timeframe=bot.get('timeframe'),
         lot_size=bot.get('lot_size'),
         sl_pips=bot.get('sl_pips'),
         rr_ratio=bot.get('rr_ratio'),

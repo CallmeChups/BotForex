@@ -189,7 +189,7 @@ def _run_feg(df, symbol, days):
     ema_dist_pips = float(p.get("ema_distance_pips", 0.0))
 
     print(f"\n{'-' * 62}")
-    print(f"FEG EMA21  |  {symbol}  |  {days}d lookback")
+    print(f"FEG Classic  |  {symbol}  |  {days}d lookback")
     print(f"params: ema_period={ema_period}  buffer_k={buffer_k}  rr={rr_ratio}")
     print(f"        ema_distance: enabled={ema_dist_enabled}  pips={ema_dist_pips}")
     print(f"        max_candles={p['max_candles']}  tp={p['tp_type']}  sl={p['sl_type']}")
@@ -221,7 +221,7 @@ def _run_feg(df, symbol, days):
         print("  [no trades found in this period]")
     else:
         _print_feg_trace(res["trades"], pip_value, buffer_k, rr_ratio, ema_period)
-    _print_summary("FEG EMA21", res)
+    _print_summary("FEG Classic", res)
     return res
 
 

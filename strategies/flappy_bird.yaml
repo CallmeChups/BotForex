@@ -1,0 +1,37 @@
+id: flappy_bird
+name: Flappy Bird BUY/SELL
+version: "1.0"
+description: |
+  Mirrored BUY LIMIT and SELL LIMIT patterns using EMA13/21/55, a mother
+  candle, 2-7 child candles and a directional father candle.
+author: admin
+created: "2026-09-06"
+enabled: true
+
+entry:
+  type: pattern
+  timeframe: M5
+  pattern: flappy_bird
+  ema_periods: [13, 21, 55]
+
+exit:
+  tp:
+    type: price_based
+  sl:
+    type: price_based
+  time_limit:
+    enabled: false # Tạm ẩn/vô hiệu hóa EXIT TIME cho Flappy Bird.
+    max_candles: 0
+
+parameters:
+  entry_body_percent: 5.0
+  sl_buffer_pips: 5.0
+  rr_ratio: 2.0
+  min_father_body_points: 2.0
+  lot_size: 0.01
+  limit_order_candles: 7
+  magic: 212400
+
+symbols:
+  - XAUUSD
+  - XAUUSDm

@@ -1,5 +1,5 @@
 ﻿"""
-FEG EMA21 Strategy
+FEG Classic
 
 Pattern 2 nến + filter EMA21, quét liên tục.
 Điều kiện chung: C1/C2 cùng hướng, body C2 > body C1.

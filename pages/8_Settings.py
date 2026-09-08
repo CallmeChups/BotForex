@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 from dotenv import load_dotenv, set_key
 import os
 
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"), override=True)
 
 st.set_page_config(
     page_icon="⚙️",
@@ -167,8 +167,14 @@ def main():
             try:
                 import requests
 
-                token = os.getenv("TELEGRAM_BOT_TOKEN")
-                chat_id = os.getenv("TELEGRAM_TEST_CHAT_ID") or os.getenv("TELEGRAM_CHAT_ID")
+                token = telegram_token.strip()
+                chat_id = (
+                    telegram_test_chat_id.strip()
+                    or telegram_chat_id.strip()
+                )
+                if not token or not chat_id:
+                    st.error("Cần nhập Bot Token và Chat ID trước khi test.")
+                    st.stop()
 
                 url = f"https://api.telegram.org/bot{token}/sendMessage"
                 payload = {
@@ -180,6 +186,11 @@ def main():
 
                 if response.ok:
                     st.success("Message sent!")
+                elif response.status_code == 401:
+                    st.error(
+                        "Telegram trả HTTP 401 Unauthorized. Bot Token không hợp lệ "
+                        "hoặc đã bị revoke; hãy lấy token mới từ @BotFather."
+                    )
                 else:
                     st.error(f"Failed: {response.text}")
             except Exception as e:

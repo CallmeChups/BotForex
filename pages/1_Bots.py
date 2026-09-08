@@ -446,12 +446,23 @@ def show_create_bot():
 
     # Strategy selection (always outside layout block — drives param reload)
     strategy_options = {s['name']: s['id'] for s in enabled_strategies}
-    selected_strategy_name = st.selectbox("Strategy*", options=list(strategy_options.keys()))
+    strategy_names = list(strategy_options.keys())
+    default_strategy_index = next(
+        (index for index, strategy_id in enumerate(strategy_options.values())
+         if strategy_id == "flappy_bird"),
+        0,
+    )
+    selected_strategy_name = st.selectbox(
+        "Strategy*",
+        options=strategy_names,
+        index=default_strategy_index,
+    )
     selected_strategy = strategy_options[selected_strategy_name]
 
     params = get_strategy_parameters(selected_strategy)
     is_pattern = params.get('entry_type', 'time') == 'pattern'
     is_feg_stop_order = selected_strategy == 'feg_stop_order'
+    is_flappy_bird = selected_strategy == 'flappy_bird'
     sk = selected_strategy  # key prefix — forces widget reinit when strategy changes
 
     # Load from Backtest History
@@ -530,15 +541,35 @@ def show_create_bot():
             test_mode = st.checkbox("Test Mode", value=st.session_state.get(f"{sk}_test", True), key=f"{sk}_test",
                                     help="Test mode: no real orders placed")
         with gr1c3:
-            rr_ratio = st.number_input("RR Ratio", value=float(st.session_state.get(f"{sk}_rr", params.get('rr_ratio', 2.0))),
-                                       min_value=0.1, max_value=20.0, step=0.1, format="%.1f", key=f"{sk}_rr")
+            rr_ratio = st.number_input(
+                "RR Ratio",
+                value=float(st.session_state.get(f"{sk}_rr", params.get('rr_ratio', 2.0))),
+                min_value=0.1, max_value=20.0, step=0.1, format="%.1f",
+                key=f"{sk}_rr",
+            )
         with gr1c4:
-            _use_mc = st.checkbox("Giới hạn số nến", value=st.session_state.get(f"{sk}_use_mc", True), key=f"{sk}_use_mc")
+            _use_mc = True if is_flappy_bird else st.checkbox(
+                "Giới hạn số nến", value=st.session_state.get(f"{sk}_use_mc", True), key=f"{sk}_use_mc"
+            )
         with gr1c5:
-            interval = st.number_input("Chu kỳ quét (giây)", value=int(st.session_state.get(f"{sk}_iv", 60)),
-                                       min_value=5, max_value=3600, step=5, key=f"{sk}_iv",
-                                       help="Bot scan interval in seconds")
-            st.caption(f"TF: {strategy_timeframe}")
+            interval_ms = st.number_input(
+                "Chu kỳ quét (mili giây)",
+                value=int(st.session_state.get(f"{sk}_iv_ms", 1000)),
+                min_value=100,
+                max_value=3600000,
+                step=100,
+                key=f"{sk}_iv_ms",
+                help="Khoảng nghỉ giữa mỗi lần bot kiểm tra thị trường. 1.000 ms = 1 giây.",
+            )
+            interval = interval_ms / 1000.0
+            _timeframe_options = ["M1", "M5", "M15", "M30", "H1", "H4", "D1"]
+            timeframe = st.selectbox(
+                "Timeframe",
+                options=_timeframe_options,
+                index=_timeframe_options.index(strategy_timeframe)
+                if strategy_timeframe in _timeframe_options else 0,
+                key=f"{sk}_timeframe",
+            )
         with gr1c6:
             st.empty()
         # Row 2: inputs dependent on row-1 toggles
@@ -551,17 +582,35 @@ def show_create_bot():
             else:
                 symbol = st.text_input("Symbol*", value=os.getenv("SYMBOL", "XAUUSD"), key=f"{sk}_symbol", label_visibility="collapsed")
         with gr2c2:
-            max_candles = st.number_input("Max Candles", label_visibility="collapsed",
-                                          value=int(st.session_state.get(f"{sk}_mc", params.get('max_candles', 7))),
-                                          min_value=1, max_value=500, key=f"{sk}_mc",
-                                          disabled=not _use_mc)
+            if is_flappy_bird:
+                st.empty()
+                max_candles = 0
+            else:
+                max_candles = st.number_input(
+                    "Max Candles", label_visibility="collapsed",
+                    value=int(st.session_state.get(f"{sk}_mc", params.get('max_candles', 7))),
+                    min_value=1, max_value=500, key=f"{sk}_mc",
+                    disabled=not _use_mc
+                )
             if not _use_mc:
                 max_candles = 0
         with gr2c3:
-            st.empty()
+            if is_flappy_bird:
+                limit_order_candles = st.number_input(
+                    "Pending candles",
+                    value=int(st.session_state.get(
+                        f"{sk}_loc", params.get("limit_order_candles", 7)
+                    )),
+                    min_value=1,
+                    max_value=50,
+                    key=f"{sk}_loc",
+                    help="Số nến tối đa chờ BUY/SELL LIMIT khớp.",
+                )
+            else:
+                st.empty()
 
         # ── ZONE 2: ENTRY ─────────────────────────────────────────────────
-        if is_pattern:
+        if is_pattern and not is_flappy_bird:
             _section_header("📈", "ENTRY", "#10b981")
             _ema_side_opts = ["above_ema", "below_ema"]
             # Row 1: FEG Margins + EMA Direction (5 cols)
@@ -688,6 +737,30 @@ def show_create_bot():
                     "% body", value="" if _raw_nw_sl is None else str(_raw_nw_sl),
                     key=f"{sk}_c2_sell_lower_wick_max_pct_str", placeholder="VD: 30",
                     help="SELL: (close−low) so với body × n%."))
+        elif is_flappy_bird:
+            ema_period = 21
+            h2_exceed_pips = 0.0
+            c2_gap_pips = 0.0
+            ema_margin_pips = 0.0
+            ema_filter_enabled = True
+            buy_ema_side = "above_ema"
+            sell_ema_side = "above_ema"
+            entry_start_time = time(0, 0)
+            entry_end_time = time(23, 59)
+            entry_mode = "flappy_bird_limit"
+            entry_percent = float(params.get("entry_body_percent", 5.0))
+            c2_buy_upper_wick_max_pct = None
+            c2_buy_lower_wick_max_pct = None
+            c2_sell_upper_wick_max_pct = None
+            c2_sell_lower_wick_max_pct = None
+            c2_buy_upper_wick_cmp = "lt"
+            c2_buy_lower_wick_cmp = "lt"
+            c2_sell_upper_wick_cmp = "lt"
+            c2_sell_lower_wick_cmp = "lt"
+            st.info(
+                "Flappy Bird BUY/SELL: EMA13/21/55 và điều kiện Mẹ/Con/Cha cố định. "
+                f"Pending {limit_order_candles} nến · RR {rr_ratio:.1f}"
+            )
         else:
             # Master Candle — no Entry zone, set defaults
             ema_period = None
@@ -715,17 +788,34 @@ def show_create_bot():
         # ── ZONE 3+4: ORDER SETTINGS & RISK ──────────────────────────────
         _section_header("📊", "ORDER SETTINGS & RISK", "#f59e0b")
         _or_col1, _or_col2, _or_col3 = st.columns(3)
-        with _or_col1:
-            buffer_k = st.number_input("Buffer K (pips)",
-                                       value=float(st.session_state.get(f"{sk}_buffer_k", params.get('buffer_k', 5))),
-                                       min_value=0.0, max_value=200.0, step=1.0, key=f"{sk}_buffer_k",
-                                       help="SL = candle body + k pips")
-        with _or_col2:
-            re_entry_after_sl = st.checkbox("Entry tiếp tục sau SL",
-                                            value=bool(st.session_state.get(f"{sk}_re_entry_after_sl", False)),
-                                            key=f"{sk}_re_entry_after_sl",
-                                            help="Trong lúc lệnh đang chạy, bot vẫn scan signal. "
-                                                 "Nếu SL hit đúng tại candle2 của signal mới → vào lệnh tiếp ngay.")
+        if is_flappy_bird:
+            buffer_k = 0.0
+            re_entry_after_sl = False
+            with _or_col1:
+                sl_buffer_pips = float(params.get('sl_buffer_pips', 5.0))
+                min_father_body_points = st.number_input(
+                    "Thân Cha tối thiểu (price points)",
+                    value=float(params.get("min_father_body_points", 2.0)),
+                    min_value=0.0,
+                    max_value=100000.0,
+                    step=0.1,
+                    format="%.1f",
+                    key=f"{sk}_min_father_body_points",
+                    help="Signal chỉ hợp lệ khi Body Cha lớn hơn giá trị này.",
+                )
+                st.caption(f"SL buffer cố định: {sl_buffer_pips:g} pips")
+        else:
+            with _or_col1:
+                buffer_k = st.number_input("Buffer K (pips)",
+                                           value=float(st.session_state.get(f"{sk}_buffer_k", params.get('buffer_k', 5))),
+                                           min_value=0.0, max_value=200.0, step=1.0, key=f"{sk}_buffer_k",
+                                           help="SL = candle body + k pips")
+            with _or_col2:
+                re_entry_after_sl = st.checkbox("Entry tiếp tục sau SL",
+                                                value=bool(st.session_state.get(f"{sk}_re_entry_after_sl", False)),
+                                                key=f"{sk}_re_entry_after_sl",
+                                                help="Trong lúc lệnh đang chạy, bot vẫn scan signal. "
+                                                     "Nếu SL hit đúng tại candle2 của signal mới → vào lệnh tiếp ngay.")
         lot_mode = st.radio("Lot Mode", options=["fixed", "flex"],
                             format_func=lambda x: "Fixed" if x == "fixed" else "Flex (Risk-based)",
                             horizontal=True, key=f"{sk}_lot_mode")
@@ -764,31 +854,38 @@ def show_create_bot():
 
         # ── ZONE 5: EXIT ──────────────────────────────────────────────────
         _section_header("🚪", "EXIT", "#ef4444")
-        ex1, ex2, ex3, ex4 = st.columns(4)
-        with ex1:
-            _tp_opts = ["price_based", "close_based"]
-            tp_type = st.radio("TP Exit", options=_tp_opts,
-                               index=_tp_opts.index(st.session_state.get(f"{sk}_tp_type", params.get('tp_type', 'price_based'))),
-                               format_func=lambda x: "Price-based (wick)" if x == "price_based" else "Close-based",
-                               horizontal=True, key=f"{sk}_tp_type")
-        with ex2:
-            _sl_opts = ["price_based", "close_based"]
-            sl_type = st.radio("SL Exit", options=_sl_opts,
-                               index=_sl_opts.index(st.session_state.get(f"{sk}_sl_type", params.get('sl_type', 'price_based'))),
-                               format_func=lambda x: "Price-based (wick)" if x == "price_based" else "Close-based",
-                               horizontal=True, key=f"{sk}_sl_type")
-        with ex3:
-            be_enabled = st.checkbox("Break-Even (BE)",
-                                     value=bool(st.session_state.get(f"{sk}_be_enabled", False)),
-                                     key=f"{sk}_be_enabled",
-                                     help="Dời SL về entry khi lời đủ be_r × SL distance")
-        with ex4:
-            be_r = st.number_input("BE Trigger (R)",
-                                   value=float(st.session_state.get(f"{sk}_be_r", 1.0)),
-                                   min_value=0.1, max_value=10.0, step=0.1, format="%.1f",
-                                   key=f"{sk}_be_r",
-                                   help="BE kích hoạt khi lời đạt be_r × SL distance",
-                                   disabled=not be_enabled)
+        if is_flappy_bird:
+            tp_type = "price_based"
+            sl_type = "price_based"
+            be_enabled = False
+            be_r = 1.0
+            st.caption("Flappy Bird cố định: TP/SL theo giá, không dùng Break-Even.")
+        else:
+            ex1, ex2, ex3, ex4 = st.columns(4)
+            with ex1:
+                _tp_opts = ["price_based", "close_based"]
+                tp_type = st.radio("TP Exit", options=_tp_opts,
+                                   index=_tp_opts.index(st.session_state.get(f"{sk}_tp_type", params.get('tp_type', 'price_based'))),
+                                   format_func=lambda x: "Price-based (wick)" if x == "price_based" else "Close-based",
+                                   horizontal=True, key=f"{sk}_tp_type")
+            with ex2:
+                _sl_opts = ["price_based", "close_based"]
+                sl_type = st.radio("SL Exit", options=_sl_opts,
+                                   index=_sl_opts.index(st.session_state.get(f"{sk}_sl_type", params.get('sl_type', 'price_based'))),
+                                   format_func=lambda x: "Price-based (wick)" if x == "price_based" else "Close-based",
+                                   horizontal=True, key=f"{sk}_sl_type")
+            with ex3:
+                be_enabled = st.checkbox("Break-Even (BE)",
+                                         value=bool(st.session_state.get(f"{sk}_be_enabled", False)),
+                                         key=f"{sk}_be_enabled",
+                                         help="Dời SL về entry khi lời đủ be_r × SL distance")
+            with ex4:
+                be_r = st.number_input("BE Trigger (R)",
+                                       value=float(st.session_state.get(f"{sk}_be_r", 1.0)),
+                                       min_value=0.1, max_value=10.0, step=0.1, format="%.1f",
+                                       key=f"{sk}_be_r",
+                                       help="BE kích hoạt khi lời đạt be_r × SL distance",
+                                       disabled=not be_enabled)
         # sl_pips not used for pattern strategies (SL from candle + buffer_k)
         sl_pips = None if is_pattern else int(params.get('sl_pips', 30))
 
@@ -802,6 +899,7 @@ def show_create_bot():
                     symbol=symbol,
                     user=username,
                     test=test_mode,
+                    timeframe=timeframe,
                     lot_size=lot_size if lot_mode == "fixed" else None,
                     sl_pips=sl_pips,
                     rr_ratio=rr_ratio,
@@ -816,6 +914,9 @@ def show_create_bot():
                     tp_type=tp_type,
                     sl_type=sl_type,
                     buffer_k=buffer_k,
+                    min_father_body_points=(
+                        min_father_body_points if is_flappy_bird else None
+                    ),
                     lot_mode=lot_mode,
                     risk_mode=risk_mode if lot_mode == "flex" else None,
                     risk_percent=risk_percent if lot_mode == "flex" else None,

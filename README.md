@@ -50,6 +50,12 @@ TELEGRAM_CHAT_ID=987654321
 TELEGRAM_ERROR_CHAT_ID=123456789
 ```
 
+`TELEGRAM_BOT_TOKEN` phải là token hiện tại do `@BotFather` cấp, có dạng
+`<bot_id>:<secret>`. Nếu log ghi `HTTP 401 Unauthorized`, token đã sai hoặc
+đã bị revoke; tạo token mới bằng `/token` tại `@BotFather`, cập nhật `.env`,
+rồi restart dashboard và bot. Dashboard/subprocess sẽ ưu tiên giá trị mới nhất
+trong file `.env`.
+
 ## Chạy
 
 ```bash
@@ -73,6 +79,14 @@ python src/bot_runner.py --strategy feg_ema21 --symbol XAUUSD --user admin --tes
 ```
 
 Bot tự restart sau crash (30s delay). Mọi lỗi gửi Telegram.
+Khi dừng bot từ dashboard, hệ thống cũng gửi thông báo stop vào Telegram.
+
+Chu kỳ quét live được cấu hình trên trang **Create Bot** theo mili giây.
+Giá trị mặc định là `1000 ms` (1 giây), tối thiểu `100 ms`; runner chuyển
+giá trị này thành giây khi gọi `time.sleep()`. Có thể đặt tối thiểu `100 ms` (theo bước `100 ms`). Chu kỳ ngắn giúp bot phản
+ứng nhanh hơn trong M1, nhưng không làm dữ liệu nến MT5 cập nhật nhanh hơn và
+tăng tải gọi API/CPU; nên bắt đầu ở `500–1000 ms` rồi giảm xuống `100 ms` nếu
+broker/terminal đáp ứng đủ nhanh.
 
 ## Backtest Verification
 
@@ -98,6 +112,7 @@ Workflow: Tailscale connect → SSH → git pull + pip install → [optional] re
 |----------|-------|-------|
 | Master Candle | Nến M5 lúc 21:05 HCM, Close>Open → BUY | 210500 |
 | FEG EMA21 | Pattern 2 nến cùng hướng + EMA21 filter | 212100 |
+| Flappy Bird BUY/SELL | BUY/SELL LIMIT theo EMA13/21/55 + mô hình Mẹ/Con/Cha trên M5 | 212400 |
 
 ### FEG EMA21 — Điều Kiện Vào Lệnh
 
@@ -110,6 +125,77 @@ Workflow: Tailscale connect → SSH → git pull + pip install → [optional] re
 - L2 < L1 (low mới thấp hơn)
 - C2 > H1 (close trên high nến trước)
 - H2 < EMA21 (high dưới EMA)
+
+### Flappy Bird BUY/SELL
+
+Flappy Bird tạo tín hiệu theo hai hướng. Với BUY:
+
+- EMA xếp thứ tự: `EMA13 > EMA21 > EMA55`.
+- Có từ 2 đến 7 nến con nằm giữa nến Mẹ và nến Cha.
+- Nến Mẹ phải cùng chiều với chiến lược: bullish cho BUY, bearish cho SELL.
+- Thân Mẹ lớn hơn thân của mọi nến con; `HIGH` Mẹ bao trùm toàn bộ thân các nến con.
+- Thân Cha lớn hơn `1.5 ×` thân nến con liền kề trước đó.
+- Râu trên Cha nhỏ hơn `30%` thân Cha.
+- `OPEN Cha >= EMA13`, `LOW Cha > EMA21`.
+- `CLOSE Cha` lớn hơn `HIGH` cao nhất của các nến con.
+- Thân Cha lớn hơn ngưỡng `min_father_body_points` (mặc định `2.0` đơn vị giá), có thể chỉnh trong Backtest và Create Bot.
+
+Với SELL, các điều kiện được đối xứng:
+
+- EMA xếp thứ tự: `EMA13 < EMA21 < EMA55`.
+- HIGH Mẹ bao trùm thân các nến Con theo hướng giảm; LOW Mẹ bao trùm đáy thân các Con.
+- Thân Cha lớn hơn `1.5 ×` thân nến Con cuối.
+- Râu dưới Cha nhỏ hơn `30%` thân Cha.
+- `OPEN Cha <= EMA13`, `HIGH Cha < EMA21`.
+- `CLOSE Cha` nhỏ hơn `LOW` thấp nhất của các nến Con.
+- Thân Cha lớn hơn ngưỡng `min_father_body_points` (mặc định `2.0` đơn vị giá), có thể chỉnh trong Backtest và Create Bot.
+
+Mức lệnh:
+
+- Entry: `CLOSE Cha - 5% × thân Cha` (BUY LIMIT).
+- SL: `min(LOW Cha, LOW các nến con) - 5 pips`.
+- TP: `Entry + 2 × (Entry - SL)`.
+- SELL: Entry = `CLOSE Cha + 5% × thân Cha` (SELL LIMIT), SL nằm trên HIGH
+  lớn nhất của Cha/Con cộng 5 pips, TP = `Entry - 2 × (SL - Entry)`.
+- Pending hết hạn sau 7 nến nếu chưa khớp.
+- Backtest/test dùng cùng quy tắc EMA với Live Bot: mỗi EMA được tính trên tối
+  đa 120 nến gần nhất (EMA warmup window). Nếu cùng nến chạm cả SL và TP thì
+  backtest ưu tiên SL; trường hợp này không được dùng để suy diễn thứ tự khớp
+  lệnh live của MT5.
+
+Backtest chỉ lưu dữ liệu nến/EMA tối thiểu để không làm chậm toàn bộ lượt chạy.
+Khi xem **Interactive Chart**, mục **Flappy Bird Signal Debug** sẽ tính audit
+on-demand cho đúng trade đang chọn: cửa sổ Mẹ–Con–Cha, thời điểm Entry fill,
+EMA, OHLC/body/wick và kết quả PASS/FAIL của từng điều kiện.
+
+Trong lúc chạy Flappy Bird backtest, UI hiển thị progress theo thời gian thực:
+phần trăm nến đã quét, ETA, số trade đã tạo, thời gian đã chạy và log các mốc
+xử lý gần nhất. Engine dùng callback tùy chọn nên các script/test chạy trực tiếp
+không bị phụ thuộc vào Streamlit.
+
+Trong phần setting Backtest, Flappy Bird chỉ hiển thị các lựa chọn có ý nghĩa
+với pattern này. Nhóm **Wick Filter**, các EMA/margin filter của FEG, Entry mode,
+Entry % và giới hạn nến Master Candle được ẩn; các giá trị cố định như entry,
+SL buffer, RR, minimum Father body và pending expiry vẫn được lấy từ YAML để
+engine sử dụng. Các strategy khác không bị thay đổi và vẫn hiển thị setting
+generic của chúng.
+
+Với Flappy Bird, EXIT TIME hiện đang tạm ẩn/vô hiệu hóa. Vị thế chỉ thoát bởi
+SL hoặc TP và không bị đóng tự động sau một số nến.
+
+Với Flappy Bird, SL BUY lấy mức Low thấp hơn giữa Nến Cha và Nến Con liền kề
+trước đó, rồi trừ `sl_buffer_pips`; SL SELL lấy mức High cao hơn giữa hai nến
+này, rồi cộng `sl_buffer_pips`.
+
+Trên trang **Backtest** và **Create Bot**, timeframe, RR và số nến chờ pending
+của Flappy Bird có thể override trực tiếp từ UI. Nếu không thay đổi, chúng mặc
+định theo YAML; timeframe được truyền đến live runner, RR được dùng khi tính TP
+theo risk và pending expiry quyết định thời gian giữ lệnh LIMIT chưa khớp.
+
+Vòng scan pattern dùng mảng NumPy theo vị trí thay vì `DataFrame.loc` lặp lại
+cho từng cửa sổ Mẹ–Con–Cha; điều này tránh overhead pandas trong inner loop.
+
+Định nghĩa đầy đủ và vị trí triển khai xem tại [docs/codebase-guide-vi.md](docs/codebase-guide-vi.md).
 
 ## Cấu Trúc Project
 

@@ -12,16 +12,23 @@ import json
 import os
 import sys
 import time
+import requests
 from datetime import datetime, time as _time
 from zoneinfo import ZoneInfo
 
-# Add parent directory to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add parent directory to path and load the repository env file independently
+# of the subprocess working directory.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _REPO_ROOT)
 
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(os.path.join(_REPO_ROOT, ".env"), override=True)
 
 from src.utils import _in_time_window
+from src.flappy_bird_strategy import (
+    EMA_WARMUP_WINDOW,
+    calculate_flappy_ema_series,
+)
 
 TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
 
@@ -59,8 +66,10 @@ def get_args():
                         help="C2 < L1 - N pips / C2 > H1 + N pips (điều kiện 5, default 0)")
     parser.add_argument("--ema_margin_pips", type=float, default=0.0,
                         help="L2/H2 cách EMA + N pips (điều kiện 6, default 0)")
-    parser.add_argument("--limit_order_candles", type=int, default=1,
-                        help="Chờ khớp lệnh tối đa N nến (default 1)")
+    parser.add_argument("--limit_order_candles", type=int, default=None,
+                        help="Chờ khớp lệnh tối đa N nến (default: from strategy)")
+    parser.add_argument("--min_father_body_points", type=float, default=None,
+                        help="Minimum Father candle body in price points (Flappy Bird)")
     parser.add_argument("--entry_mode", type=str, default=None,
                         help="Entry mode: 'close' or 'range_percent' (default: from strategy)")
     parser.add_argument("--entry_percent", type=float, default=None,
@@ -89,8 +98,12 @@ def get_args():
     # Bot control
     parser.add_argument("--test", type=int, default=1,
                         help="Test mode: 1=test (no real trades), 0=live")
-    parser.add_argument("--interval", type=int, default=60,
+    parser.add_argument("--managed_by_ui", type=int, default=0,
+                        help="Suppress local stop notification when UI sends it")
+    parser.add_argument("--interval", type=float, default=60.0,
                         help="Check interval in seconds (default: 60)")
+    parser.add_argument("--timeframe", type=str, default=None,
+                        help="Candle timeframe override, e.g. M1/M5/M15 (default: from strategy)")
 
     parser.add_argument('--entry_start_time', type=str, default='00:00',
                         help='Entry window start HH:MM (Asia/Ho_Chi_Minh). Default 00:00 = no filter.')
@@ -139,8 +152,6 @@ def log(message: str, level: str = "INFO"):
 
 def send_telegram(text: str, is_error: bool = False) -> bool:
     """Send message to Telegram"""
-    import requests
-
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_ERROR_CHAT_ID") if is_error else os.getenv("TELEGRAM_CHAT_ID")
 
@@ -153,7 +164,11 @@ def send_telegram(text: str, is_error: bool = False) -> bool:
 
     try:
         response = requests.post(url, json=payload, timeout=10)
-        return response.ok
+        if not response.ok:
+            detail = response.text[:500].replace("\n", " ")
+            log(f"Telegram rejected message: HTTP {response.status_code} - {detail}", "ERROR")
+            return False
+        return True
     except Exception as e:
         log(f"Telegram error: {e}", "ERROR")
         return False
@@ -327,6 +342,9 @@ def run_bot(args):
         elif args.strategy == 'feg_reverse':
             run_feg_reverse_bot(args, strategy, params, credentials,
                                 entry_start_time=entry_start, entry_end_time=entry_end)
+        elif args.strategy == 'flappy_bird':
+            run_feg_bot(args, strategy, params, credentials,
+                        entry_start_time=entry_start, entry_end_time=entry_end)
         else:
             run_feg_bot(args, strategy, params, credentials,
                         entry_start_time=entry_start, entry_end_time=entry_end)
@@ -338,7 +356,7 @@ def run_bot(args):
     lot_size = args.lot_size or params.get('lot_size', 0.01)
     max_candles = args.max_candles or params.get('max_candles', 7)
     entry_time = params.get('entry_time', '21:05')
-    timeframe = params.get('timeframe', 'M5')
+    timeframe = args.timeframe or params.get('timeframe', 'M5')
 
     # Get user's MT5 credentials
     credentials = get_user_mt5_credentials(args.user)
@@ -529,7 +547,8 @@ def run_bot(args):
     except KeyboardInterrupt:
         log("Bot stopped by user")
         _write_bot_state(os.getpid(), args.symbol, args.strategy, 0, 0)
-        send_telegram("Bot Stopped (manual)")
+        if not args.managed_by_ui:
+            send_telegram("Bot Stopped (manual)")
     except _GracefulRestart:
         raise
     except Exception as e:
@@ -693,28 +712,17 @@ def _calc_flex_lot(mt5, symbol: str, risk_mode: str, risk_percent: float, risk_a
 
 
 def _write_bot_state(pid: int, symbol: str, strategy: str, active: int, pending: int):
-    """Write this bot runtime state to data/bot_state.json for CI/CD graceful deploy.
-
-    NOTE: read-modify-write is not atomic across concurrent bots; at candle frequency
-    with few bots, lost updates are unlikely but possible.
-    """
+    """Write runtime state without allowing telemetry errors to crash trading."""
     state_path = os.path.normpath(
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "bot_state.json")
     )
     os.makedirs(os.path.dirname(state_path), exist_ok=True)
     entry = {"pid": pid, "symbol": symbol, "strategy": strategy, "active": active, "pending": pending}
     try:
-        with open(state_path, "r", encoding="utf-8") as f:
-            all_states = json.load(f)
-    except Exception:
-        all_states = []
-    all_states = [s for s in all_states if s.get("pid") != pid]
-    all_states.append(entry)
-    # Per-PID tmp file prevents concurrent bots from colliding on Windows file locks
-    tmp = state_path + f".{pid}.tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(all_states, f)
-    os.replace(tmp, state_path)
+        from src.state_file import update_bot_state
+        update_bot_state(state_path, entry)
+    except OSError as error:
+        log(f"Could not update bot runtime state: {error}", "WARN")
 
 
 def _register_in_running_bots(pid: int, symbol: str, strategy: str, user: str,
@@ -836,13 +844,147 @@ def _get_exit_deal(mt5, ticket: int, retries: int = 3, delay: float = 1.0):
     return None
 
 
+def _is_flappy_order(order, symbol: str, magic: int) -> bool:
+    """Match broker-side Flappy orders without depending on local process state."""
+    return (
+        getattr(order, "symbol", None) == symbol
+        and (
+            getattr(order, "magic", None) == magic
+            or str(getattr(order, "comment", "")).upper().startswith("FLAPPY-")
+        )
+    )
+
+
+def _order_direction(mt5, order) -> str | None:
+    """Map a broker pending/position type to the strategy direction."""
+    order_type = getattr(order, "type", None)
+    buy_types = {
+        getattr(mt5, "ORDER_TYPE_BUY_LIMIT", object()),
+        getattr(mt5, "ORDER_TYPE_BUY", object()),
+    }
+    sell_types = {
+        getattr(mt5, "ORDER_TYPE_SELL_LIMIT", object()),
+        getattr(mt5, "ORDER_TYPE_SELL", object()),
+    }
+    if order_type in buy_types:
+        return "BUY"
+    if order_type in sell_types:
+        return "SELL"
+    return None
+
+
+def _find_filled_position(mt5, pending_order, symbol: str, magic: int):
+    """Find the position created by a pending order, even when tickets differ."""
+    direction = _order_direction(mt5, pending_order)
+    positions = mt5.positions_get(symbol=symbol) or []
+    candidates = [
+        position for position in positions
+        if _is_flappy_order(position, symbol, magic)
+        and (direction is None or _order_direction(mt5, position) == direction)
+    ]
+    pending_ticket = getattr(pending_order, "ticket", None)
+    linked = [
+        position for position in candidates
+        if pending_ticket in {
+            getattr(position, "ticket", None),
+            getattr(position, "identifier", None),
+            getattr(position, "order", None),
+        }
+    ]
+    if linked:
+        return linked[0]
+    if len(candidates) == 1:
+        return candidates[0]
+    if candidates:
+        return max(candidates, key=lambda item: getattr(item, "time", 0) or 0)
+    return None
+
+
+def _recover_flappy_state(mt5, symbol: str, magic: int, limit_order_candles: int,
+                          timeframe: str, lot_size: float) -> tuple[list, list]:
+    """Recover broker-side Flappy orders/positions after a process restart."""
+    pending_orders = []
+    active_trades = []
+    orders = mt5.orders_get(symbol=symbol) or []
+    positions = mt5.positions_get(symbol=symbol) or []
+    timeframe_minutes = {"M1": 1, "M5": 5, "M15": 15, "M30": 30, "H1": 60, "H4": 240, "D1": 1440}.get(timeframe, 5)
+    now = time.time()
+    for order in orders:
+        if not _is_flappy_order(order, symbol, magic):
+            continue
+        direction = _order_direction(mt5, order)
+        if direction is None:
+            continue
+        age_candles = max(0, int((now - (getattr(order, "time_setup", now) or now)) / (timeframe_minutes * 60)))
+        candles_left = limit_order_candles - age_candles
+        pending_orders.append({
+            "signal": {
+                "direction": direction,
+                "entry_price": order.price_open,
+                "stop_loss": order.sl,
+                "take_profit": order.tp,
+            },
+            "trade_lot": getattr(order, "volume_current", lot_size) or lot_size,
+            "candles_left": candles_left,
+            "order_id": f"RECOVERED-{getattr(order, 'ticket', 'UNKNOWN')}",
+            "mt5_ticket": getattr(order, "ticket", None),
+        })
+    for position in positions:
+        if not _is_flappy_order(position, symbol, magic):
+            continue
+        direction = _order_direction(mt5, position)
+        if direction is None:
+            continue
+        active_trades.append({
+            "direction": direction,
+            "entry": position.price_open,
+            "sl": position.sl,
+            "tp": position.tp,
+            "ticket": position.ticket,
+            "candles": 0,
+            "order_id": f"RECOVERED-{position.ticket}",
+            "lot": getattr(position, "volume", lot_size) or lot_size,
+        })
+    return pending_orders, active_trades
+
+
+def _has_duplicate_pending(mt5, pending_orders: list, signal: dict,
+                           symbol: str, magic: int) -> bool:
+    """Prevent the same Flappy signal from being submitted twice."""
+    def matches(candidate: dict) -> bool:
+        existing = candidate.get("signal", candidate)
+        return (
+            existing.get("direction") == signal.get("direction")
+            and all(
+                abs(float(existing.get(key, 0)) - float(signal.get(key, 0))) < 1e-8
+                for key in ("entry_price", "stop_loss", "take_profit")
+            )
+        )
+
+    if any(matches(order) for order in pending_orders):
+        return True
+    broker_orders = mt5.orders_get(symbol=symbol) or []
+    for order in broker_orders:
+        if not _is_flappy_order(order, symbol, magic):
+            continue
+        if (
+            _order_direction(mt5, order) == signal.get("direction")
+            and abs(order.price_open - signal["entry_price"]) < 1e-8
+            and abs(order.sl - signal["stop_loss"]) < 1e-8
+            and abs(order.tp - signal["take_profit"]) < 1e-8
+        ):
+            return True
+    return False
+
+
 def run_feg_bot(args, strategy, params, credentials,
                 entry_start_time: _time = _time(0, 0),
                 entry_end_time: _time = _time(23, 59)):
-    """Vòng lặp live cho strategy FEG (pattern + EMA21, nhiều pending orders + trades cùng lúc)."""
+    """Run the shared pattern live loop for FEG and Flappy Bird."""
     from src.orders import place_order, close_position, place_limit_order, cancel_pending_order
 
-    timeframe = params.get('timeframe', 'M5')
+    strategy_label = "Flappy Bird" if args.strategy == "flappy_bird" else "FEG"
+    timeframe = args.timeframe or params.get('timeframe', 'M5')
     ema_period = args.ema_period or params.get('ema_period', 21)
     rr_ratio = args.rr_ratio or params.get('rr_ratio', 2.0)
     buffer_k = args.buffer_k if args.buffer_k is not None else params.get('buffer_k', 5)
@@ -854,7 +996,24 @@ def run_feg_bot(args, strategy, params, credentials,
     ema_filter_enabled = bool(args.ema_filter_enabled)
     buy_ema_side  = args.buy_ema_side  or params.get('buy_ema_side',  'below_ema')
     sell_ema_side = args.sell_ema_side or params.get('sell_ema_side', 'above_ema')
-    limit_order_candles = args.limit_order_candles if args.limit_order_candles else params.get('limit_order_candles', 1)
+    limit_order_candles = (
+        args.limit_order_candles
+        if args.limit_order_candles is not None
+        else params.get('limit_order_candles', 7 if args.strategy == 'flappy_bird' else 1)
+    )
+    if limit_order_candles <= 0:
+        raise ValueError("limit_order_candles must be positive")
+    max_candles = (
+        0 if args.strategy == "flappy_bird"
+        else args.max_candles if args.max_candles is not None
+        else params.get('max_candles', 7)
+    )
+    min_father_body_points = (
+        args.min_father_body_points
+        if args.min_father_body_points is not None
+        else params.get('min_father_body_points', 2.0)
+    )
+    flappy_magic = params.get("magic") or 212400
     entry_mode = args.entry_mode or params.get('entry_mode', 'close')
     entry_percent = args.entry_percent if args.entry_percent is not None else params.get('entry_percent', 0.0)
     tp_type = args.tp_type or params.get('tp_type', 'price_based')
@@ -893,12 +1052,22 @@ def run_feg_bot(args, strategy, params, credentials,
     if c2_sell_upper_wick_max_pct is not None: _ws.append(f"upper{c2_sell_upper_wick_cmp}{c2_sell_upper_wick_max_pct}%")
     if c2_sell_lower_wick_max_pct is not None: _ws.append(f"lower{c2_sell_lower_wick_cmp}{c2_sell_lower_wick_max_pct}%")
     wick_log = f"WickFilter=BUY({','.join(_wb) or 'OFF'}) SELL({','.join(_ws) or 'OFF'})"
-    log(f"FEG params: EMA{ema_period}, RR={rr_ratio}, buffer_k={buffer_k}, "
-        f"lot={lot_log}, max_candles={max_candles or 'unlimited'}, "
-        f"h2_exceed={h2_exceed_pips}p, c2_gap={c2_gap_pips}p, {ema_filter_str}, {be_log}, {re_entry_log}, {wick_log}")
+    if args.strategy == "flappy_bird":
+        log(
+            f"Flappy Bird params: EMA13/21/55, RR={rr_ratio}, "
+            f"lot={lot_log}, pending_candles={limit_order_candles}, "
+            f"max_candles={max_candles or 'unlimited'}, timeframe={timeframe}"
+        )
+    else:
+        log(f"FEG params: EMA{ema_period}, RR={rr_ratio}, buffer_k={buffer_k}, "
+            f"lot={lot_log}, max_candles={max_candles or 'unlimited'}, "
+            f"h2_exceed={h2_exceed_pips}p, c2_gap={c2_gap_pips}p, {ema_filter_str}, {be_log}, {re_entry_log}, {wick_log}")
 
-    send_telegram(f"FEG Bot Started\nSymbol: {args.symbol}\nUser: {args.user}\n"
-                  f"Test: {'Yes' if args.test else 'No'}")
+    if not send_telegram(
+        f"{strategy_label} Bot Started\nSymbol: {args.symbol}\nUser: {args.user}\n"
+        f"Test: {'Yes' if args.test else 'No'}"
+    ):
+        log("Startup Telegram notification failed; inspect Telegram configuration/API error above", "ERROR")
 
     from src.bot_history_manager import create_session, close_session, record_trade as _record_trade
     _now_str = datetime.now(TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
@@ -925,6 +1094,7 @@ def run_feg_bot(args, strategy, params, credentials,
     active_trades  = []
     last_candle_time = None
     _mt5_ref = [None]  # persistent MT5 connection — reconnects only when terminal disconnects
+    state_recovered = False
 
     try:
         while True:
@@ -935,7 +1105,20 @@ def run_feg_bot(args, strategy, params, credentials,
                 time.sleep(args.interval)
                 continue
 
-            df = get_recent_candles(mt5, args.symbol, timeframe, count=max(120, ema_period * 4))
+            if args.strategy == "flappy_bird" and not args.test and not state_recovered:
+                pending_orders, active_trades = _recover_flappy_state(
+                    mt5, args.symbol, flappy_magic, limit_order_candles,
+                    timeframe, lot_size,
+                )
+                state_recovered = True
+                _write_bot_state(os.getpid(), args.symbol, args.strategy,
+                                 len(active_trades), len(pending_orders))
+                log(f"Recovered Flappy state: pending={len(pending_orders)} active={len(active_trades)}")
+
+            df = get_recent_candles(
+                mt5, args.symbol, timeframe,
+                count=max(EMA_WARMUP_WINDOW, ema_period * 4),
+            )
             if df is None or len(df) < ema_period + 2:
                 log(f"Insufficient candle data for {args.symbol} (got {len(df) if df is not None else 0})", "ERROR")
                 send_telegram(f"❌ Insufficient candle data\nSymbol: {args.symbol}", is_error=True)
@@ -943,6 +1126,15 @@ def run_feg_bot(args, strategy, params, credentials,
                 continue
 
             ema = df["close"].ewm(span=ema_period, adjust=False).mean().tolist()
+            ema13_series = calculate_flappy_ema_series(
+                df["close"], 13, EMA_WARMUP_WINDOW
+            )
+            ema21_series = calculate_flappy_ema_series(
+                df["close"], 21, EMA_WARMUP_WINDOW
+            )
+            ema55_series = calculate_flappy_ema_series(
+                df["close"], 55, EMA_WARMUP_WINDOW
+            )
             last = df.iloc[-1]
             prev = df.iloc[-2]
             candle_time = datetime.fromtimestamp(int(last["time"]), tz=TIMEZONE)
@@ -968,10 +1160,14 @@ def run_feg_bot(args, strategy, params, credentials,
 
                     # Test mode: simulate fill by candle low/high (unchanged behaviour)
                     if args.test or mt5_ticket is None:
-                        filled = candle["low"] <= _sig["entry_price"] <= candle["high"]
+                        filled = (
+                            candle["low"] <= _sig["entry_price"]
+                            if _sig["direction"] == "BUY"
+                            else candle["high"] >= _sig["entry_price"]
+                        )
                         if filled:
                             log(f"[{oid}] [TEST] Limit order filled @ {_sig['entry_price']:.2f}")
-                            send_telegram(f"<b>FEG Limit Filled (TEST): {_sig['direction']}</b>\n"
+                            send_telegram(f"<b>{strategy_label} Limit Filled (TEST): {_sig['direction']}</b>\n"
                                           f"ID: <code>{oid}</code>\nEntry: {_sig['entry_price']:.2f}\n"
                                           f"SL: {_sig['stop_loss']:.2f} TP: {_sig['take_profit']:.2f}\n"
                                           f"Lot: {order['trade_lot']}")
@@ -1023,12 +1219,29 @@ def run_feg_bot(args, strategy, params, credentials,
                                 )
                     else:
                         # Order gone from MT5 pending list — check if it became a position (filled)
-                        pos = mt5.positions_get(ticket=mt5_ticket)
-                        if pos:
-                            position = pos[0]
+                        if args.strategy == "flappy_bird":
+                            pending_ref = type(
+                                "PendingOrderRef", (), {
+                                    "ticket": mt5_ticket,
+                                    "type": (
+                                        getattr(mt5, "ORDER_TYPE_BUY_LIMIT", None)
+                                        if _sig["direction"] == "BUY"
+                                        else getattr(mt5, "ORDER_TYPE_SELL_LIMIT", None)
+                                    ),
+                                }
+                            )()
+                            position = _find_filled_position(
+                                mt5, pending_ref, args.symbol,
+                                flappy_magic,
+                            )
+                        else:
+                            positions = mt5.positions_get(ticket=mt5_ticket) or []
+                            position = positions[0] if positions else None
+                        if position:
                             fill_price = position.price_open
-                            log(f"[{oid}] Limit order filled by broker @ {fill_price:.5f} (ticket={mt5_ticket})")
-                            send_telegram(f"<b>FEG Limit Filled: {_sig['direction']}</b>\n"
+                            position_ticket = getattr(position, "ticket", mt5_ticket)
+                            log(f"[{oid}] Limit order filled by broker @ {fill_price:.5f} (ticket={position_ticket})")
+                            send_telegram(f"<b>{strategy_label} Limit Filled: {_sig['direction']}</b>\n"
                                           f"ID: <code>{oid}</code>\nFill: {fill_price:.2f}\n"
                                           f"SL: {_sig['stop_loss']:.2f} TP: {_sig['take_profit']:.2f}\n"
                                           f"Lot: {order['trade_lot']} | Ticket: {mt5_ticket}")
@@ -1037,7 +1250,7 @@ def run_feg_bot(args, strategy, params, credentials,
                                 "entry": fill_price,          # actual fill price from MT5
                                 "sl": _sig["stop_loss"],
                                 "tp": _sig["take_profit"],
-                                "ticket": mt5_ticket, "candles": 0, "order_id": oid,
+                                "ticket": position_ticket, "candles": 0, "order_id": oid,
                                 "lot": order.get("trade_lot", lot_size),
                             })
                         else:
@@ -1063,9 +1276,21 @@ def run_feg_bot(args, strategy, params, credentials,
                             trade["sl"] = entry_p
                             trade["be_triggered"] = True
                             log(f"[{trade.get('order_id','')}] BE triggered — SL → {entry_p:.2f}")
-                    exit_type, exit_price = check_exit(
-                        trade["direction"], candle, trade["tp"], trade["sl"], tp_type, sl_type,
-                    )
+                    if args.strategy == "flappy_bird":
+                        if trade["direction"] == "BUY" and candle["low"] <= trade["sl"]:
+                            exit_type, exit_price = "SL", trade["sl"]
+                        elif trade["direction"] == "BUY" and candle["high"] >= trade["tp"]:
+                            exit_type, exit_price = "TP", trade["tp"]
+                        elif trade["direction"] == "SELL" and candle["high"] >= trade["sl"]:
+                            exit_type, exit_price = "SL", trade["sl"]
+                        elif trade["direction"] == "SELL" and candle["low"] <= trade["tp"]:
+                            exit_type, exit_price = "TP", trade["tp"]
+                        else:
+                            exit_type, exit_price = None, None
+                    else:
+                        exit_type, exit_price = check_exit(
+                            trade["direction"], candle, trade["tp"], trade["sl"], tp_type, sl_type,
+                        )
                     if not exit_type and max_candles > 0 and trade["candles"] >= max_candles:
                         exit_type, exit_price = "TIME", last["close"]
                     if exit_type:
@@ -1111,6 +1336,9 @@ def run_feg_bot(args, strategy, params, credentials,
                                 trade["entry"], exit_price, trade_lot, pv,
                             )  # None when symbol info unavailable
                             verified = False
+                            if actual_pnl_usd is None:
+                                log(f"[{oid}] USD P&L unavailable from MT5 symbol info; recording 0.00 estimate", "WARN")
+                                actual_pnl_usd = 0.0
 
                         actual_pips = (
                             (actual_price - trade["entry"]) / pv if trade["direction"] == "BUY"
@@ -1125,8 +1353,8 @@ def run_feg_bot(args, strategy, params, credentials,
                             price_str += " ~est"
                             pnl_str = "~" + pnl_str + " ⚠️"
 
-                        log(f"[{oid}] FEG Exit: {exit_type} @ {price_str}, P&L: {pnl_str}")
-                        send_telegram(f"<b>FEG Exit: {exit_type}</b>\nID: <code>{oid}</code>\nPrice: {price_str}\nP&L: {pnl_str}")
+                        log(f"[{oid}] {strategy_label} Exit: {exit_type} @ {price_str}, P&L: {pnl_str}")
+                        send_telegram(f"<b>{strategy_label} Exit: {exit_type}</b>\nID: <code>{oid}</code>\nPrice: {price_str}\nP&L: {pnl_str}")
                         _record_trade(_session_id, oid, trade["direction"],
                                       trade["entry"], actual_price, exit_type,
                                       actual_pnl_usd, trade_lot, verified=verified)
@@ -1143,20 +1371,56 @@ def run_feg_bot(args, strategy, params, credentials,
                     f"C2: O={last['open']:.2f} H={last['high']:.2f} L={last['low']:.2f} C={last['close']:.2f} | "
                     f"EMA={ema[-1]:.2f} | in_window={in_window} can_scan={can_scan}")
                 if in_window and can_scan:
-                    c1 = {"open": prev["open"], "high": prev["high"], "low": prev["low"], "close": prev["close"]}
-                    c2 = {"open": last["open"], "high": last["high"], "low": last["low"], "close": last["close"]}
-                    signal = feg_entry_decision(
-                        None, c1, c2, ema[-1], args.symbol,
-                        rr_ratio, buffer_k, lot_size, entry_mode, entry_percent,
-                        h2_exceed_pips, c2_gap_pips, ema_margin_pips,
-                        ema_filter_enabled, buy_ema_side, sell_ema_side,
-                        c2_buy_upper_wick_max_pct, c2_buy_lower_wick_max_pct,
-                        c2_sell_upper_wick_max_pct, c2_sell_lower_wick_max_pct,
-                        c2_buy_upper_wick_cmp, c2_buy_lower_wick_cmp,
-                        c2_sell_upper_wick_cmp, c2_sell_lower_wick_cmp,
-                    )
+                    if args.strategy == 'flappy_bird':
+                        from src.flappy_bird_strategy import analyze_flappy_bird
+                        c2 = {"open": last["open"], "high": last["high"], "low": last["low"], "close": last["close"]}
+                        signal = None
+                        for child_count in range(7, 1, -1):
+                            mother_idx = len(df) - child_count - 2
+                            if mother_idx < 0:
+                                continue
+                            mother = df.loc[mother_idx, ["open", "high", "low", "close"]].to_dict()
+                            children = [
+                                df.loc[idx, ["open", "high", "low", "close"]].to_dict()
+                                for idx in range(mother_idx + 1, len(df) - 1)
+                            ]
+                            for direction in ("BUY", "SELL"):
+                                signal = analyze_flappy_bird(
+                                    args.symbol, mother, children, c2,
+                                    ema13_series[-1], ema21_series[-1], ema55_series[-1],
+                                    lot_size,
+                                    params.get('sl_buffer_pips', 5.0),
+                                    params.get('entry_body_percent', 5.0),
+                                    rr_ratio,
+                                    min_father_body_points,
+                                    direction,
+                                )
+                                if signal:
+                                    break
+                            if signal:
+                                break
+                    else:
+                        c1 = {"open": prev["open"], "high": prev["high"], "low": prev["low"], "close": prev["close"]}
+                        c2 = {"open": last["open"], "high": last["high"], "low": last["low"], "close": last["close"]}
+                        signal = feg_entry_decision(
+                            None, c1, c2, ema[-1], args.symbol,
+                            rr_ratio, buffer_k, lot_size, entry_mode, entry_percent,
+                            h2_exceed_pips, c2_gap_pips, ema_margin_pips,
+                            ema_filter_enabled, buy_ema_side, sell_ema_side,
+                            c2_buy_upper_wick_max_pct, c2_buy_lower_wick_max_pct,
+                            c2_sell_upper_wick_max_pct, c2_sell_lower_wick_max_pct,
+                            c2_buy_upper_wick_cmp, c2_buy_lower_wick_cmp,
+                            c2_sell_upper_wick_cmp, c2_sell_lower_wick_cmp,
+                        )
                     log(f"Signal scan: {signal['direction'] if signal else 'NO SIGNAL'}"
                         + (f" entry={signal['entry_price']:.2f} sl={signal['stop_loss']:.2f} tp={signal['take_profit']:.2f}" if signal else ""))
+                    if signal:
+                        if args.strategy == "flappy_bird" and _has_duplicate_pending(
+                            mt5, pending_orders, signal, args.symbol,
+                            params.get("magic", 212400),
+                        ):
+                            log("Flappy signal already has a pending order; skipping duplicate")
+                            signal = None
                     if signal:
                         trade_lot = lot_size
                         if lot_mode == "flex":
@@ -1167,7 +1431,7 @@ def run_feg_bot(args, strategy, params, credentials,
                         import uuid as _uuid
                         _candle_dt = datetime.fromtimestamp(int(last['time']), tz=TIMEZONE)
                         order_id = f"ORD-{_candle_dt.strftime('%y%m%d-%H%M%S')}-{args.symbol}-{_uuid.uuid4().hex[:4].upper()}"
-                        log(f"[{order_id}] FEG Signal: {signal['direction']} @ {signal['entry_price']:.2f}, "
+                        log(f"[{order_id}] {strategy_label} Signal: {signal['direction']} @ {signal['entry_price']:.2f}, "
                             f"SL={signal['stop_loss']:.2f}, TP={signal['take_profit']:.2f}, lot={trade_lot}, "
                             f"limit_timeout={limit_order_candles}c")
                         # Place real MT5 pending limit order
@@ -1175,7 +1439,8 @@ def run_feg_bot(args, strategy, params, credentials,
                             args.symbol, signal["direction"], trade_lot, signal["entry_price"],
                             sl=signal["stop_loss"], tp=signal["take_profit"],
                             credentials=credentials, test=bool(args.test),
-                            magic=212100, comment=f"FEG-{order_id[-4:]}",
+                            magic=flappy_magic if args.strategy == 'flappy_bird' else 212100,
+                            comment=f"FLAPPY-{order_id[-4:]}" if args.strategy == 'flappy_bird' else f"FEG-{order_id[-4:]}",
                         )
                         if not ok_limit:
                             log(f"[{order_id}] Failed to place limit order: {msg_limit}", "ERROR")
@@ -1212,7 +1477,7 @@ def run_feg_bot(args, strategy, params, credentials,
                                 f"Risk  = {_sl_pips:.2f} pips\n"
                                 f"{_tp_calc}"
                             )
-                            send_telegram(f"<b>FEG Signal (pending): {signal['direction']}</b>\n"
+                            send_telegram(f"<b>{strategy_label} Signal (pending): {signal['direction']}</b>\n"
                                           f"ID: <code>{order_id}</code>\n"
                                           f"Symbol: {args.symbol} | Lot: {trade_lot} | Ticket: {mt5_ticket} | Chờ: {limit_order_candles} nến\n\n"
                                           f"<pre>{_calc_block}</pre>")
@@ -1241,21 +1506,22 @@ def run_feg_bot(args, strategy, params, credentials,
             time.sleep(args.interval)
 
     except KeyboardInterrupt:
-        log("FEG Bot stopped by user")
+        log(f"{strategy_label} Bot stopped by user")
         _write_bot_state(os.getpid(), args.symbol, args.strategy, 0, 0)
         _unregister_from_running_bots(os.getpid())
         close_session(_session_id)
-        send_telegram("FEG Bot Stopped (manual)")
+        if not args.managed_by_ui:
+            send_telegram(f"{strategy_label} Bot Stopped (manual)")
     except _GracefulRestart:
         raise
     except Exception as e:
         import traceback
         tb = traceback.format_exc()
-        log(f"FEG Bot error: {e}", "ERROR")
+        log(f"{strategy_label} Bot error: {e}", "ERROR")
         _write_bot_state(os.getpid(), args.symbol, args.strategy, 0, 0)
         _unregister_from_running_bots(os.getpid())
         close_session(_session_id)
-        send_telegram(f"❌ FEG Bot crashed\nSymbol: {args.symbol}\nError: {e}\n\n<pre>{tb[-800:]}</pre>", is_error=True)
+        send_telegram(f"❌ {strategy_label} Bot crashed\nSymbol: {args.symbol}\nError: {e}\n\n<pre>{tb[-800:]}</pre>", is_error=True)
         raise
     finally:
         # Shutdown MT5 once when the bot loop exits (any reason)
@@ -1535,6 +1801,9 @@ def run_feg_stop_order_bot(args, strategy, params, credentials,
                                 trade["entry"], exit_price, trade_lot, pv,
                             )  # None when symbol info unavailable
                             verified = False
+                            if actual_pnl_usd is None:
+                                log(f"[{oid}] USD P&L unavailable from MT5 symbol info; recording 0.00 estimate", "WARN")
+                                actual_pnl_usd = 0.0
 
                         actual_pips = (
                             (actual_price - trade["entry"]) / pv if trade["direction"] == "BUY"
@@ -1668,7 +1937,8 @@ def run_feg_stop_order_bot(args, strategy, params, credentials,
         _write_bot_state(os.getpid(), args.symbol, args.strategy, 0, 0)
         _unregister_from_running_bots(os.getpid())
         close_session(_session_id)
-        send_telegram("FEG Stop Order Bot Stopped (manual)")
+        if not args.managed_by_ui:
+            send_telegram("FEG Stop Order Bot Stopped (manual)")
     except _GracefulRestart:
         raise
     except Exception as e:
@@ -1964,6 +2234,9 @@ def run_feg_reverse_bot(args, strategy, params, credentials,
                                 trade["entry"], exit_price, trade_lot, pv,
                             )  # None when symbol info unavailable
                             verified = False
+                            if actual_pnl_usd is None:
+                                log(f"[{oid}] USD P&L unavailable from MT5 symbol info; recording 0.00 estimate", "WARN")
+                                actual_pnl_usd = 0.0
 
                         actual_pips = (
                             (actual_price - trade["entry"]) / pv if trade["direction"] == "BUY"
@@ -2098,7 +2371,8 @@ def run_feg_reverse_bot(args, strategy, params, credentials,
         _write_bot_state(os.getpid(), args.symbol, args.strategy, 0, 0)
         _unregister_from_running_bots(os.getpid())
         close_session(_session_id)
-        send_telegram("FEG Reverse Bot Stopped (manual)")
+        if not args.managed_by_ui:
+            send_telegram("FEG Reverse Bot Stopped (manual)")
     except _GracefulRestart:
         raise
     except Exception as e:

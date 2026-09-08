@@ -7,6 +7,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta, time
+from time import monotonic
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 import os
@@ -25,6 +26,7 @@ from src.auth import (require_auth, get_user_mt5_credentials, has_mt5_credential
 username, name = require_auth()
 
 from src.backtest import fetch_historical_data, run_backtest
+from src.flappy_bird_strategy import diagnose_flappy_bird
 from src.utils import is_mt5_available, get_pip_value, report_page_error
 from src.strategy_manager import list_strategies, get_strategy_parameters
 from src.backtest_history import (
@@ -152,7 +154,7 @@ def main():
 
     # Backtest MT5 override — dùng account khác (ví dụ real account stable hơn demo trial)
     _saved_bt = get_user_mt5_backtest_credentials(username)
-    with st.expander("🔧 Backtest MT5 Override (fallback account)", expanded=bool(_saved_bt['login'])):
+    with st.expander("🔧 Backtest MT5 Override (fallback account)", expanded=False):
         st.caption("Để trống = dùng MT5 account trong Settings. Điền vào để override khi server demo lỗi.")
         _oc1, _oc2, _oc3 = st.columns(3)
         with _oc1:
@@ -184,13 +186,25 @@ def main():
     default_start = default_end - timedelta(days=30)
 
     # Strategy selection
-    selected_strategy_name = st.selectbox("Strategy", options=list(strategy_options.keys()),
-                                           key="new_layout_strategy")
+    strategy_names = list(strategy_options.keys())
+    default_strategy_index = next(
+        (index for index, strategy_id in enumerate(strategy_options.values())
+         if strategy_id == "flappy_bird"),
+        0,
+    )
+    selected_strategy_name = st.selectbox(
+        "Strategy",
+        options=strategy_names,
+        index=default_strategy_index,
+        key="new_layout_strategy",
+    )
     selected_strategy = strategy_options[selected_strategy_name]
     params = get_strategy_parameters(selected_strategy)
+    min_father_body_points = float(params.get("min_father_body_points", 2.0))
     entry_type = params.get('entry_type', 'time')
     is_pattern = entry_type == 'pattern'
     is_feg_stop_order = (selected_strategy == 'feg_stop_order')
+    is_flappy_bird = (selected_strategy == 'flappy_bird')
 
     left, _div, right = st.columns([0.58, 0.02, 0.40])
 
@@ -214,11 +228,19 @@ def main():
         with gr1c4:
             end_date = st.date_input("Ngày kết thúc", value=default_end, max_value=default_end)
         with gr1c5:
-            rr_ratio = st.number_input("RR Ratio",
-                                       value=float(_pf('rr_ratio', params.get('rr_ratio', 2.0))),
-                                       min_value=0.1, max_value=20.0, step=0.1, format="%.1f")
+            rr_ratio = st.number_input(
+                "RR Ratio",
+                value=float(params.get('rr_ratio', 2.0)),
+                min_value=0.1, max_value=20.0, step=0.1, format="%.1f",
+                disabled=is_flappy_bird,
+                help="Flappy Bird dùng RR cố định từ YAML." if is_flappy_bird else None,
+            )
         with gr1c6:
-            _use_mc = st.checkbox("Giới hạn số nến", value=True)
+            if is_flappy_bird:
+                _use_mc = True
+                st.caption("7 nến cố định")
+            else:
+                _use_mc = st.checkbox("Giới hạn số nến", value=True)
         # Row 2: inputs that depend on row-1 toggles
         gr2c1, gr2c2, gr2c3, gr2c4 = st.columns([2, 2, 1, 2])
         with gr2c1:
@@ -240,52 +262,82 @@ def main():
         with gr2c3:
             st.empty()
         with gr2c4:
-            max_candles = st.number_input("Max Candles", label_visibility="collapsed",
-                                          value=int(_pf('max_candles', params.get('max_candles', 7))),
-                                          min_value=1, max_value=500,
-                                          disabled=not _use_mc)
+            if is_flappy_bird:
+                st.empty()
+                max_candles = 0
+            else:
+                max_candles = st.number_input(
+                    "Max Candles", label_visibility="collapsed",
+                    value=int(_pf('max_candles', params.get('max_candles', 7))),
+                    min_value=1, max_value=500,
+                    disabled=not _use_mc,
+                )
             if not _use_mc:
                 max_candles = 0
 
         # ── ZONE 2: ENTRY ─────────────────────────────────────────────────
         if is_pattern:
             _section_header("📈", "ENTRY", "#10b981")
-            _ema_side_opts = ["above_ema", "below_ema"]
-            # Row 1: FEG Margins + EMA Direction (7 cols)
-            er1, er2, er3, er4, er5 = st.columns(5)
-            with er1:
-                ema_period = st.number_input("EMA Period",
-                                             value=int(_pf('ema_period', params.get('ema_period', 21))),
-                                             min_value=2, max_value=200)
-            with er2:
-                h2_exceed_pips = st.number_input("H2 vượt H1 (pips)",
-                                                 value=float(_pf('h2_exceed_pips', params.get('h2_exceed_pips', 0.0))),
-                                                 min_value=0.0, step=1.0,
-                                                 help="SELL: H2 phải vượt H1 thêm N pips | BUY: L2 phải thấp hơn L1 thêm N pips")
-                st.caption(_pip_caption(h2_exceed_pips, symbol))
-            with er3:
-                c2_gap_pips = st.number_input("C2 vượt L1/H1 (pips)",
-                                              value=float(_pf('c2_gap_pips', params.get('c2_gap_pips', 0.0))),
-                                              min_value=0.0, step=1.0,
-                                              help="SELL: C2 phải đóng thấp hơn L1 thêm N pips | BUY: C2 phải đóng cao hơn H1 thêm N pips")
-                st.caption(_pip_caption(c2_gap_pips, symbol))
-            with er4:
-                ema_margin_pips = st.number_input("L2/H2 cách EMA (pips)",
-                                                  value=float(_pf('ema_margin_pips', params.get('ema_margin_pips', 0.0))),
-                                                  min_value=0.0, step=1.0,
-                                                  help="SELL: L2 phải cách EMA ≥ N pips | BUY: H2 phải cách EMA ≥ N pips")
-                st.caption(_pip_caption(ema_margin_pips, symbol))
-            with er5:
-                ema_filter_enabled = st.checkbox("Bộ lọc EMA",
-                                                 value=bool(_pf('ema_filter_enabled', params.get('ema_filter_enabled', True))))
-                buy_ema_side = st.selectbox("BUY EMA side", options=_ema_side_opts,
-                                            index=_ema_side_opts.index(_pf('buy_ema_side', params.get('buy_ema_side', 'below_ema'))),
-                                            format_func=lambda x: "H2 > EMA" if x == "above_ema" else "H2 < EMA",
-                                            disabled=not ema_filter_enabled)
-                sell_ema_side = st.selectbox("SELL EMA side", options=_ema_side_opts,
-                                             index=_ema_side_opts.index(_pf('sell_ema_side', params.get('sell_ema_side', 'above_ema'))),
-                                             format_func=lambda x: "L2 > EMA" if x == "above_ema" else "L2 < EMA",
-                                             disabled=not ema_filter_enabled)
+            if is_flappy_bird:
+                # Flappy uses EMA13/21/55 and its own pattern checks; these
+                # generic FEG controls are intentionally hidden.
+                ema_period = 21
+                h2_exceed_pips = 0.0
+                c2_gap_pips = 0.0
+                ema_margin_pips = 0.0
+                ema_filter_enabled = True
+                buy_ema_side = "above_ema"
+                sell_ema_side = "above_ema"
+            else:
+                _ema_side_opts = ["above_ema", "below_ema"]
+                er1, er2, er3, er4, er5 = st.columns(5)
+                with er1:
+                    ema_period = st.number_input(
+                        "EMA Period",
+                        value=int(_pf('ema_period', params.get('ema_period', 21))),
+                        min_value=2, max_value=200,
+                    )
+                with er2:
+                    h2_exceed_pips = st.number_input(
+                        "H2 vượt H1 (pips)",
+                        value=float(_pf('h2_exceed_pips', params.get('h2_exceed_pips', 0.0))),
+                        min_value=0.0, step=1.0,
+                        help="SELL: H2 phải vượt H1 thêm N pips | BUY: L2 phải thấp hơn L1 thêm N pips",
+                    )
+                    st.caption(_pip_caption(h2_exceed_pips, symbol))
+                with er3:
+                    c2_gap_pips = st.number_input(
+                        "C2 vượt L1/H1 (pips)",
+                        value=float(_pf('c2_gap_pips', params.get('c2_gap_pips', 0.0))),
+                        min_value=0.0, step=1.0,
+                        help="SELL: C2 phải đóng thấp hơn L1 thêm N pips | BUY: C2 phải đóng cao hơn H1 thêm N pips",
+                    )
+                    st.caption(_pip_caption(c2_gap_pips, symbol))
+                with er4:
+                    ema_margin_pips = st.number_input(
+                        "L2/H2 cách EMA (pips)",
+                        value=float(_pf('ema_margin_pips', params.get('ema_margin_pips', 0.0))),
+                        min_value=0.0, step=1.0,
+                        help="SELL: L2 phải cách EMA ≥ N pips | BUY: H2 phải cách EMA ≥ N pips",
+                    )
+                    st.caption(_pip_caption(ema_margin_pips, symbol))
+                with er5:
+                    ema_filter_enabled = st.checkbox(
+                        "Bộ lọc EMA",
+                        value=bool(_pf('ema_filter_enabled', params.get('ema_filter_enabled', True))),
+                    )
+                    buy_ema_side = st.selectbox(
+                        "BUY EMA side", options=_ema_side_opts,
+                        index=_ema_side_opts.index(_pf('buy_ema_side', params.get('buy_ema_side', 'below_ema'))),
+                        format_func=lambda x: "H2 > EMA" if x == "above_ema" else "H2 < EMA",
+                        disabled=not ema_filter_enabled,
+                    )
+                    sell_ema_side = st.selectbox(
+                        "SELL EMA side", options=_ema_side_opts,
+                        index=_ema_side_opts.index(_pf('sell_ema_side', params.get('sell_ema_side', 'above_ema'))),
+                        format_func=lambda x: "L2 > EMA" if x == "above_ema" else "L2 < EMA",
+                        disabled=not ema_filter_enabled,
+                    )
             # Row 2: Time window + Entry mode (4 cols)
             entry_time = datetime.strptime("00:00", "%H:%M").time()
             st.write("")
@@ -301,7 +353,34 @@ def main():
                                                value=datetime.strptime(_pf_end3, "%H:%M").time() if isinstance(_pf_end3, str) else _pf_end3,
                                                help="Gate entries until this time. 23:59 = no filter.")
             with er2_3:
-                if not is_feg_stop_order:
+                if is_flappy_bird:
+                    ema_period = 21
+                    h2_exceed_pips = 0.0
+                    c2_gap_pips = 0.0
+                    ema_margin_pips = 0.0
+                    ema_filter_enabled = True
+                    buy_ema_side = "above_ema"
+                    sell_ema_side = "above_ema"
+                    entry_time = datetime.strptime("00:00", "%H:%M").time()
+                    entry_start_time = time(0, 0)
+                    entry_end_time = time(23, 59)
+                    entry_mode = "flappy_bird_limit"
+                    entry_percent = float(params.get('entry_body_percent', 5.0))
+                    limit_order_candles = int(params.get('limit_order_candles', 7))
+                    c2_buy_upper_wick_max_pct = None
+                    c2_buy_lower_wick_max_pct = None
+                    c2_sell_upper_wick_max_pct = None
+                    c2_sell_lower_wick_max_pct = None
+                    c2_buy_upper_wick_cmp = "lt"
+                    c2_buy_lower_wick_cmp = "lt"
+                    c2_sell_upper_wick_cmp = "lt"
+                    c2_sell_lower_wick_cmp = "lt"
+                    st.info(
+                        "Flappy Bird BUY/SELL: BUY EMA13 > EMA21 > EMA55; "
+                        "SELL EMA13 < EMA21 < EMA55 | "
+                        "Entry = Close Cha ± 5% thân Cha | SL/TP đối xứng"
+                    )
+                elif not is_feg_stop_order:
                     _em_opts = ["close", "range_percent"]
                     entry_mode = st.radio("Entry Mode", options=_em_opts,
                                           index=_em_opts.index(_pf('entry_mode', params.get('entry_mode', 'close'))),
@@ -312,64 +391,80 @@ def main():
                     st.caption("Entry Mode: Market (Stop Order)")
             with er2_4:
                 if not is_feg_stop_order:
-                    if entry_mode == "range_percent":
+                    if is_flappy_bird:
+                        entry_percent = float(params.get('entry_body_percent', 5.0))
+                        limit_order_candles = st.number_input(
+                            "Pending candles",
+                            value=int(st.session_state.get(
+                                f"backtest_{selected_strategy}_loc",
+                                params.get("limit_order_candles", 7),
+                            )),
+                            min_value=1,
+                            max_value=50,
+                            key=f"backtest_{selected_strategy}_loc",
+                            help="Số nến tối đa chờ BUY/SELL LIMIT khớp.",
+                        )
+                    elif entry_mode == "range_percent":
                         entry_percent = st.number_input("Entry %",
                                                         value=float(_pf('entry_percent', params.get('entry_percent', 10.0))),
                                                         min_value=0.0, max_value=100.0, step=1.0, format="%.0f")
                     else:
                         entry_percent = 0.0
-                    limit_order_candles = 1
+                        limit_order_candles = 1
                 else:
                     entry_percent = 0.0
                     limit_order_candles = st.number_input("Limit Order Candles",
                                                           value=int(_pf('limit_order_candles', 1)),
                                                           min_value=1, max_value=50,
                                                           help="Số nến tối đa để chờ stop order fill")
-            # Full-width Wick Filter (outside e_left/e_right to avoid narrow columns)
-            st.divider()
-            st.caption("**Wick Filter** — để trống = tắt  |  < râu nhỏ hơn body × n%  |  > râu lớn hơn body × n%")
-            _BT_CMP = ["< nhỏ hơn", "> lớn hơn"]
-            _bt_c1, _bt_c2, _bt_c3, _bt_c4 = st.columns(4)
-            with _bt_c1:
-                _bt_bu_cmp_sel = st.radio("BUY — Râu trên", _BT_CMP,
-                                          index=0 if _pf('c2_buy_upper_wick_cmp', 'lt') == 'lt' else 1,
-                                          horizontal=True, key="bt_c2_buy_upper_wick_cmp_sel")
-                c2_buy_upper_wick_cmp = "lt" if _bt_bu_cmp_sel == "< nhỏ hơn" else "gt"
-                _nwk_bu_raw = _pf('c2_buy_upper_wick_max_pct', None)
-                c2_buy_upper_wick_max_pct = _parse_wick(st.text_input(
-                    "% body", value="" if _nwk_bu_raw is None else str(_nwk_bu_raw),
-                    placeholder="VD: 30", help="BUY: (high−close) so với body × n%.",
-                    key="bt_c2_buy_upper_wick_max_pct"))
-            with _bt_c2:
-                _bt_bl_cmp_sel = st.radio("BUY — Râu dưới", _BT_CMP,
-                                          index=0 if _pf('c2_buy_lower_wick_cmp', 'lt') == 'lt' else 1,
-                                          horizontal=True, key="bt_c2_buy_lower_wick_cmp_sel")
-                c2_buy_lower_wick_cmp = "lt" if _bt_bl_cmp_sel == "< nhỏ hơn" else "gt"
-                _nwk_bl_raw = _pf('c2_buy_lower_wick_max_pct', None)
-                c2_buy_lower_wick_max_pct = _parse_wick(st.text_input(
-                    "% body", value="" if _nwk_bl_raw is None else str(_nwk_bl_raw),
-                    placeholder="VD: 30", help="BUY: (open−low) so với body × n%.",
-                    key="bt_c2_buy_lower_wick_max_pct"))
-            with _bt_c3:
-                _bt_su_cmp_sel = st.radio("SELL — Râu trên", _BT_CMP,
-                                          index=0 if _pf('c2_sell_upper_wick_cmp', 'lt') == 'lt' else 1,
-                                          horizontal=True, key="bt_c2_sell_upper_wick_cmp_sel")
-                c2_sell_upper_wick_cmp = "lt" if _bt_su_cmp_sel == "< nhỏ hơn" else "gt"
-                _nwk_su_raw = _pf('c2_sell_upper_wick_max_pct', None)
-                c2_sell_upper_wick_max_pct = _parse_wick(st.text_input(
-                    "% body", value="" if _nwk_su_raw is None else str(_nwk_su_raw),
-                    placeholder="VD: 30", help="SELL: (high−open) so với body × n%.",
-                    key="bt_c2_sell_upper_wick_max_pct"))
-            with _bt_c4:
-                _bt_sl_cmp_sel = st.radio("SELL — Râu dưới", _BT_CMP,
-                                          index=0 if _pf('c2_sell_lower_wick_cmp', 'lt') == 'lt' else 1,
-                                          horizontal=True, key="bt_c2_sell_lower_wick_cmp_sel")
-                c2_sell_lower_wick_cmp = "lt" if _bt_sl_cmp_sel == "< nhỏ hơn" else "gt"
-                _nwk_sl_raw = _pf('c2_sell_lower_wick_max_pct', None)
-                c2_sell_lower_wick_max_pct = _parse_wick(st.text_input(
-                    "% body", value="" if _nwk_sl_raw is None else str(_nwk_sl_raw),
-                    placeholder="VD: 30", help="SELL: (close−low) so với body × n%.",
-                    key="bt_c2_sell_lower_wick_max_pct"))
+            # Flappy Bird already defines its directional wick rules in the
+            # strategy implementation, so this generic filter is not editable.
+            if not is_flappy_bird:
+                # Full-width Wick Filter (outside e_left/e_right to avoid narrow columns)
+                st.divider()
+                st.caption("**Wick Filter** — để trống = tắt  |  < râu nhỏ hơn body × n%  |  > râu lớn hơn body × n%")
+                _BT_CMP = ["< nhỏ hơn", "> lớn hơn"]
+                _bt_c1, _bt_c2, _bt_c3, _bt_c4 = st.columns(4)
+                with _bt_c1:
+                    _bt_bu_cmp_sel = st.radio("BUY — Râu trên", _BT_CMP,
+                                              index=0 if _pf('c2_buy_upper_wick_cmp', 'lt') == 'lt' else 1,
+                                              horizontal=True, key="bt_c2_buy_upper_wick_cmp_sel")
+                    c2_buy_upper_wick_cmp = "lt" if _bt_bu_cmp_sel == "< nhỏ hơn" else "gt"
+                    _nwk_bu_raw = _pf('c2_buy_upper_wick_max_pct', None)
+                    c2_buy_upper_wick_max_pct = _parse_wick(st.text_input(
+                        "% body", value="" if _nwk_bu_raw is None else str(_nwk_bu_raw),
+                        placeholder="VD: 30", help="BUY: (high−close) so với body × n%.",
+                        key="bt_c2_buy_upper_wick_max_pct"))
+                with _bt_c2:
+                    _bt_bl_cmp_sel = st.radio("BUY — Râu dưới", _BT_CMP,
+                                              index=0 if _pf('c2_buy_lower_wick_cmp', 'lt') == 'lt' else 1,
+                                              horizontal=True, key="bt_c2_buy_lower_wick_cmp_sel")
+                    c2_buy_lower_wick_cmp = "lt" if _bt_bl_cmp_sel == "< nhỏ hơn" else "gt"
+                    _nwk_bl_raw = _pf('c2_buy_lower_wick_max_pct', None)
+                    c2_buy_lower_wick_max_pct = _parse_wick(st.text_input(
+                        "% body", value="" if _nwk_bl_raw is None else str(_nwk_bl_raw),
+                        placeholder="VD: 30", help="BUY: (open−low) so với body × n%.",
+                        key="bt_c2_buy_lower_wick_max_pct"))
+                with _bt_c3:
+                    _bt_su_cmp_sel = st.radio("SELL — Râu trên", _BT_CMP,
+                                              index=0 if _pf('c2_sell_upper_wick_cmp', 'lt') == 'lt' else 1,
+                                              horizontal=True, key="bt_c2_sell_upper_wick_cmp_sel")
+                    c2_sell_upper_wick_cmp = "lt" if _bt_su_cmp_sel == "< nhỏ hơn" else "gt"
+                    _nwk_su_raw = _pf('c2_sell_upper_wick_max_pct', None)
+                    c2_sell_upper_wick_max_pct = _parse_wick(st.text_input(
+                        "% body", value="" if _nwk_su_raw is None else str(_nwk_su_raw),
+                        placeholder="VD: 30", help="SELL: (high−open) so với body × n%.",
+                        key="bt_c2_sell_upper_wick_max_pct"))
+                with _bt_c4:
+                    _bt_sl_cmp_sel = st.radio("SELL — Râu dưới", _BT_CMP,
+                                              index=0 if _pf('c2_sell_lower_wick_cmp', 'lt') == 'lt' else 1,
+                                              horizontal=True, key="bt_c2_sell_lower_wick_cmp_sel")
+                    c2_sell_lower_wick_cmp = "lt" if _bt_sl_cmp_sel == "< nhỏ hơn" else "gt"
+                    _nwk_sl_raw = _pf('c2_sell_lower_wick_max_pct', None)
+                    c2_sell_lower_wick_max_pct = _parse_wick(st.text_input(
+                        "% body", value="" if _nwk_sl_raw is None else str(_nwk_sl_raw),
+                        placeholder="VD: 30", help="SELL: (close−low) so với body × n%.",
+                        key="bt_c2_sell_lower_wick_max_pct"))
         else:
             # Master Candle — no Entry zone
             ema_period = int(params.get('ema_period', 21))
@@ -411,16 +506,33 @@ def main():
         # ── ZONE 3: ORDER SETTINGS & RISK ────────────────────────────────
         _section_header("📊", "ORDER SETTINGS & RISK", "#f59e0b")
         os1, os2, os3, os4 = st.columns(4)
-        with os1:
-            buffer_k = st.number_input("Buffer K (pips)",
-                                       value=float(_pf('buffer_k', params.get('buffer_k', 5))),
-                                       min_value=0.0, max_value=200.0, step=1.0,
-                                       help="SL = candle body + k pips")
-        with os2:
-            re_entry_after_sl = st.checkbox("Entry tiếp tục sau SL",
-                                            value=bool(_pf('re_entry_after_sl', False)),
-                                            help="Trong lúc lệnh đang chạy, vẫn scan signal song song. "
-                                                 "Nếu SL hit đúng tại candle2 của signal mới → vào lệnh tiếp ngay.")
+        if is_flappy_bird:
+            buffer_k = 0.0
+            re_entry_after_sl = False
+            min_father_body_points = st.number_input(
+                "Thân Cha tối thiểu (price points)",
+                value=float(params.get("min_father_body_points", 2.0)),
+                min_value=0.0,
+                max_value=100000.0,
+                step=0.1,
+                format="%.1f",
+                help="Signal chỉ hợp lệ khi Body Cha lớn hơn giá trị này.",
+            )
+            st.caption(
+                f"SL buffer cố định: {params.get('sl_buffer_pips', 5.0):g} pips · "
+                f"Pending expiry mặc định {params.get('limit_order_candles', 7)} nến"
+            )
+        else:
+            with os1:
+                buffer_k = st.number_input("Buffer K (pips)",
+                                           value=float(_pf('buffer_k', params.get('buffer_k', 5))),
+                                           min_value=0.0, max_value=200.0, step=1.0,
+                                           help="SL = candle body + k pips")
+            with os2:
+                re_entry_after_sl = st.checkbox("Entry tiếp tục sau SL",
+                                                value=bool(_pf('re_entry_after_sl', False)),
+                                                help="Trong lúc lệnh đang chạy, vẫn scan signal song song. "
+                                                     "Nếu SL hit đúng tại candle2 của signal mới → vào lệnh tiếp ngay.")
         with os3:
             _pf_lot = _pf('lot_mode', 'fixed')
             lot_mode = st.radio("Lot Mode", options=["fixed", "flex"],
@@ -467,34 +579,41 @@ def main():
 
         # ── ZONE 4: EXIT ──────────────────────────────────────────────────
         _section_header("🚪", "EXIT", "#ef4444")
-        ex1, ex2 = st.columns(2)
-        with ex1:
-            _tp_opts = ["price_based", "close_based"]
-            tp_type = st.radio("TP Exit", options=_tp_opts,
-                               index=_tp_opts.index(_pf('tp_type', params.get('tp_type', 'price_based'))),
-                               format_func=lambda x: "Price-based (wick)" if x == "price_based" else "Close-based",
-                               horizontal=True)
-            st.caption("TP triggers when price TOUCHES TP level" if tp_type == "price_based"
-                        else "TP triggers when candle CLOSES past TP level")
-        with ex2:
-            _sl_opts = ["price_based", "close_based"]
-            sl_type = st.radio("SL Exit", options=_sl_opts,
-                               index=_sl_opts.index(_pf('sl_type', params.get('sl_type', 'close_based'))),
-                               format_func=lambda x: "Price-based (wick)" if x == "price_based" else "Close-based",
-                               horizontal=True)
-            st.caption("SL triggers when price TOUCHES SL level" if sl_type == "price_based"
-                        else "SL triggers when candle CLOSES beyond SL level")
-        ex3, ex4 = st.columns(2)
-        with ex3:
-            be_enabled = st.checkbox("Break-Even (BE)",
-                                     value=bool(_pf('be_enabled', False)),
-                                     help="Dời SL về entry khi lời đủ be_r × SL distance")
-        with ex4:
-            be_r = st.number_input("BE Trigger (R)",
-                                   value=float(_pf('be_r', 1.0)),
-                                   min_value=0.1, max_value=10.0, step=0.1, format="%.1f",
-                                   help="BE kích hoạt khi lời đạt be_r × SL distance",
-                                   disabled=not be_enabled)
+        if is_flappy_bird:
+            tp_type = "price_based"
+            sl_type = "price_based"
+            be_enabled = False
+            be_r = 1.0
+            st.caption("TP/SL price-based · TP cố định 2R · Không dùng Break-Even")
+        else:
+            ex1, ex2 = st.columns(2)
+            with ex1:
+                _tp_opts = ["price_based", "close_based"]
+                tp_type = st.radio("TP Exit", options=_tp_opts,
+                                    index=_tp_opts.index(_pf('tp_type', params.get('tp_type', 'price_based'))),
+                                    format_func=lambda x: "Price-based (wick)" if x == "price_based" else "Close-based",
+                                    horizontal=True)
+                st.caption("TP triggers when price TOUCHES TP level" if tp_type == "price_based"
+                            else "TP triggers when candle CLOSES past TP level")
+            with ex2:
+                _sl_opts = ["price_based", "close_based"]
+                sl_type = st.radio("SL Exit", options=_sl_opts,
+                                    index=_sl_opts.index(_pf('sl_type', params.get('sl_type', 'close_based'))),
+                                    format_func=lambda x: "Price-based (wick)" if x == "price_based" else "Close-based",
+                                    horizontal=True)
+                st.caption("SL triggers when price TOUCHES SL level" if sl_type == "price_based"
+                            else "SL triggers when candle CLOSES beyond SL level")
+            ex3, ex4 = st.columns(2)
+            with ex3:
+                be_enabled = st.checkbox("Break-Even (BE)",
+                                          value=bool(_pf('be_enabled', False)),
+                                          help="Dời SL về entry khi lời đủ be_r × SL distance")
+            with ex4:
+                be_r = st.number_input("BE Trigger (R)",
+                                        value=float(_pf('be_r', 1.0)),
+                                        min_value=0.1, max_value=10.0, step=0.1, format="%.1f",
+                                        help="BE kích hoạt khi lời đạt be_r × SL distance",
+                                        disabled=not be_enabled)
 
     sl_pips = 0  # always calculated from candle + buffer_k
 
@@ -519,8 +638,43 @@ def main():
 
                 st.success(f"Fetched {len(df)} candles")
 
-            with st.spinner("Running backtest..."):
-                results = run_backtest(
+            progress_bar = st.progress(0, text="Đang chuẩn bị backtest...")
+            progress_status = st.empty()
+            progress_log = st.empty()
+            progress_started = monotonic()
+            progress_messages = []
+
+            def update_backtest_progress(update: dict) -> None:
+                total = max(1, int(update.get("total", 1)))
+                current = min(total, max(0, int(update.get("current", 0))))
+                fraction = current / total
+                elapsed = monotonic() - progress_started
+                rate = current / elapsed if elapsed > 0 else 0
+                remaining = (total - current) / rate if rate > 0 else 0
+                eta = f"{remaining:.1f}s còn lại" if current < total else "đã xong"
+                message = update.get("message", "Đang xử lý...")
+                progress_bar.progress(
+                    fraction,
+                    text=f"{message} | {fraction:.1%} | {eta}",
+                )
+                progress_status.info(
+                    f"Phase: {update.get('phase', 'running')} · "
+                    f"Nến: {current:,}/{total:,} · "
+                    f"Trade: {update.get('trades', 0)} · "
+                    f"Đã chạy: {elapsed:.1f}s"
+                )
+                if not progress_messages or progress_messages[-1] != message:
+                    progress_messages.append(message)
+                    progress_log.caption("Log: " + "  →  ".join(progress_messages[-5:]))
+
+            update_backtest_progress({
+                "phase": "start",
+                "current": 0,
+                "total": max(1, len(df)),
+                "trades": 0,
+                "message": f"Bắt đầu backtest {len(df):,} nến...",
+            })
+            results = run_backtest(
                     df=df,
                     symbol=symbol,
                     entry_hour=entry_time.hour,
@@ -562,7 +716,16 @@ def main():
                     c2_buy_lower_wick_cmp=c2_buy_lower_wick_cmp,
                     c2_sell_upper_wick_cmp=c2_sell_upper_wick_cmp,
                     c2_sell_lower_wick_cmp=c2_sell_lower_wick_cmp,
+                    flappy_min_father_body_points=float(min_father_body_points),
+                    flappy_sl_buffer_pips=float(params.get('sl_buffer_pips', 5.0)),
+                    flappy_entry_body_percent=float(params.get('entry_body_percent', 5.0)),
+                    progress_callback=update_backtest_progress,
                 )
+            progress_bar.progress(1.0, text="Backtest hoàn tất")
+            progress_status.success(
+                f"Hoàn tất trong {monotonic() - progress_started:.1f}s · "
+                f"{len(results.get('trades', []))} trade"
+            )
 
             # Build config dict for export/history
             backtest_config = {
@@ -894,8 +1057,18 @@ def show_interactive_chart(trades: list, ohlc_data: pd.DataFrame, symbol: str):
         options=range(len(trades)),
         format_func=lambda x: trade_options[x]
     )
+    chart_lookback_candles = st.number_input(
+        "Số nến trước Entry trên chart",
+        min_value=1,
+        max_value=500,
+        value=30,
+        step=1,
+        help="Số nến hiển thị trước thời điểm Entry fill.",
+    )
 
     trade = trades[selected_idx]
+    if trade.get("_debug") and trade.get("_father"):
+        show_flappy_debug(trade, symbol)
 
     # Parse trade datetime
     trade_datetime_str = f"{trade['date']} {trade['time']}"
@@ -913,8 +1086,8 @@ def show_interactive_chart(trades: list, ohlc_data: pd.DataFrame, symbol: str):
     else:
         entry_idx = ohlc_data[entry_mask].index[0]
 
-    # Get data range (30 candles before, candles + 10 after)
-    start_idx = max(0, entry_idx - 30)
+    # Get data range (configurable candles before, candles + 15 after)
+    start_idx = max(0, entry_idx - int(chart_lookback_candles))
     end_idx = min(len(ohlc_data), entry_idx + trade['candles'] + 15)
     chart_data = ohlc_data.iloc[start_idx:end_idx].copy()
 
@@ -1071,6 +1244,91 @@ def show_interactive_chart(trades: list, ohlc_data: pd.DataFrame, symbol: str):
         pnl_color = "green" if trade['pnl_pips'] > 0 else "red"
         st.metric("P&L", f"{trade['pnl_pips']:+.1f} pips")
         st.metric("Candles Held", trade['candles'])
+
+
+def show_flappy_debug(trade: dict, symbol: str):
+    """Show the exact Flappy Bird candle window and condition audit."""
+    if not trade.get("_debug") or not trade.get("_father"):
+        return
+
+    debug = diagnose_flappy_bird(
+        trade["_mother"],
+        trade["_children"],
+        trade["_father"],
+        trade["_ema13"],
+        trade["_ema21"],
+        trade["_ema55"],
+        min_father_body_points=trade.get("_min_father_body_points", 2.0),
+        include_checks=True,
+        direction=trade.get("direction", "BUY"),
+    )
+    checks = debug.get("checks", [])
+    with st.expander(
+        f"Flappy Bird {trade.get('direction', 'BUY')} Signal Debug",
+        expanded=False,
+    ):
+        st.caption("Đây là đúng cửa sổ nến đã tạo signal, không phải cửa sổ quanh thời điểm fill Entry.")
+        mother = trade.get("_mother", {})
+        father = trade.get("_father", {})
+        children = trade.get("_children", [])
+        timeline = {
+            "Mother": str(mother.get("time", "—")),
+            "Children": (
+                f"{children[0].get('time')} → {children[-1].get('time')}"
+                if children else "—"
+            ),
+            "Father": str(father.get("time", "—")),
+            "Entry fill": f"{trade.get('date')} {trade.get('time')}",
+        }
+        st.dataframe(
+            pd.DataFrame([timeline]).T.rename(columns={0: "Time"}),
+            width="stretch",
+        )
+
+        condition_rows = []
+        for check in checks:
+            condition_rows.append({
+                "Status": "PASS" if check["passed"] else "FAIL",
+                "Điều kiện": check["label"],
+                "Giá trị thực tế": str(check["actual"]),
+                "Ngưỡng": str(check["expected"]),
+            })
+        st.dataframe(pd.DataFrame(condition_rows), width="stretch", hide_index=True)
+
+        candle_rows = []
+        for role, candle_list in (
+            ("Mother", [mother]),
+            ("Child", children),
+            ("Father", [father]),
+        ):
+            for number, candle in enumerate(candle_list, 1):
+                candle_rows.append({
+                    "Vai trò": f"{role} {number}" if role == "Child" else role,
+                    "Time": str(candle.get("time", "—")),
+                    "Open": candle.get("open"),
+                    "High": candle.get("high"),
+                    "Low": candle.get("low"),
+                    "Close": candle.get("close"),
+                    "Body": abs(candle.get("close", 0) - candle.get("open", 0)),
+                    "Wick": (
+                        max(0, candle.get("high", 0) - candle.get("close", 0))
+                        if trade.get("direction", "BUY") == "BUY"
+                        else max(0, candle.get("close", 0) - candle.get("low", 0))
+                    ),
+                })
+        st.dataframe(pd.DataFrame(candle_rows), width="stretch", hide_index=True)
+
+        level_rows = [{
+            "Entry": trade.get("entry"),
+            "SL": trade.get("sl"),
+            "TP": trade.get("tp"),
+            "SL pips": trade.get("sl_pips"),
+            "EMA13": trade.get("_ema13"),
+            "EMA21": trade.get("_ema21"),
+            "EMA55": trade.get("_ema55"),
+            "Symbol": symbol,
+        }]
+        st.dataframe(pd.DataFrame(level_rows), width="stretch", hide_index=True)
 
 
 def show_demo_results():

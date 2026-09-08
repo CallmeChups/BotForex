@@ -90,13 +90,14 @@ def close_session(session_id: str):
 
 def record_trade(session_id: str, order_id: str, direction: str,
                  entry: float, exit_price: float, exit_type: str,
-                 pnl_usd: float, lot: float, verified: bool = True):
+                 pnl_usd: float | None, lot: float, verified: bool = True):
     """Append a completed trade to the session and update stats.
 
     verified=True means exit_price and pnl_usd came from MT5 deal history (broker-confirmed).
     verified=False means they are candle-based estimates (deal history unavailable).
     """
     sessions = _load()
+    normalized_pnl = 0.0 if pnl_usd is None else float(pnl_usd)
     now = datetime.now(TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
     for s in sessions:
         if s["id"] == session_id:
@@ -106,18 +107,18 @@ def record_trade(session_id: str, order_id: str, direction: str,
                 "entry": entry,
                 "exit_price": exit_price,
                 "exit_type": exit_type,
-                "pnl_usd": round(pnl_usd, 2),
+                "pnl_usd": round(normalized_pnl, 2),
                 "lot": lot,
                 "closed_at": now,
                 "verified": verified,  # False = estimated, not confirmed from broker deal history
             }
             s["trades"].append(trade)
             s["stats"]["total"] += 1
-            if pnl_usd >= 0:
+            if normalized_pnl >= 0:
                 s["stats"]["win"] += 1
             else:
                 s["stats"]["loss"] += 1
-            s["stats"]["pnl_usd"] = round(s["stats"]["pnl_usd"] + pnl_usd, 2)
+            s["stats"]["pnl_usd"] = round(s["stats"]["pnl_usd"] + normalized_pnl, 2)
             break
     _save(sessions)
 
