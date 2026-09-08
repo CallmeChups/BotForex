@@ -506,6 +506,8 @@ def main():
         # ── ZONE 3: ORDER SETTINGS & RISK ────────────────────────────────
         _section_header("📊", "ORDER SETTINGS & RISK", "#f59e0b")
         os1, os2, os3, os4 = st.columns(4)
+        min_child_candles = 2
+        max_child_candles = 5
         if is_flappy_bird:
             buffer_k = 0.0
             re_entry_after_sl = False
@@ -518,6 +520,17 @@ def main():
                 format="%.1f",
                 help="Signal chỉ hợp lệ khi Body Cha lớn hơn giá trị này.",
             )
+            min_child_candles = st.number_input(
+                "Nến Con tối thiểu", value=int(params.get("min_child_candles", 2)),
+                min_value=2, max_value=20, step=1,
+            )
+            max_child_candles = st.number_input(
+                "Nến Con tối đa", value=int(params.get("max_child_candles", 5)),
+                min_value=2, max_value=20, step=1,
+            )
+            if max_child_candles < min_child_candles:
+                st.error("Nến Con tối đa phải >= tối thiểu.")
+                max_child_candles = min_child_candles
             st.caption(
                 f"SL buffer cố định: {params.get('sl_buffer_pips', 5.0):g} pips · "
                 f"Pending expiry mặc định {params.get('limit_order_candles', 7)} nến"
@@ -717,6 +730,8 @@ def main():
                     c2_sell_upper_wick_cmp=c2_sell_upper_wick_cmp,
                     c2_sell_lower_wick_cmp=c2_sell_lower_wick_cmp,
                     flappy_min_father_body_points=float(min_father_body_points),
+                    flappy_min_child_candles=int(min_child_candles),
+                    flappy_max_child_candles=int(max_child_candles),
                     flappy_sl_buffer_pips=float(params.get('sl_buffer_pips', 5.0)),
                     flappy_entry_body_percent=float(params.get('entry_body_percent', 5.0)),
                     progress_callback=update_backtest_progress,
@@ -749,6 +764,8 @@ def main():
                 'c2_gap_pips': c2_gap_pips,
                 'ema_margin_pips': ema_margin_pips,
                 'limit_order_candles': int(limit_order_candles),
+                'min_child_candles': int(min_child_candles),
+                'max_child_candles': int(max_child_candles),
                 'be_enabled': be_enabled,
                 'be_r': be_r,
                 're_entry_after_sl': re_entry_after_sl,
@@ -1259,6 +1276,8 @@ def show_flappy_debug(trade: dict, symbol: str):
         trade["_ema21"],
         trade["_ema55"],
         min_father_body_points=trade.get("_min_father_body_points", 2.0),
+        min_child_candles=trade.get("_min_child_candles", 2),
+        max_child_candles=trade.get("_max_child_candles", 5),
         include_checks=True,
         direction=trade.get("direction", "BUY"),
     )

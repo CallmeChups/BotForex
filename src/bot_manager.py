@@ -122,6 +122,8 @@ def build_bot_command(
     c2_sell_upper_wick_cmp="lt", c2_sell_lower_wick_cmp="lt",
     managed_by_ui=True,
     min_father_body_points=None,
+    min_child_candles=None,
+    max_child_candles=None,
 ):
     """Build command list to run bot_runner (separated for testability)."""
     cmd = [
@@ -171,6 +173,10 @@ def build_bot_command(
     cmd.extend(["--limit_order_candles", str(limit_order_candles)])
     if min_father_body_points is not None:
         cmd.extend(["--min_father_body_points", str(min_father_body_points)])
+    if min_child_candles is not None:
+        cmd.extend(["--min_child_candles", str(min_child_candles)])
+    if max_child_candles is not None:
+        cmd.extend(["--max_child_candles", str(max_child_candles)])
     cmd.extend(["--be_enabled", "1" if be_enabled else "0"])
     cmd.extend(["--be_r", str(be_r)])
     cmd.extend(["--ema_filter_enabled", "1" if ema_filter_enabled else "0"])
@@ -235,6 +241,8 @@ def start_bot(
     c2_sell_lower_wick_cmp: str = "lt",
     managed_by_ui: bool = True,
     min_father_body_points: float = None,
+    min_child_candles: int = None,
+    max_child_candles: int = None,
 ) -> tuple:
     """
     Start a new bot process
@@ -271,6 +279,8 @@ def start_bot(
         c2_sell_upper_wick_cmp, c2_sell_lower_wick_cmp,
         managed_by_ui,
         min_father_body_points,
+        min_child_candles,
+        max_child_candles,
     )
 
     try:
@@ -377,6 +387,8 @@ def stop_bot(pid: int) -> tuple:
         return True, f"Process {pid} not running (removed from list)"
 
     try:
+        bots = load_bots()
+        stopped_bot = next((bot for bot in bots if bot.get("pid") == pid), {"pid": pid})
         if platform.system() == "Windows":
             # Send CTRL_BREAK_EVENT so the process can catch KeyboardInterrupt and send Telegram before dying
             import ctypes
@@ -403,11 +415,10 @@ def stop_bot(pid: int) -> tuple:
                 os.kill(pid, signal.SIGKILL)
 
         # Remove from list
-        bots = load_bots()
         bots = [b for b in bots if b['pid'] != pid]
         save_bots(bots)
         _remove_bot_state(pid)
-        _notify_bot_stopped(bot)
+        _notify_bot_stopped(stopped_bot)
 
         return True, f"Bot stopped (PID {pid})"
 

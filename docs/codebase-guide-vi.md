@@ -277,20 +277,25 @@ Các trường phổ biến: `rr_ratio`, `buffer_k`, `lot_size`, `entry_mode`, `
 Strategy BUY/SELL LIMIT trên M5, được triển khai riêng trong `src/flappy_bird_strategy.py` và được định tuyến riêng trong backtest/live runner:
 
 - BUY dùng `EMA13 > EMA21 > EMA55`; SELL dùng `EMA13 < EMA21 < EMA55`.
-- Có từ 2 đến 7 nến con giữa nến Mẹ và nến Cha.
+  Có fallback đối xứng khi EMA13/EMA21 cùng nằm dưới (BUY) hoặc trên (SELL)
+  EMA55 và Nến Cha cắt EMA55 theo đúng hướng.
+- Có số nến Con trong khoảng `min_child_candles`–`max_child_candles`, mặc định
+  là 2–5; các giá trị này được truyền đồng nhất qua Backtest và Live Bot.
 - Nến Mẹ phải cùng chiều với chiến lược: bullish cho BUY, bearish cho SELL.
 - Thân Mẹ lớn hơn thân mọi nến con; `high` của Mẹ bao trùm toàn bộ thân các nến con.
 - Thân Cha lớn hơn `1.5 ×` thân nến con liền kề trước đó. BUY giới hạn râu trên,
   SELL giới hạn râu dưới dưới `30%` thân Cha.
 - BUY: `open Cha >= EMA13`, `low Cha > EMA21`, `close Cha > highest high`.
   SELL: `open Cha <= EMA13`, `high Cha < EMA21`, `close Cha < lowest low`.
-- Thân Cha lớn hơn ngưỡng `min_father_body_points` (mặc định `2.0` price points), có thể override ở Backtest và Create Bot.
+- Thân Cha lớn hơn ngưỡng `min_father_body_points` (mặc định `2.0` price
+  points) và không vượt quá `6.0` price points; chỉ ngưỡng tối thiểu được
+  override ở Backtest và Create Bot.
 - Entry là BUY LIMIT: `close Cha - 5% × thân Cha`.
 - SL là `min(low Cha, low mọi nến con) - 5 pips`; TP là `2R`.
 - SELL dùng SELL LIMIT: `close Cha + 5% × thân Cha`; SL là
   `max(high Cha, high mọi nến con) + 5 pips`; TP là `2R` hướng xuống.
 - Pending chờ tối đa 7 nến. Khi cùng một nến chạm cả SL và TP, SL được ưu tiên trong backtest/test.
-- `min_father_body_points`, `sl_buffer_pips`, `entry_body_percent`, `rr_ratio` và `limit_order_candles` nằm trong YAML; `magic` mặc định là `212400`. Backtest và Create Bot đều cho phép override ngưỡng Body Cha và số nến pending từ UI.
+- `min_father_body_points`, `sl_buffer_pips`, `entry_body_percent`, `rr_ratio` và `limit_order_candles` nằm trong YAML; giới hạn trên Body Cha là hardcode `6.0`; `magic` mặc định là `212400`. Backtest và Create Bot đều cho phép override ngưỡng tối thiểu Body Cha và số nến pending từ UI.
 - SL Flappy BUY = `min(Low Cha, Low Con liền kề) - sl_buffer_pips`; SL Flappy SELL = `max(High Cha, High Con liền kề) + sl_buffer_pips`. Chỉ Nến Con liền kề cuối cùng được dùng cho SL.
 - EXIT TIME Flappy hiện tạm vô hiệu hóa (`max_candles=0`); vị thế chỉ thoát bởi SL/TP. Pending expiry vẫn độc lập và tiếp tục dùng `limit_order_candles`.
 - Để debug signal, gọi `diagnose_flappy_bird(...)`. Hàm trả `valid`, `reason` và `metrics`; `reason` dùng mã ổn định như `ema_order_failed`, `mother_body_not_larger`, `father_upper_wick_too_large` hoặc `father_body_below_minimum`. Signal hợp lệ cũng mang theo cùng dữ liệu trong field `debug`.

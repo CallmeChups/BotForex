@@ -341,6 +341,8 @@ def run_backtest(
     c2_sell_upper_wick_cmp: str = "lt",
     c2_sell_lower_wick_cmp: str = "lt",
     flappy_min_father_body_points: float = 2.0,
+    flappy_min_child_candles: int = 2,
+    flappy_max_child_candles: int = 5,
     flappy_sl_buffer_pips: float = 5.0,
     flappy_entry_body_percent: float = 5.0,
     progress_callback: Callable[[dict], None] | None = None,
@@ -391,6 +393,8 @@ def run_backtest(
                 limit_order_candles=limit_order_candles,
                 max_candles=max_candles,
                 min_father_body_points=flappy_min_father_body_points,
+                min_child_candles=flappy_min_child_candles,
+                max_child_candles=flappy_max_child_candles,
                 sl_buffer_pips=flappy_sl_buffer_pips,
                 entry_body_percent=flappy_entry_body_percent,
                 rr_ratio=rr_ratio,
@@ -959,6 +963,7 @@ def _run_feg_reverse_backtest(
 def _run_flappy_bird_backtest(
     df, symbol, lot_mode, fixed_lot, risk_percent, risk_amount, risk_mode,
     starting_equity, limit_order_candles, max_candles, min_father_body_points,
+    min_child_candles, max_child_candles,
     sl_buffer_pips, entry_body_percent, rr_ratio, progress_callback=None,
 ):
     """Backtest Flappy Bird BUY LIMIT signals with deterministic fills."""
@@ -1018,7 +1023,7 @@ def _run_flappy_bird_backtest(
         if not ((ema13 > ema21 > ema55) or (ema13 < ema21 < ema55)):
             i += 1
             continue
-        for child_count in range(7, 1, -1):
+        for child_count in range(max_child_candles, min_child_candles - 1, -1):
             mother_idx = i - child_count - 1
             if mother_idx < 0:
                 continue
@@ -1031,6 +1036,8 @@ def _run_flappy_bird_backtest(
                     ema13, ema21, ema55,
                     fixed_lot, sl_buffer_pips, entry_body_percent, rr_ratio,
                     min_father_body_points, direction,
+                    min_child_candles=min_child_candles,
+                    max_child_candles=max_child_candles,
                 )
                 if signal:
                     signal_child_count = child_count
@@ -1113,6 +1120,8 @@ def _run_flappy_bird_backtest(
             trade["_ema55"] = signal["ema55"]
             trade["_child_count"] = signal_child_count
             trade["_min_father_body_points"] = min_father_body_points
+            trade["_min_child_candles"] = min_child_candles
+            trade["_max_child_candles"] = max_child_candles
             trade["_debug"] = signal["debug"]
             trade["_signal_mother_idx"] = signal["_mother_idx"]
             trade["_signal_father_idx"] = signal["_father_idx"]

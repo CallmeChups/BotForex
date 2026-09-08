@@ -70,6 +70,10 @@ def get_args():
                         help="Chờ khớp lệnh tối đa N nến (default: from strategy)")
     parser.add_argument("--min_father_body_points", type=float, default=None,
                         help="Minimum Father candle body in price points (Flappy Bird)")
+    parser.add_argument("--min_child_candles", type=int, default=None,
+                        help="Minimum child candles (Flappy Bird)")
+    parser.add_argument("--max_child_candles", type=int, default=None,
+                        help="Maximum child candles (Flappy Bird)")
     parser.add_argument("--entry_mode", type=str, default=None,
                         help="Entry mode: 'close' or 'range_percent' (default: from strategy)")
     parser.add_argument("--entry_percent", type=float, default=None,
@@ -1013,6 +1017,16 @@ def run_feg_bot(args, strategy, params, credentials,
         if args.min_father_body_points is not None
         else params.get('min_father_body_points', 2.0)
     )
+    min_child_candles = (
+        args.min_child_candles if args.min_child_candles is not None
+        else params.get("min_child_candles", 2)
+    )
+    max_child_candles = (
+        args.max_child_candles if args.max_child_candles is not None
+        else params.get("max_child_candles", 5)
+    )
+    if min_child_candles < 2 or max_child_candles < min_child_candles:
+        raise ValueError("Flappy child candle range is invalid")
     flappy_magic = params.get("magic") or 212400
     entry_mode = args.entry_mode or params.get('entry_mode', 'close')
     entry_percent = args.entry_percent if args.entry_percent is not None else params.get('entry_percent', 0.0)
@@ -1375,7 +1389,7 @@ def run_feg_bot(args, strategy, params, credentials,
                         from src.flappy_bird_strategy import analyze_flappy_bird
                         c2 = {"open": last["open"], "high": last["high"], "low": last["low"], "close": last["close"]}
                         signal = None
-                        for child_count in range(7, 1, -1):
+                        for child_count in range(max_child_candles, min_child_candles - 1, -1):
                             mother_idx = len(df) - child_count - 2
                             if mother_idx < 0:
                                 continue
@@ -1394,6 +1408,8 @@ def run_feg_bot(args, strategy, params, credentials,
                                     rr_ratio,
                                     min_father_body_points,
                                     direction,
+                                    min_child_candles=min_child_candles,
+                                    max_child_candles=max_child_candles,
                                 )
                                 if signal:
                                     break

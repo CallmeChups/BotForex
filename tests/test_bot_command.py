@@ -1,5 +1,6 @@
 from src.bot_manager import build_bot_command
 from src import bot_runner
+from src import bot_manager
 
 
 def test_command_includes_h2_flags():
@@ -27,6 +28,31 @@ def test_command_default_h2_flags_are_zero():
     assert "--ema_period" not in cmd  # None -> not added
 
 
+def test_stop_bot_notifies_with_saved_bot_metadata(monkeypatch):
+    bots = [{
+        "pid": 12345,
+        "strategy": "flappy_bird",
+        "symbol": "XAUUSD",
+        "user": "admin",
+    }]
+    notifications = []
+    monkeypatch.setattr(bot_manager, "is_process_running", lambda pid: True)
+    monkeypatch.setattr(bot_manager, "load_bots", lambda: bots.copy())
+    monkeypatch.setattr(bot_manager, "save_bots", lambda value: None)
+    monkeypatch.setattr(bot_manager, "_remove_bot_state", lambda pid: None)
+    monkeypatch.setattr(bot_manager, "_notify_bot_stopped", notifications.append)
+    monkeypatch.setattr(bot_manager.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(bot_manager.signal, "SIGKILL", 9, raising=False)
+    monkeypatch.setattr(bot_manager.os, "kill", lambda *args: None)
+    monkeypatch.setattr(bot_manager.time_mod, "sleep", lambda seconds: None)
+
+    success, message = bot_manager.stop_bot(12345)
+
+    assert success is True
+    assert message == "Bot stopped (PID 12345)"
+    assert notifications == [bots[0]]
+
+
 def test_command_supports_subsecond_interval():
     cmd = build_bot_command(
         "python", "bot_runner.py", "flappy_bird", "XAUUSD", "admin",
@@ -41,6 +67,15 @@ def test_command_includes_flappy_father_body_threshold():
         test=True, interval=1, min_father_body_points=3.5,
     )
     assert cmd[cmd.index("--min_father_body_points") + 1] == "3.5"
+
+
+def test_command_includes_flappy_child_count_range():
+    cmd = build_bot_command(
+        "python", "bot_runner.py", "flappy_bird", "XAUUSD", "admin",
+        test=True, interval=1, min_child_candles=3, max_child_candles=6,
+    )
+    assert cmd[cmd.index("--min_child_candles") + 1] == "3"
+    assert cmd[cmd.index("--max_child_candles") + 1] == "6"
 
 
 def test_ui_managed_command_enables_manager_stop_notification():

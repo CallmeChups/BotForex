@@ -28,6 +28,8 @@ parameters:
   sl_buffer_pips: 5.0
   rr_ratio: 2.0
   min_father_body_points: 2.0
+  min_child_candles: 2
+  max_child_candles: 5
   lot_size: 0.01
   limit_order_candles: 7
   magic: 212400

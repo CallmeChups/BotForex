@@ -131,14 +131,17 @@ Workflow: Tailscale connect → SSH → git pull + pip install → [optional] re
 Flappy Bird tạo tín hiệu theo hai hướng. Với BUY:
 
 - EMA xếp thứ tự: `EMA13 > EMA21 > EMA55`.
-- Có từ 2 đến 7 nến con nằm giữa nến Mẹ và nến Cha.
+- Có số nến Con trong khoảng cấu hình `min_child_candles`–`max_child_candles`;
+  mặc định là 2–5 nến.
 - Nến Mẹ phải cùng chiều với chiến lược: bullish cho BUY, bearish cho SELL.
 - Thân Mẹ lớn hơn thân của mọi nến con; `HIGH` Mẹ bao trùm toàn bộ thân các nến con.
 - Thân Cha lớn hơn `1.5 ×` thân nến con liền kề trước đó.
 - Râu trên Cha nhỏ hơn `30%` thân Cha.
 - `OPEN Cha >= EMA13`, `LOW Cha > EMA21`.
 - `CLOSE Cha` lớn hơn `HIGH` cao nhất của các nến con.
-- Thân Cha lớn hơn ngưỡng `min_father_body_points` (mặc định `2.0` đơn vị giá), có thể chỉnh trong Backtest và Create Bot.
+- Thân Cha lớn hơn ngưỡng `min_father_body_points` (mặc định `2.0` đơn vị giá)
+  và không vượt quá `6.0` đơn vị giá; ngưỡng tối thiểu có thể chỉnh trong
+  Backtest và Create Bot.
 
 Với SELL, các điều kiện được đối xứng:
 
@@ -148,7 +151,9 @@ Với SELL, các điều kiện được đối xứng:
 - Râu dưới Cha nhỏ hơn `30%` thân Cha.
 - `OPEN Cha <= EMA13`, `HIGH Cha < EMA21`.
 - `CLOSE Cha` nhỏ hơn `LOW` thấp nhất của các nến Con.
-- Thân Cha lớn hơn ngưỡng `min_father_body_points` (mặc định `2.0` đơn vị giá), có thể chỉnh trong Backtest và Create Bot.
+- Thân Cha lớn hơn ngưỡng `min_father_body_points` (mặc định `2.0` đơn vị giá)
+  và không vượt quá `6.0` đơn vị giá; ngưỡng tối thiểu có thể chỉnh trong
+  Backtest và Create Bot.
 
 Mức lệnh:
 

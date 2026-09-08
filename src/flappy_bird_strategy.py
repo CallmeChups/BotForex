@@ -8,6 +8,7 @@ from src.utils import get_pip_value
 MIN_CHILDREN = 2
 MAX_CHILDREN = 7
 EMA_WARMUP_WINDOW = 120
+MAX_FATHER_BODY_POINTS = 6.0
 
 
 def calculate_flappy_ema_series(
@@ -37,6 +38,29 @@ def _body(candle: dict) -> float:
     return abs(candle["close"] - candle["open"])
 
 
+def _ema_order_valid(
+    father: dict,
+    ema13: float,
+    ema21: float,
+    ema55: float,
+    is_buy: bool,
+) -> bool:
+    standard_order = (
+        ema13 > ema21 > ema55
+        if is_buy else ema13 < ema21 < ema55
+    )
+    if standard_order:
+        return True
+
+    return (
+        ema13 > ema21 and ema13 < ema55
+        and father["open"] < ema55 < father["close"]
+        if is_buy else
+        ema13 < ema21 and ema13 > ema55
+        and father["open"] > ema55 > father["close"]
+    )
+
+
 def diagnose_flappy_bird(
     mother: dict,
     children: list[dict],
@@ -47,6 +71,8 @@ def diagnose_flappy_bird(
     min_father_body_points: float = 2.0,
     include_checks: bool = False,
     direction: str = "BUY",
+    min_child_candles: int = MIN_CHILDREN,
+    max_child_candles: int = 5,
 ) -> dict:
     """Return validation status and metrics, optionally including the audit table."""
     child_bodies = [_body(child) for child in children]
@@ -79,6 +105,7 @@ def diagnose_flappy_bird(
         "ema21": ema21,
         "ema55": ema55,
         "min_father_body_points": min_father_body_points,
+        "max_father_body_points": MAX_FATHER_BODY_POINTS,
     }
     mother_body = metrics["mother_body"]
     father_body = metrics["father_body"]
@@ -87,11 +114,11 @@ def diagnose_flappy_bird(
         if is_buy else mother["close"] < mother["open"]
     )
     if not include_checks:
-        if not MIN_CHILDREN <= len(children) <= MAX_CHILDREN:
+        if not min_child_candles <= len(children) <= max_child_candles:
             reason = "invalid_child_count"
         elif mother_body <= 0 or father_body <= 0:
             reason = "zero_candle_body"
-        elif not ((ema13 > ema21 > ema55) if is_buy else (ema13 < ema21 < ema55)):
+        elif not _ema_order_valid(father, ema13, ema21, ema55, is_buy):
             reason = "ema_order_failed"
         elif not mother_is_directional:
             reason = "mother_direction_failed"
@@ -124,6 +151,8 @@ def diagnose_flappy_bird(
             reason = "father_close_not_above_children" if is_buy else "father_close_not_below_children"
         elif father_body <= min_father_body_points:
             reason = "father_body_below_minimum"
+        elif father_body > MAX_FATHER_BODY_POINTS:
+            reason = "father_body_above_maximum"
         else:
             reason = None
         return {"valid": reason is None, "reason": reason, "metrics": metrics}
@@ -132,16 +161,20 @@ def diagnose_flappy_bird(
         {
             "key": "child_count",
             "label": "Số nến con từ 2 đến 7",
-            "passed": MIN_CHILDREN <= len(children) <= MAX_CHILDREN,
+            "passed": min_child_candles <= len(children) <= max_child_candles,
             "actual": len(children),
-            "expected": "2..7",
+            "expected": f"{min_child_candles}..{max_child_candles}",
         },
         {
             "key": "ema_order",
-            "label": "EMA13 > EMA21 > EMA55",
-            "passed": (ema13 > ema21 > ema55) if is_buy else (ema13 < ema21 < ema55),
-            "actual": f"{ema13:.5f} {'>' if is_buy else '<'} {ema21:.5f} {'>' if is_buy else '<'} {ema55:.5f}",
-            "expected": "EMA13 > EMA21 > EMA55" if is_buy else "EMA13 < EMA21 < EMA55",
+            "label": "EMA chuẩn hoặc EMA55 breakout fallback",
+            "passed": _ema_order_valid(father, ema13, ema21, ema55, is_buy),
+            "actual": f"{ema13:.5f}, {ema21:.5f}, {ema55:.5f}",
+            "expected": (
+                "EMA13 > EMA21 > EMA55 hoặc Cha cắt EMA55 từ dưới lên"
+                if is_buy else
+                "EMA13 < EMA21 < EMA55 hoặc Cha cắt EMA55 từ trên xuống"
+            ),
         },
         {
             "key": "mother_body",
@@ -222,10 +255,10 @@ def diagnose_flappy_bird(
         },
         {
             "key": "father_minimum_body",
-            "label": "Thân Cha > mức tối thiểu",
-            "passed": father_body > min_father_body_points,
+            "label": "Thân Cha trong khoảng cho phép",
+            "passed": min_father_body_points < father_body <= MAX_FATHER_BODY_POINTS,
             "actual": f"{father_body:.5f}",
-            "expected": f"> {min_father_body_points:.5f}",
+            "expected": f"> {min_father_body_points:.5f} và <= {MAX_FATHER_BODY_POINTS:.1f}",
         },
     ]
     reason_by_key = {
@@ -244,7 +277,14 @@ def diagnose_flappy_bird(
     return {
         "valid": failed_check is None and not has_zero_body,
         "reason": "zero_candle_body" if has_zero_body else (
-            reason_by_key.get(failed_check["key"]) if failed_check else None
+            (
+                "father_body_below_minimum"
+                if failed_check and failed_check["key"] == "father_minimum_body"
+                and father_body <= min_father_body_points
+                else "father_body_above_maximum"
+                if failed_check and failed_check["key"] == "father_minimum_body"
+                else reason_by_key.get(failed_check["key"])
+            ) if failed_check else None
         ),
         "metrics": metrics,
         "checks": checks,
@@ -260,11 +300,15 @@ def detect_flappy_bird_signal(
     ema55: float,
     min_father_body_points: float = 2.0,
     direction: str = "BUY",
+    min_child_candles: int = MIN_CHILDREN,
+    max_child_candles: int = 5,
 ) -> bool:
     """Return whether the candle window satisfies the BUY pattern."""
     return diagnose_flappy_bird(
         mother, children, father, ema13, ema21, ema55, min_father_body_points,
         direction=direction,
+        min_child_candles=min_child_candles,
+        max_child_candles=max_child_candles,
     )["valid"]
 
 
@@ -282,11 +326,15 @@ def analyze_flappy_bird(
     rr_ratio: float = 2.0,
     min_father_body_points: float = 2.0,
     direction: str = "BUY",
+    min_child_candles: int = MIN_CHILDREN,
+    max_child_candles: int = 5,
 ) -> dict | None:
     """Return a standard pending limit signal or None."""
     diagnostics = diagnose_flappy_bird(
         mother, children, father, ema13, ema21, ema55, min_father_body_points,
         direction=direction,
+        min_child_candles=min_child_candles,
+        max_child_candles=max_child_candles,
     )
     if not diagnostics["valid"]:
         return None

@@ -804,7 +804,20 @@ def show_create_bot():
                     help="Signal chỉ hợp lệ khi Body Cha lớn hơn giá trị này.",
                 )
                 st.caption(f"SL buffer cố định: {sl_buffer_pips:g} pips")
+                min_child_candles = st.number_input(
+                    "Nến Con tối thiểu", value=int(params.get("min_child_candles", 2)),
+                    min_value=2, max_value=20, step=1, key=f"{sk}_min_child_candles",
+                )
+                max_child_candles = st.number_input(
+                    "Nến Con tối đa", value=int(params.get("max_child_candles", 5)),
+                    min_value=2, max_value=20, step=1, key=f"{sk}_max_child_candles",
+                )
+                if max_child_candles < min_child_candles:
+                    st.error("Nến Con tối đa phải >= tối thiểu.")
+                    max_child_candles = min_child_candles
         else:
+            min_child_candles = None
+            max_child_candles = None
             with _or_col1:
                 buffer_k = st.number_input("Buffer K (pips)",
                                            value=float(st.session_state.get(f"{sk}_buffer_k", params.get('buffer_k', 5))),
@@ -917,6 +930,8 @@ def show_create_bot():
                     min_father_body_points=(
                         min_father_body_points if is_flappy_bird else None
                     ),
+                    min_child_candles=min_child_candles,
+                    max_child_candles=max_child_candles,
                     lot_mode=lot_mode,
                     risk_mode=risk_mode if lot_mode == "flex" else None,
                     risk_percent=risk_percent if lot_mode == "flex" else None,

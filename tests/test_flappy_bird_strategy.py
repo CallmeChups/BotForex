@@ -97,6 +97,23 @@ def test_flappy_bird_rejects_invalid_boundaries():
     )["reason"] == "father_upper_wick_too_large"
 
 
+def test_flappy_bird_accepts_ema55_breakout_fallback_and_caps_body():
+    mother, children, father = _valid_parts()
+    father["open"] = 105.0
+    father["high"] = 111.2
+    father["close"] = 111.0
+
+    assert detect_flappy_bird_signal(
+        mother, children, father, 104.0, 102.0, 110.0
+    )
+
+    father["close"] = 111.1
+    father["high"] = 111.3
+    assert diagnose_flappy_bird(
+        mother, children, father, 104.0, 102.0, 110.0
+    )["reason"] == "father_body_above_maximum"
+
+
 def test_flappy_bird_requires_mother_direction():
     mother, children, father = _valid_parts()
     mother["close"] = 98.0
@@ -104,6 +121,18 @@ def test_flappy_bird_requires_mother_direction():
     assert diagnose_flappy_bird(
         mother, children, father, 105.0, 103.0, 100.0
     )["reason"] == "mother_direction_failed"
+
+
+def test_flappy_bird_child_count_is_configurable():
+    mother, children, father = _valid_parts()
+    assert not detect_flappy_bird_signal(
+        mother, children, father, 105.0, 103.0, 100.0,
+        min_child_candles=3,
+    )
+    assert detect_flappy_bird_signal(
+        mother, children, father, 105.0, 103.0, 100.0,
+        max_child_candles=2,
+    )
 
 
 def test_flappy_bird_backtest_fills_limit_and_uses_sl_first():
