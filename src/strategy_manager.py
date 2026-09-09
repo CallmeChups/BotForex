@@ -224,6 +224,7 @@ def get_strategy_parameters(strategy_id: str) -> dict:
         'min_father_body_points': params.get('min_father_body_points', 2.0),
         'min_child_candles': params.get('min_child_candles', 2),
         'max_child_candles': params.get('max_child_candles', 5),
+        'mother_coverage_enabled': params.get('mother_coverage_enabled', True),
         'limit_order_candles': params.get('limit_order_candles', 1),
         'magic': params.get('magic'),
         're_entry_after_sl': params.get('re_entry_after_sl', False),

@@ -28,6 +28,45 @@ def test_command_default_h2_flags_are_zero():
     assert "--ema_period" not in cmd  # None -> not added
 
 
+def test_windows_pid_check_requires_exact_pid(monkeypatch):
+    monkeypatch.setattr(bot_manager.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(
+        bot_manager.subprocess,
+        "check_output",
+        lambda *args, **kwargs: b'"Image Name","PID","Session Name","Session#","Mem Usage"\r\n'
+        b'"python.exe","12345","Console","1","10,000 K"\r\n',
+    )
+
+    assert bot_manager.is_process_running(12345) is True
+    assert bot_manager.is_process_running(2345) is False
+
+
+def test_bot_process_check_requires_matching_identity(monkeypatch):
+    bot = {
+        "pid": 12345,
+        "strategy": "flappy_bird",
+        "symbol": "XAUUSDm",
+        "user": "user",
+    }
+    monkeypatch.setattr(bot_manager, "is_process_running", lambda pid: True)
+    monkeypatch.setattr(
+        bot_manager,
+        "_get_process_command_line",
+        lambda pid: (
+            "python src/bot_runner.py --strategy flappy_bird "
+            "--symbol XAUUSDm --user user"
+        ),
+    )
+
+    assert bot_manager.is_bot_process_running(bot) is True
+    monkeypatch.setattr(
+        bot_manager,
+        "_get_process_command_line",
+        lambda pid: "python unrelated.py",
+    )
+    assert bot_manager.is_bot_process_running(bot) is False
+
+
 def test_stop_bot_notifies_with_saved_bot_metadata(monkeypatch):
     bots = [{
         "pid": 12345,
@@ -76,6 +115,14 @@ def test_command_includes_flappy_child_count_range():
     )
     assert cmd[cmd.index("--min_child_candles") + 1] == "3"
     assert cmd[cmd.index("--max_child_candles") + 1] == "6"
+
+
+def test_command_includes_mother_coverage_switch():
+    cmd = build_bot_command(
+        "python", "bot_runner.py", "flappy_bird", "XAUUSD", "admin",
+        test=True, interval=1, mother_coverage_enabled=False,
+    )
+    assert cmd[cmd.index("--mother_coverage_enabled") + 1] == "0"
 
 
 def test_ui_managed_command_enables_manager_stop_notification():

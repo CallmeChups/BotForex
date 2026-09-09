@@ -73,6 +73,7 @@ def diagnose_flappy_bird(
     direction: str = "BUY",
     min_child_candles: int = MIN_CHILDREN,
     max_child_candles: int = 5,
+    mother_coverage_enabled: bool = True,
 ) -> dict:
     """Return validation status and metrics, optionally including the audit table."""
     child_bodies = [_body(child) for child in children]
@@ -124,11 +125,11 @@ def diagnose_flappy_bird(
             reason = "mother_direction_failed"
         elif any(mother_body <= body for body in child_bodies):
             reason = "mother_body_not_larger"
-        elif not children or (
+        elif mother_coverage_enabled and (not children or (
             mother["high"] < max(max(child["open"], child["close"]) for child in children)
             if is_buy else
             mother["low"] > min(min(child["open"], child["close"]) for child in children)
-        ):
+        )):
             reason = "mother_body_not_covered"
         elif father_body <= 1.5 * last_child_body:
             reason = "father_body_ratio_failed"
@@ -160,7 +161,7 @@ def diagnose_flappy_bird(
     checks = [
         {
             "key": "child_count",
-            "label": "Số nến con từ 2 đến 7",
+            "label": "Số nến Con trong khoảng cấu hình",
             "passed": min_child_candles <= len(children) <= max_child_candles,
             "actual": len(children),
             "expected": f"{min_child_candles}..{max_child_candles}",
@@ -197,17 +198,32 @@ def diagnose_flappy_bird(
         {
             "key": "mother_coverage",
             "label": "HIGH Mẹ bao trùm thân các Con" if is_buy else "LOW Mẹ bao trùm thân các Con",
-            "passed": bool(children) and (
-                mother["high"] >= max(max(child["open"], child["close"]) for child in children)
-                if is_buy else
-                mother["low"] <= min(min(child["open"], child["close"]) for child in children)
+            "passed": (
+                bool(children)
+                and (
+                    not mother_coverage_enabled
+                    or (
+                        mother["high"] >= max(
+                            max(child["open"], child["close"]) for child in children
+                        )
+                        if is_buy
+                        else mother["low"] <= min(
+                            min(child["open"], child["close"]) for child in children
+                        )
+                    )
+                )
             ),
             "actual": (
                 f'{mother["high"]:.5f} >= {max((max(child["open"], child["close"]) for child in children), default=0):.5f}'
                 if is_buy else
                 f'{mother["low"]:.5f} <= {min((min(child["open"], child["close"]) for child in children), default=0):.5f}'
             ),
-            "expected": "HIGH Mẹ >= thân trên cao nhất của Con" if is_buy else "LOW Mẹ <= thân dưới thấp nhất của Con",
+            "expected": (
+                "Bật: HIGH Mẹ >= thân trên cao nhất của Con"
+                if is_buy and mother_coverage_enabled else
+                "Bật: LOW Mẹ <= thân dưới thấp nhất của Con"
+                if mother_coverage_enabled else "Tắt: không kiểm tra bao thân"
+            ),
         },
         {
             "key": "father_body_ratio",
@@ -302,6 +318,7 @@ def detect_flappy_bird_signal(
     direction: str = "BUY",
     min_child_candles: int = MIN_CHILDREN,
     max_child_candles: int = 5,
+    mother_coverage_enabled: bool = True,
 ) -> bool:
     """Return whether the candle window satisfies the BUY pattern."""
     return diagnose_flappy_bird(
@@ -309,6 +326,7 @@ def detect_flappy_bird_signal(
         direction=direction,
         min_child_candles=min_child_candles,
         max_child_candles=max_child_candles,
+        mother_coverage_enabled=mother_coverage_enabled,
     )["valid"]
 
 
@@ -328,6 +346,7 @@ def analyze_flappy_bird(
     direction: str = "BUY",
     min_child_candles: int = MIN_CHILDREN,
     max_child_candles: int = 5,
+    mother_coverage_enabled: bool = True,
 ) -> dict | None:
     """Return a standard pending limit signal or None."""
     diagnostics = diagnose_flappy_bird(
@@ -335,6 +354,7 @@ def analyze_flappy_bird(
         direction=direction,
         min_child_candles=min_child_candles,
         max_child_candles=max_child_candles,
+        mother_coverage_enabled=mother_coverage_enabled,
     )
     if not diagnostics["valid"]:
         return None

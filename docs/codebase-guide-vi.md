@@ -282,6 +282,9 @@ Strategy BUY/SELL LIMIT trên M5, được triển khai riêng trong `src/flappy
 - Có số nến Con trong khoảng `min_child_candles`–`max_child_candles`, mặc định
   là 2–5; các giá trị này được truyền đồng nhất qua Backtest và Live Bot.
 - Nến Mẹ phải cùng chiều với chiến lược: bullish cho BUY, bearish cho SELL.
+- Điều kiện Mẹ bao trùm thân các nến Con được điều khiển bởi
+  `mother_coverage_enabled`, mặc định `true`, và áp dụng đồng nhất ở Backtest
+  và Live Bot.
 - Thân Mẹ lớn hơn thân mọi nến con; `high` của Mẹ bao trùm toàn bộ thân các nến con.
 - Thân Cha lớn hơn `1.5 ×` thân nến con liền kề trước đó. BUY giới hạn râu trên,
   SELL giới hạn râu dưới dưới `30%` thân Cha.

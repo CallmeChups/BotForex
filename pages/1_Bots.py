@@ -263,7 +263,11 @@ def show_running_bots():
             import json as _json
             with open(_state_path, "r", encoding="utf-8") as _f:
                 _states = _json.load(_f)
-            _live_states = [s for s in _states if is_process_running(s["pid"])]
+            from src.bot_manager import is_bot_process_running
+            _live_states = [
+                s for s in _states
+                if is_bot_process_running(s)
+            ]
             if _live_states:
                 with st.expander(f"🔍 Process Scanner — {len(_live_states)} bot process(es) detected in bot_state.json", expanded=True):
                     st.caption("Bots được detect trực tiếp qua OS process table, độc lập với running_bots.json")
@@ -815,9 +819,16 @@ def show_create_bot():
                 if max_child_candles < min_child_candles:
                     st.error("Nến Con tối đa phải >= tối thiểu.")
                     max_child_candles = min_child_candles
+                mother_coverage_enabled = st.checkbox(
+                    "Kiểm tra Mẹ bao thân Nến Con",
+                    value=bool(params.get("mother_coverage_enabled", True)),
+                    key=f"{sk}_mother_coverage_enabled",
+                    help="Bật: yêu cầu biên Mẹ bao trùm thân các Nến Con.",
+                )
         else:
             min_child_candles = None
             max_child_candles = None
+            mother_coverage_enabled = None
             with _or_col1:
                 buffer_k = st.number_input("Buffer K (pips)",
                                            value=float(st.session_state.get(f"{sk}_buffer_k", params.get('buffer_k', 5))),
@@ -932,6 +943,7 @@ def show_create_bot():
                     ),
                     min_child_candles=min_child_candles,
                     max_child_candles=max_child_candles,
+                    mother_coverage_enabled=mother_coverage_enabled,
                     lot_mode=lot_mode,
                     risk_mode=risk_mode if lot_mode == "flex" else None,
                     risk_percent=risk_percent if lot_mode == "flex" else None,

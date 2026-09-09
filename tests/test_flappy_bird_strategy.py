@@ -135,6 +135,19 @@ def test_flappy_bird_child_count_is_configurable():
     )
 
 
+def test_flappy_bird_mother_coverage_can_be_disabled():
+    mother, children, father = _valid_parts()
+    mother["high"] = 102.0
+
+    assert not detect_flappy_bird_signal(
+        mother, children, father, 105.0, 103.0, 100.0
+    )
+    assert detect_flappy_bird_signal(
+        mother, children, father, 105.0, 103.0, 100.0,
+        mother_coverage_enabled=False,
+    )
+
+
 def test_flappy_bird_backtest_fills_limit_and_uses_sl_first():
     mother, children, father = _valid_parts()
     rows = [

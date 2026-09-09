@@ -74,6 +74,8 @@ def get_args():
                         help="Minimum child candles (Flappy Bird)")
     parser.add_argument("--max_child_candles", type=int, default=None,
                         help="Maximum child candles (Flappy Bird)")
+    parser.add_argument("--mother_coverage_enabled", type=int, default=None,
+                        help="Require Mother wick/body coverage of children (Flappy Bird)")
     parser.add_argument("--entry_mode", type=str, default=None,
                         help="Entry mode: 'close' or 'range_percent' (default: from strategy)")
     parser.add_argument("--entry_percent", type=float, default=None,
@@ -1027,6 +1029,11 @@ def run_feg_bot(args, strategy, params, credentials,
     )
     if min_child_candles < 2 or max_child_candles < min_child_candles:
         raise ValueError("Flappy child candle range is invalid")
+    mother_coverage_enabled = (
+        bool(args.mother_coverage_enabled)
+        if args.mother_coverage_enabled is not None
+        else bool(params.get("mother_coverage_enabled", True))
+    )
     flappy_magic = params.get("magic") or 212400
     entry_mode = args.entry_mode or params.get('entry_mode', 'close')
     entry_percent = args.entry_percent if args.entry_percent is not None else params.get('entry_percent', 0.0)
@@ -1410,6 +1417,7 @@ def run_feg_bot(args, strategy, params, credentials,
                                     direction,
                                     min_child_candles=min_child_candles,
                                     max_child_candles=max_child_candles,
+                                    mother_coverage_enabled=mother_coverage_enabled,
                                 )
                                 if signal:
                                     break

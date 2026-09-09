@@ -508,6 +508,7 @@ def main():
         os1, os2, os3, os4 = st.columns(4)
         min_child_candles = 2
         max_child_candles = 5
+        mother_coverage_enabled = True
         if is_flappy_bird:
             buffer_k = 0.0
             re_entry_after_sl = False
@@ -531,6 +532,11 @@ def main():
             if max_child_candles < min_child_candles:
                 st.error("Nến Con tối đa phải >= tối thiểu.")
                 max_child_candles = min_child_candles
+            mother_coverage_enabled = st.checkbox(
+                "Kiểm tra Mẹ bao thân Nến Con",
+                value=bool(params.get("mother_coverage_enabled", True)),
+                help="Bật: yêu cầu biên Mẹ bao trùm thân các Nến Con.",
+            )
             st.caption(
                 f"SL buffer cố định: {params.get('sl_buffer_pips', 5.0):g} pips · "
                 f"Pending expiry mặc định {params.get('limit_order_candles', 7)} nến"
@@ -732,6 +738,7 @@ def main():
                     flappy_min_father_body_points=float(min_father_body_points),
                     flappy_min_child_candles=int(min_child_candles),
                     flappy_max_child_candles=int(max_child_candles),
+                    flappy_mother_coverage_enabled=bool(mother_coverage_enabled),
                     flappy_sl_buffer_pips=float(params.get('sl_buffer_pips', 5.0)),
                     flappy_entry_body_percent=float(params.get('entry_body_percent', 5.0)),
                     progress_callback=update_backtest_progress,
@@ -766,6 +773,7 @@ def main():
                 'limit_order_candles': int(limit_order_candles),
                 'min_child_candles': int(min_child_candles),
                 'max_child_candles': int(max_child_candles),
+                'mother_coverage_enabled': bool(mother_coverage_enabled),
                 'be_enabled': be_enabled,
                 'be_r': be_r,
                 're_entry_after_sl': re_entry_after_sl,
@@ -1278,6 +1286,7 @@ def show_flappy_debug(trade: dict, symbol: str):
         min_father_body_points=trade.get("_min_father_body_points", 2.0),
         min_child_candles=trade.get("_min_child_candles", 2),
         max_child_candles=trade.get("_max_child_candles", 5),
+        mother_coverage_enabled=trade.get("_mother_coverage_enabled", True),
         include_checks=True,
         direction=trade.get("direction", "BUY"),
     )

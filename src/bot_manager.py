@@ -11,6 +11,8 @@ import subprocess
 import json
 import signal
 import time as time_mod
+import csv
+from io import StringIO
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Optional
@@ -86,13 +88,14 @@ def is_process_running(pid: int) -> bool:
     """Check if process is running"""
     if platform.system() == "Windows":
         try:
-            # Use tasklist on Windows
+            # Use CSV output so a PID is matched as a field, not as a substring.
             output = subprocess.check_output(
-                f'tasklist /FI "PID eq {pid}"',
+                f'tasklist /FI "PID eq {pid}" /FO CSV /NH',
                 shell=True,
                 stderr=subprocess.DEVNULL
             ).decode()
-            return str(pid) in output
+            rows = list(csv.reader(StringIO(output)))
+            return any(len(row) > 1 and row[1].strip() == str(pid) for row in rows)
         except Exception:
             return False
     else:
@@ -102,6 +105,46 @@ def is_process_running(pid: int) -> bool:
             return True
         except OSError:
             return False
+
+
+def _get_process_command_line(pid: int) -> str:
+    """Return a Windows process command line for identity validation."""
+    if platform.system() != "Windows":
+        return ""
+    try:
+        command = (
+            "(Get-CimInstance Win32_Process -Filter "
+            f"'ProcessId = {int(pid)}').CommandLine"
+        )
+        return subprocess.check_output(
+            ["powershell", "-NoProfile", "-Command", command],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return ""
+
+
+def is_bot_process_running(bot: dict) -> bool:
+    """Check that a PID is alive and still belongs to the recorded bot."""
+    pid = bot.get("pid")
+    if not isinstance(pid, int) or not is_process_running(pid):
+        return False
+    if platform.system() != "Windows":
+        return True
+
+    command_line = _get_process_command_line(pid).lower()
+    if not command_line:
+        return False
+    return all(
+        token.lower() in command_line
+        for token in (
+            "bot_runner.py",
+            f"--strategy {bot.get('strategy', '')}",
+            f"--symbol {bot.get('symbol', '')}",
+            f"--user {bot.get('user', '')}",
+        )
+    )
 
 
 def build_bot_command(
@@ -124,6 +167,7 @@ def build_bot_command(
     min_father_body_points=None,
     min_child_candles=None,
     max_child_candles=None,
+    mother_coverage_enabled=None,
 ):
     """Build command list to run bot_runner (separated for testability)."""
     cmd = [
@@ -177,6 +221,8 @@ def build_bot_command(
         cmd.extend(["--min_child_candles", str(min_child_candles)])
     if max_child_candles is not None:
         cmd.extend(["--max_child_candles", str(max_child_candles)])
+    if mother_coverage_enabled is not None:
+        cmd.extend(["--mother_coverage_enabled", "1" if mother_coverage_enabled else "0"])
     cmd.extend(["--be_enabled", "1" if be_enabled else "0"])
     cmd.extend(["--be_r", str(be_r)])
     cmd.extend(["--ema_filter_enabled", "1" if ema_filter_enabled else "0"])
@@ -198,7 +244,7 @@ def build_bot_command(
     return cmd
 
 
-def start_bot(
+def _start_bot_unlocked(
     strategy: str,
     symbol: str,
     user: str,
@@ -243,6 +289,7 @@ def start_bot(
     min_father_body_points: float = None,
     min_child_candles: int = None,
     max_child_candles: int = None,
+    mother_coverage_enabled: bool = None,
 ) -> tuple:
     """
     Start a new bot process
@@ -256,7 +303,7 @@ def start_bot(
         if (bot['strategy'] == strategy and
             bot['symbol'] == symbol and
             bot['user'] == user and
-            is_process_running(bot['pid'])):
+            is_bot_process_running(bot)):
             return False, f"Bot already running for {strategy}/{symbol}/{user}", None
 
     # Build command
@@ -281,6 +328,7 @@ def start_bot(
         min_father_body_points,
         min_child_candles,
         max_child_candles,
+        mother_coverage_enabled,
     )
 
     try:
@@ -341,6 +389,9 @@ def start_bot(
             'entry_start_time': entry_start_time,
             'entry_end_time': entry_end_time,
             'limit_order_candles': limit_order_candles,
+            'min_child_candles': min_child_candles,
+            'max_child_candles': max_child_candles,
+            'mother_coverage_enabled': mother_coverage_enabled,
             'be_enabled': be_enabled,
             'be_r': be_r,
             'ema_filter_enabled': ema_filter_enabled,
@@ -369,6 +420,15 @@ def start_bot(
         return False, str(e), None
 
 
+def start_bot(*args, **kwargs) -> tuple:
+    """Start one bot while serializing duplicate check, spawn, and persistence."""
+    from src.state_file import _file_lock
+
+    lock_path = os.path.abspath(os.path.join("data", "start_bot.lock"))
+    with _file_lock(lock_path):
+        return _start_bot_unlocked(*args, **kwargs)
+
+
 def stop_bot(pid: int) -> tuple:
     """
     Stop a bot by PID
@@ -376,13 +436,21 @@ def stop_bot(pid: int) -> tuple:
     Returns:
         (success, message)
     """
-    if not is_process_running(pid):
-        # Remove from list anyway
-        bots = load_bots()
-        stopped_bot = next((bot for bot in bots if bot.get('pid') == pid), {'pid': pid})
+    bots = load_bots()
+    stopped_bot = next((bot for bot in bots if bot.get('pid') == pid), {'pid': pid})
+    process_matches_bot = (
+        is_bot_process_running(stopped_bot)
+        if stopped_bot.get('strategy')
+        else is_process_running(pid)
+    )
+
+    if not process_matches_bot:
+        # Remove stale/dead records without ever killing a reused PID.
         bots = [b for b in bots if b['pid'] != pid]
         save_bots(bots)
         _remove_bot_state(pid)
+        if stopped_bot.get('strategy'):
+            return True, f"Bot process {pid} is no longer running (stale record removed)"
         _notify_bot_stopped(stopped_bot)
         return True, f"Process {pid} not running (removed from list)"
 
@@ -521,6 +589,9 @@ def switch_bot_mode(pid: int, live: bool) -> tuple:
         c2_buy_lower_wick_cmp=bot.get('c2_buy_lower_wick_cmp', 'lt'),
         c2_sell_upper_wick_cmp=bot.get('c2_sell_upper_wick_cmp', 'lt'),
         c2_sell_lower_wick_cmp=bot.get('c2_sell_lower_wick_cmp', 'lt'),
+        min_child_candles=bot.get('min_child_candles'),
+        max_child_candles=bot.get('max_child_candles'),
+        mother_coverage_enabled=bot.get('mother_coverage_enabled'),
     )
 
 
@@ -561,7 +632,7 @@ def list_bots(user: str = None, refresh: bool = True) -> list:
         # Filter out dead processes
         alive_bots = []
         for bot in bots:
-            if is_process_running(bot['pid']):
+            if is_bot_process_running(bot):
                 bot['status'] = 'running'
                 alive_bots.append(bot)
             else:

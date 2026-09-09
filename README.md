@@ -134,7 +134,8 @@ Flappy Bird tạo tín hiệu theo hai hướng. Với BUY:
 - Có số nến Con trong khoảng cấu hình `min_child_candles`–`max_child_candles`;
   mặc định là 2–5 nến.
 - Nến Mẹ phải cùng chiều với chiến lược: bullish cho BUY, bearish cho SELL.
-- Thân Mẹ lớn hơn thân của mọi nến con; `HIGH` Mẹ bao trùm toàn bộ thân các nến con.
+- Thân Mẹ lớn hơn thân của mọi nến Con; điều kiện biên Mẹ bao trùm thân Con
+  có thể bật/tắt bằng `mother_coverage_enabled` (mặc định bật).
 - Thân Cha lớn hơn `1.5 ×` thân nến con liền kề trước đó.
 - Râu trên Cha nhỏ hơn `30%` thân Cha.
 - `OPEN Cha >= EMA13`, `LOW Cha > EMA21`.
