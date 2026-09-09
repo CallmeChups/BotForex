@@ -229,6 +229,8 @@ def get_strategy_parameters(strategy_id: str) -> dict:
         'ema_periods': legacy_ema,
         'ema_consensus': ema_consensus,
         'ema_fallback': ema_fallback,
+        'ema_consensus_enabled': bool(entry.get('ema_consensus_enabled', True)),
+        'ema_fallback_enabled': bool(entry.get('ema_fallback_enabled', True)),
         'h2_exceed_pips': entry.get('h2_exceed_pips', 0.0),
         'c2_gap_pips': entry.get('c2_gap_pips', 0.0),
         'ema_margin_pips': entry.get('ema_margin_pips', 0.0),

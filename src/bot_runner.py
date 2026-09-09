@@ -76,6 +76,8 @@ def get_args():
                         help="Maximum child candles (Flappy Bird)")
     parser.add_argument("--mother_coverage_enabled", type=int, default=None,
                         help="Require Mother wick/body coverage of children (Flappy Bird)")
+    parser.add_argument("--flappy_consensus_enabled", type=int, default=None)
+    parser.add_argument("--flappy_fallback_enabled", type=int, default=None)
     for group, label in (
         ("consensus", "strict EMA consensus"),
         ("fallback", "EMA fallback"),
@@ -1055,6 +1057,18 @@ def run_feg_bot(args, strategy, params, credentials,
     fallback_short, fallback_medium, fallback_long = (
         ema_groups["fallback"][slot] for slot in ("short", "medium", "long")
     )
+    consensus_enabled = (
+        bool(args.flappy_consensus_enabled)
+        if args.flappy_consensus_enabled is not None
+        else bool(params.get("ema_consensus_enabled", True))
+    )
+    fallback_enabled = (
+        bool(args.flappy_fallback_enabled)
+        if args.flappy_fallback_enabled is not None
+        else bool(params.get("ema_fallback_enabled", True))
+    )
+    if not consensus_enabled and not fallback_enabled:
+        raise ValueError("At least one Flappy EMA mode must be enabled")
     if min_child_candles < 2 or max_child_candles < min_child_candles:
         raise ValueError("Flappy child candle range is invalid")
     mother_coverage_enabled = (
@@ -1241,6 +1255,7 @@ def run_feg_bot(args, strategy, params, credentials,
                                 "tp": _sig["take_profit"],
                                 "ticket": None, "candles": 0, "order_id": oid,
                                 "lot": order.get("trade_lot", lot_size),
+                                "ema_mode": _sig.get("ema_mode"),
                             })
                         else:
                             order["candles_left"] -= 1
@@ -1315,6 +1330,7 @@ def run_feg_bot(args, strategy, params, credentials,
                                 "tp": _sig["take_profit"],
                                 "ticket": position_ticket, "candles": 0, "order_id": oid,
                                 "lot": order.get("trade_lot", lot_size),
+                                "ema_mode": _sig.get("ema_mode"),
                             })
                         else:
                             # Disappeared without becoming a position — cancelled externally or rejected
@@ -1428,42 +1444,66 @@ def run_feg_bot(args, strategy, params, credentials,
                 # 3. Scan FEG signal → tạo pending order mới
                 now_hcm = datetime.now(TIMEZONE)
                 in_window = _in_time_window(now_hcm, entry_start_time, entry_end_time)
-                can_scan = re_entry_after_sl or not active_trades
+                occupied_modes = {
+                    trade.get("ema_mode")
+                    for trade in active_trades
+                    if trade.get("ema_mode")
+                } | {
+                    order.get("signal", {}).get("ema_mode")
+                    for order in pending_orders
+                    if order.get("signal", {}).get("ema_mode")
+                }
+                enabled_modes = [
+                    mode for mode, enabled in (
+                        ("consensus", consensus_enabled),
+                        ("fallback", fallback_enabled),
+                    )
+                    if enabled and (re_entry_after_sl or mode not in occupied_modes)
+                ]
+                can_scan = bool(enabled_modes) or args.strategy != "flappy_bird"
                 log(f"New candle {candle_time.strftime('%H:%M')} | "
                     f"C1: O={prev['open']:.2f} H={prev['high']:.2f} L={prev['low']:.2f} C={prev['close']:.2f} | "
                     f"C2: O={last['open']:.2f} H={last['high']:.2f} L={last['low']:.2f} C={last['close']:.2f} | "
                     f"EMA={ema[-1]:.2f} | in_window={in_window} can_scan={can_scan}")
                 if in_window and can_scan:
+                    scan_mode = None
+                    signal = None
                     if args.strategy == 'flappy_bird':
                         from src.flappy_bird_strategy import analyze_flappy_bird
                         c2 = {"open": last["open"], "high": last["high"], "low": last["low"], "close": last["close"]}
-                        signal = None
-                        for child_count in range(max_child_candles, min_child_candles - 1, -1):
-                            mother_idx = len(df) - child_count - 2
-                            if mother_idx < 0:
-                                continue
-                            mother = df.loc[mother_idx, ["open", "high", "low", "close"]].to_dict()
-                            children = [
-                                df.loc[idx, ["open", "high", "low", "close"]].to_dict()
-                                for idx in range(mother_idx + 1, len(df) - 1)
-                            ]
-                            for direction in ("BUY", "SELL"):
-                                signal = analyze_flappy_bird(
-                                    args.symbol, mother, children, c2,
-                                    ema13_series[-1], ema21_series[-1], ema55_series[-1],
-                                    lot_size,
-                                    params.get('sl_buffer_pips', 5.0),
-                                    params.get('entry_body_percent', 5.0),
-                                    rr_ratio,
-                                    min_father_body_points,
-                                    direction,
-                                    min_child_candles=min_child_candles,
-                                    max_child_candles=max_child_candles,
-                                    mother_coverage_enabled=mother_coverage_enabled,
-                                    fallback_ema13=fallback_ema13_series[-1],
-                                    fallback_ema21=fallback_ema21_series[-1],
-                                    fallback_ema55=fallback_ema55_series[-1],
-                                )
+                        for candidate_mode in enabled_modes:
+                            for child_count in range(max_child_candles, min_child_candles - 1, -1):
+                                mother_idx = len(df) - child_count - 2
+                                if mother_idx < 0:
+                                    continue
+                                mother = df.loc[mother_idx, ["open", "high", "low", "close"]].to_dict()
+                                children = [
+                                    df.loc[idx, ["open", "high", "low", "close"]].to_dict()
+                                    for idx in range(mother_idx + 1, len(df) - 1)
+                                ]
+                                for direction in ("BUY", "SELL"):
+                                    signal = analyze_flappy_bird(
+                                        args.symbol, mother, children, c2,
+                                        ema13_series[-1], ema21_series[-1], ema55_series[-1],
+                                        lot_size,
+                                        params.get('sl_buffer_pips', 5.0),
+                                        params.get('entry_body_percent', 5.0),
+                                        rr_ratio,
+                                        min_father_body_points,
+                                        direction,
+                                        min_child_candles=min_child_candles,
+                                        max_child_candles=max_child_candles,
+                                        mother_coverage_enabled=mother_coverage_enabled,
+                                        fallback_ema13=fallback_ema13_series[-1],
+                                        fallback_ema21=fallback_ema21_series[-1],
+                                        fallback_ema55=fallback_ema55_series[-1],
+                                        consensus_enabled=consensus_enabled,
+                                        fallback_enabled=fallback_enabled,
+                                        requested_ema_mode=candidate_mode,
+                                    )
+                                    if signal:
+                                        scan_mode = candidate_mode
+                                        break
                                 if signal:
                                     break
                             if signal:
@@ -1481,7 +1521,7 @@ def run_feg_bot(args, strategy, params, credentials,
                             c2_buy_upper_wick_cmp, c2_buy_lower_wick_cmp,
                             c2_sell_upper_wick_cmp, c2_sell_lower_wick_cmp,
                         )
-                    log(f"Signal scan: {signal['direction'] if signal else 'NO SIGNAL'}"
+                    log(f"Signal scan ({scan_mode or 'generic'}): {signal['direction'] if signal else 'NO SIGNAL'}"
                         + (f" entry={signal['entry_price']:.2f} sl={signal['stop_loss']:.2f} tp={signal['take_profit']:.2f}" if signal else ""))
                     if signal:
                         if args.strategy == "flappy_bird" and _has_duplicate_pending(

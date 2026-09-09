@@ -20,6 +20,8 @@ entry:
     short: 13
     medium: 21
     long: 55
+  ema_consensus_enabled: true
+  ema_fallback_enabled: true
 
 exit:
   tp:

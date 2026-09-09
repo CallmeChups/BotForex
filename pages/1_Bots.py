@@ -773,6 +773,14 @@ def show_create_bot():
                 "Dài hạn ", min_value=4, max_value=500,
                 value=int(fallback["long"]), key=f"{sk}_fallback_long",
             )
+            flappy_consensus_enabled = st.checkbox(
+                "Bật EMA đồng thuận", value=bool(params.get("ema_consensus_enabled", True)),
+                key=f"{sk}_consensus_enabled",
+            )
+            flappy_fallback_enabled = st.checkbox(
+                "Bật EMA fallback", value=bool(params.get("ema_fallback_enabled", True)),
+                key=f"{sk}_fallback_enabled",
+            )
             if not flappy_consensus_short < flappy_consensus_medium < flappy_consensus_long:
                 st.error("EMA đồng thuận phải thỏa: ngắn hạn < trung hạn < dài hạn")
             if not flappy_fallback_short < flappy_fallback_medium < flappy_fallback_long:
@@ -804,6 +812,7 @@ def show_create_bot():
             ema_period = None
             flappy_consensus_short = flappy_consensus_medium = flappy_consensus_long = None
             flappy_fallback_short = flappy_fallback_medium = flappy_fallback_long = None
+            flappy_consensus_enabled = flappy_fallback_enabled = None
             h2_exceed_pips = 0.0
             c2_gap_pips = 0.0
             ema_margin_pips = 0.0
@@ -986,6 +995,8 @@ def show_create_bot():
                     flappy_fallback_short=flappy_fallback_short,
                     flappy_fallback_medium=flappy_fallback_medium,
                     flappy_fallback_long=flappy_fallback_long,
+                    flappy_consensus_enabled=flappy_consensus_enabled,
+                    flappy_fallback_enabled=flappy_fallback_enabled,
                     lot_mode=lot_mode,
                     risk_mode=risk_mode if lot_mode == "flex" else None,
                     risk_percent=risk_percent if lot_mode == "flex" else None,

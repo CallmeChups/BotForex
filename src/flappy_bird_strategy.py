@@ -106,6 +106,9 @@ def diagnose_flappy_bird(
     fallback_ema13: float | None = None,
     fallback_ema21: float | None = None,
     fallback_ema55: float | None = None,
+    consensus_enabled: bool = True,
+    fallback_enabled: bool = True,
+    requested_ema_mode: str | None = None,
 ) -> dict:
     """Return validation status and metrics, optionally including the audit table."""
     child_bodies = [_body(child) for child in children]
@@ -148,6 +151,40 @@ def diagnose_flappy_bird(
         metrics["fallback_ema13"], metrics["fallback_ema21"],
         metrics["fallback_ema55"], is_buy,
     )
+    if not consensus_enabled and metrics["ema_mode"] == "consensus":
+        metrics["ema_mode"] = None
+    if not fallback_enabled and metrics["ema_mode"] == "fallback":
+        metrics["ema_mode"] = None
+    if requested_ema_mode is not None:
+        if requested_ema_mode not in {"consensus", "fallback"}:
+            raise ValueError("requested_ema_mode must be consensus or fallback")
+        if (
+            requested_ema_mode == "consensus" and not consensus_enabled
+        ) or (
+            requested_ema_mode == "fallback" and not fallback_enabled
+        ):
+            metrics["ema_mode"] = None
+            requested_valid = False
+        else:
+            selected_values = (
+                (ema13, ema21, ema55)
+                if requested_ema_mode == "consensus"
+                else (metrics["fallback_ema13"], metrics["fallback_ema21"], metrics["fallback_ema55"])
+            )
+            requested_valid = (
+                selected_values[0] > selected_values[1] > selected_values[2]
+                if is_buy and requested_ema_mode == "consensus"
+                else selected_values[0] < selected_values[1] < selected_values[2]
+                if not is_buy and requested_ema_mode == "consensus"
+                else (
+                    selected_values[0] > selected_values[1] and selected_values[0] < selected_values[2]
+                    and father["open"] < selected_values[2] < father["close"]
+                    if is_buy else
+                    selected_values[0] < selected_values[1] and selected_values[0] > selected_values[2]
+                    and father["open"] > selected_values[2] > father["close"]
+                )
+            )
+            metrics["ema_mode"] = requested_ema_mode if requested_valid else None
     filter_ema13 = (
         metrics["fallback_ema13"] if metrics["ema_mode"] == "fallback" else ema13
     )
@@ -165,10 +202,7 @@ def diagnose_flappy_bird(
             reason = "invalid_child_count"
         elif mother_body <= 0 or father_body <= 0:
             reason = "zero_candle_body"
-        elif not _ema_order_valid(
-            father, ema13, ema21, ema55, is_buy,
-            metrics["fallback_ema13"], metrics["fallback_ema21"], metrics["fallback_ema55"],
-        ):
+        elif metrics["ema_mode"] is None:
             reason = "ema_order_failed"
         elif not mother_is_directional:
             reason = "mother_direction_failed"
@@ -218,10 +252,7 @@ def diagnose_flappy_bird(
         {
             "key": "ema_order",
             "label": "EMA chuẩn hoặc EMA55 breakout fallback",
-            "passed": _ema_order_valid(
-                father, ema13, ema21, ema55, is_buy,
-                metrics["fallback_ema13"], metrics["fallback_ema21"], metrics["fallback_ema55"],
-            ),
+            "passed": metrics["ema_mode"] is not None,
             "actual": f"{ema13:.5f}, {ema21:.5f}, {ema55:.5f}",
             "expected": (
                 "EMA13 > EMA21 > EMA55 hoặc Cha cắt EMA55 từ dưới lên"
@@ -374,6 +405,9 @@ def detect_flappy_bird_signal(
     fallback_ema13: float | None = None,
     fallback_ema21: float | None = None,
     fallback_ema55: float | None = None,
+    consensus_enabled: bool = True,
+    fallback_enabled: bool = True,
+    requested_ema_mode: str | None = None,
 ) -> bool:
     """Return whether the candle window satisfies the BUY pattern."""
     return diagnose_flappy_bird(
@@ -385,6 +419,9 @@ def detect_flappy_bird_signal(
         fallback_ema13=fallback_ema13,
         fallback_ema21=fallback_ema21,
         fallback_ema55=fallback_ema55,
+        consensus_enabled=consensus_enabled,
+        fallback_enabled=fallback_enabled,
+        requested_ema_mode=requested_ema_mode,
     )["valid"]
 
 
@@ -408,6 +445,9 @@ def analyze_flappy_bird(
     fallback_ema13: float | None = None,
     fallback_ema21: float | None = None,
     fallback_ema55: float | None = None,
+    consensus_enabled: bool = True,
+    fallback_enabled: bool = True,
+    requested_ema_mode: str | None = None,
 ) -> dict | None:
     """Return a standard pending limit signal or None."""
     diagnostics = diagnose_flappy_bird(
@@ -419,6 +459,9 @@ def analyze_flappy_bird(
         fallback_ema13=fallback_ema13,
         fallback_ema21=fallback_ema21,
         fallback_ema55=fallback_ema55,
+        consensus_enabled=consensus_enabled,
+        fallback_enabled=fallback_enabled,
+        requested_ema_mode=requested_ema_mode,
     )
     if not diagnostics["valid"]:
         return None
@@ -461,5 +504,6 @@ def analyze_flappy_bird(
         "fallback_ema13": diagnostics["metrics"]["fallback_ema13"],
         "fallback_ema21": diagnostics["metrics"]["fallback_ema21"],
         "fallback_ema55": diagnostics["metrics"]["fallback_ema55"],
+        "ema_mode": diagnostics["metrics"].get("ema_mode"),
         "debug": diagnostics,
     }

@@ -350,6 +350,8 @@ def run_backtest(
     flappy_fallback_short: int = 13,
     flappy_fallback_medium: int = 21,
     flappy_fallback_long: int = 55,
+    flappy_consensus_enabled: bool = True,
+    flappy_fallback_enabled: bool = True,
     flappy_sl_buffer_pips: float = 5.0,
     flappy_entry_body_percent: float = 5.0,
     progress_callback: Callable[[dict], None] | None = None,
@@ -388,7 +390,7 @@ def run_backtest(
 
     if entry_type == "pattern":
         if strategy == "flappy_bird":
-            result = _run_flappy_bird_backtest(
+            flappy_kwargs = dict(
                 df=df,
                 symbol=symbol,
                 lot_mode=lot_mode,
@@ -409,11 +411,53 @@ def run_backtest(
                 fallback_short=flappy_fallback_short,
                 fallback_medium=flappy_fallback_medium,
                 fallback_long=flappy_fallback_long,
+                consensus_enabled=flappy_consensus_enabled,
+                fallback_enabled=flappy_fallback_enabled,
                 sl_buffer_pips=flappy_sl_buffer_pips,
                 entry_body_percent=flappy_entry_body_percent,
                 rr_ratio=rr_ratio,
-                progress_callback=progress_callback,
             )
+            mode_results = []
+            if flappy_consensus_enabled:
+                mode_results.append(_run_flappy_bird_backtest(
+                    **flappy_kwargs, requested_ema_mode="consensus",
+                    progress_callback=progress_callback,
+                ))
+            if flappy_fallback_enabled:
+                mode_results.append(_run_flappy_bird_backtest(
+                    **flappy_kwargs, requested_ema_mode="fallback",
+                    progress_callback=progress_callback,
+                ))
+            if not mode_results:
+                raise ValueError("At least one Flappy EMA mode must be enabled")
+            result = mode_results[0]
+            if len(mode_results) > 1:
+                result["trades"] = sorted(
+                    [trade for item in mode_results for trade in item["trades"]],
+                    key=lambda trade: (trade.get("date", ""), trade.get("time", "")),
+                )
+                result["final_equity"] = sum(item["final_equity"] for item in mode_results) - (
+                    len(mode_results) - 1
+                ) * starting_equity
+                merged_stats = calculate_stats(result["trades"], lot_mode)
+                result.update(merged_stats)
+                result["equity_curve"] = [0]
+                result["equity_curve_usd"] = [starting_equity]
+                for trade in result["trades"]:
+                    result["equity_curve"].append(
+                        result["equity_curve"][-1] + trade["pnl_pips"]
+                    )
+                    result["equity_curve_usd"].append(
+                        result["equity_curve_usd"][-1] + trade["pnl_usd"]
+                    )
+                _report_progress(
+                    progress_callback,
+                    phase="finalize",
+                    current=len(df),
+                    total=len(df),
+                    trades=len(result["trades"]),
+                    message=f"Hoàn tất hợp nhất {len(mode_results)} EMA modes.",
+                )
         elif strategy == "feg_stop_order":
             result = _run_feg_stop_order_backtest(
                 df=df, symbol=symbol, rr_ratio=rr_ratio, max_candles=max_candles,
@@ -981,6 +1025,7 @@ def _run_flappy_bird_backtest(
     sl_buffer_pips, entry_body_percent, rr_ratio, progress_callback=None,
     consensus_short=13, consensus_medium=21, consensus_long=55,
     fallback_short=13, fallback_medium=21, fallback_long=55,
+    requested_ema_mode=None, consensus_enabled=True, fallback_enabled=True,
 ):
     """Backtest Flappy Bird BUY LIMIT signals with deterministic fills."""
     df = df.reset_index(drop=True).copy()
@@ -1074,6 +1119,9 @@ def _run_flappy_bird_backtest(
                     fallback_ema13=fallback_ema13,
                     fallback_ema21=fallback_ema21,
                     fallback_ema55=fallback_ema55,
+                    consensus_enabled=consensus_enabled,
+                    fallback_enabled=fallback_enabled,
+                    requested_ema_mode=requested_ema_mode,
                 )
                 if signal:
                     signal_child_count = child_count
@@ -1157,6 +1205,7 @@ def _run_flappy_bird_backtest(
             trade["_ema_fallback_short"] = signal["fallback_ema13"]
             trade["_ema_fallback_medium"] = signal["fallback_ema21"]
             trade["_ema_fallback_long"] = signal["fallback_ema55"]
+            trade["_ema_mode"] = signal["debug"]["metrics"].get("ema_mode")
             trade["_flappy_ema_periods"] = {
                 "consensus": [consensus_short, consensus_medium, consensus_long],
                 "fallback": [fallback_short, fallback_medium, fallback_long],
