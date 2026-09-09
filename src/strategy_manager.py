@@ -199,6 +199,26 @@ def get_strategy_parameters(strategy_id: str) -> dict:
     exit_config = strategy.get('exit', {})
     params = strategy.get('parameters', {})
 
+    legacy_ema = entry.get('ema_periods', [13, 21, 55])
+    consensus = entry.get('ema_consensus', {})
+    fallback = entry.get('ema_fallback', {})
+    if not isinstance(legacy_ema, list) or len(legacy_ema) != 3:
+        legacy_ema = [13, 21, 55]
+
+    def _ema_group(group):
+        return {
+            'short': int(group.get('short', legacy_ema[0])),
+            'medium': int(group.get('medium', legacy_ema[1])),
+            'long': int(group.get('long', legacy_ema[2])),
+        }
+
+    ema_consensus = _ema_group(consensus)
+    ema_fallback = _ema_group(fallback)
+    for name, group in (('consensus', ema_consensus), ('fallback', ema_fallback)):
+        values = [group['short'], group['medium'], group['long']]
+        if any(value < 2 for value in values) or not values[0] < values[1] < values[2]:
+            raise ValueError(f"Flappy {name} EMA periods must satisfy 2 <= short < medium < long")
+
     return {
         'timeframe': entry.get('timeframe', 'M5'),
         'entry_type': entry.get('type', 'time'),
@@ -206,7 +226,9 @@ def get_strategy_parameters(strategy_id: str) -> dict:
         'timezone': entry.get('timezone', 'Asia/Ho_Chi_Minh'),
         'pattern': entry.get('pattern', ''),
         'ema_period': entry.get('ema_period', 21),
-        'ema_periods': entry.get('ema_periods', [13, 21, 55]),
+        'ema_periods': legacy_ema,
+        'ema_consensus': ema_consensus,
+        'ema_fallback': ema_fallback,
         'h2_exceed_pips': entry.get('h2_exceed_pips', 0.0),
         'c2_gap_pips': entry.get('c2_gap_pips', 0.0),
         'ema_margin_pips': entry.get('ema_margin_pips', 0.0),

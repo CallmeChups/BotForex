@@ -2,7 +2,7 @@ id: flappy_bird
 name: Flappy Bird BUY/SELL
 version: "1.0"
 description: |
-  Mirrored BUY LIMIT and SELL LIMIT patterns using EMA13/21/55, a mother
+  Mirrored BUY LIMIT and SELL LIMIT patterns using configurable EMA groups, a mother
   candle, 2-7 child candles and a directional father candle.
 author: admin
 created: "2026-09-06"
@@ -12,7 +12,14 @@ entry:
   type: pattern
   timeframe: M5
   pattern: flappy_bird
-  ema_periods: [13, 21, 55]
+  ema_consensus:
+    short: 13
+    medium: 21
+    long: 55
+  ema_fallback:
+    short: 13
+    medium: 21
+    long: 55
 
 exit:
   tp:

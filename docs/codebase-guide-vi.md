@@ -276,9 +276,12 @@ Các trường phổ biến: `rr_ratio`, `buffer_k`, `lot_size`, `entry_mode`, `
 
 Strategy BUY/SELL LIMIT trên M5, được triển khai riêng trong `src/flappy_bird_strategy.py` và được định tuyến riêng trong backtest/live runner:
 
-- BUY dùng `EMA13 > EMA21 > EMA55`; SELL dùng `EMA13 < EMA21 < EMA55`.
-  Có fallback đối xứng khi EMA13/EMA21 cùng nằm dưới (BUY) hoặc trên (SELL)
-  EMA55 và Nến Cha cắt EMA55 theo đúng hướng.
+- Flappy có hai bộ EMA cấu hình riêng: `ema_consensus` cho thứ tự đồng thuận
+  và `ema_fallback` cho nhánh fallback. Mỗi bộ gồm `short`, `medium`, `long`;
+  mặc định cả hai là `13/21/55`.
+- BUY dùng bộ đồng thuận theo thứ tự `short > medium > long`; SELL dùng thứ tự
+  ngược lại. Fallback dùng bộ EMA fallback khi short/medium nằm đúng phía của
+  long và Nến Cha cắt EMA fallback long theo đúng hướng.
 - Có số nến Con trong khoảng `min_child_candles`–`max_child_candles`, mặc định
   là 2–5; các giá trị này được truyền đồng nhất qua Backtest và Live Bot.
 - Nến Mẹ phải cùng chiều với chiến lược: bullish cho BUY, bearish cho SELL.
@@ -288,8 +291,8 @@ Strategy BUY/SELL LIMIT trên M5, được triển khai riêng trong `src/flappy
 - Thân Mẹ lớn hơn thân mọi nến con; `high` của Mẹ bao trùm toàn bộ thân các nến con.
 - Thân Cha lớn hơn `1.5 ×` thân nến con liền kề trước đó. BUY giới hạn râu trên,
   SELL giới hạn râu dưới dưới `30%` thân Cha.
-- BUY: `open Cha >= EMA13`, `low Cha > EMA21`, `close Cha > highest high`.
-  SELL: `open Cha <= EMA13`, `high Cha < EMA21`, `close Cha < lowest low`.
+- BUY: `open Cha >= EMA consensus short`, `low Cha > EMA consensus medium`,
+  `close Cha > highest high`; SELL đối xứng.
 - Thân Cha lớn hơn ngưỡng `min_father_body_points` (mặc định `2.0` price
   points) và không vượt quá `6.0` price points; chỉ ngưỡng tối thiểu được
   override ở Backtest và Create Bot.
@@ -310,7 +313,14 @@ entry:
   type: pattern
   timeframe: M5
   pattern: flappy_bird
-  ema_periods: [13, 21, 55]
+  ema_consensus:
+    short: 13
+    medium: 21
+    long: 55
+  ema_fallback:
+    short: 13
+    medium: 21
+    long: 55
 
 parameters:
   entry_body_percent: 5.0

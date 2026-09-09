@@ -114,6 +114,21 @@ def test_flappy_bird_accepts_ema55_breakout_fallback_and_caps_body():
     )["reason"] == "father_body_above_maximum"
 
 
+def test_flappy_bird_uses_separate_fallback_ema_values():
+    mother, children, father = _valid_parts()
+    father["open"] = 105.0
+    father["close"] = 111.0
+    father["high"] = 111.2
+
+    assert detect_flappy_bird_signal(
+        mother, children, father,
+        104.0, 102.0, 120.0,
+        fallback_ema13=104.0,
+        fallback_ema21=102.0,
+        fallback_ema55=110.0,
+    )
+
+
 def test_flappy_bird_requires_mother_direction():
     mother, children, father = _valid_parts()
     mother["close"] = 98.0

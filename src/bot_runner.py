@@ -76,6 +76,15 @@ def get_args():
                         help="Maximum child candles (Flappy Bird)")
     parser.add_argument("--mother_coverage_enabled", type=int, default=None,
                         help="Require Mother wick/body coverage of children (Flappy Bird)")
+    for group, label in (
+        ("consensus", "strict EMA consensus"),
+        ("fallback", "EMA fallback"),
+    ):
+        for slot in ("short", "medium", "long"):
+            parser.add_argument(
+                f"--flappy_{group}_{slot}", type=int, default=None,
+                help=f"Flappy {label} {slot} EMA period",
+            )
     parser.add_argument("--entry_mode", type=str, default=None,
                         help="Entry mode: 'close' or 'range_percent' (default: from strategy)")
     parser.add_argument("--entry_percent", type=float, default=None,
@@ -1027,6 +1036,25 @@ def run_feg_bot(args, strategy, params, credentials,
         args.max_child_candles if args.max_child_candles is not None
         else params.get("max_child_candles", 5)
     )
+    ema_groups = {}
+    for group in ("consensus", "fallback"):
+        ema_groups[group] = {}
+        for slot, default in (("short", 13), ("medium", 21), ("long", 55)):
+            arg_value = getattr(args, f"flappy_{group}_{slot}")
+            config = params.get(f"ema_{group}", {})
+            ema_groups[group][slot] = (
+                arg_value if arg_value is not None
+                else int(config.get(slot, default))
+            )
+        values = [ema_groups[group][slot] for slot in ("short", "medium", "long")]
+        if not values[0] < values[1] < values[2]:
+            raise ValueError(f"Flappy {group} EMA periods must be strictly increasing")
+    consensus_short, consensus_medium, consensus_long = (
+        ema_groups["consensus"][slot] for slot in ("short", "medium", "long")
+    )
+    fallback_short, fallback_medium, fallback_long = (
+        ema_groups["fallback"][slot] for slot in ("short", "medium", "long")
+    )
     if min_child_candles < 2 or max_child_candles < min_child_candles:
         raise ValueError("Flappy child candle range is invalid")
     mother_coverage_enabled = (
@@ -1075,7 +1103,8 @@ def run_feg_bot(args, strategy, params, credentials,
     wick_log = f"WickFilter=BUY({','.join(_wb) or 'OFF'}) SELL({','.join(_ws) or 'OFF'})"
     if args.strategy == "flappy_bird":
         log(
-            f"Flappy Bird params: EMA13/21/55, RR={rr_ratio}, "
+            f"Flappy Bird params: consensus EMA{consensus_short}/{consensus_medium}/{consensus_long}, "
+            f"fallback EMA{fallback_short}/{fallback_medium}/{fallback_long}, RR={rr_ratio}, "
             f"lot={lot_log}, pending_candles={limit_order_candles}, "
             f"max_candles={max_candles or 'unlimited'}, timeframe={timeframe}"
         )
@@ -1138,7 +1167,11 @@ def run_feg_bot(args, strategy, params, credentials,
 
             df = get_recent_candles(
                 mt5, args.symbol, timeframe,
-                count=max(EMA_WARMUP_WINDOW, ema_period * 4),
+                count=max(
+                    EMA_WARMUP_WINDOW,
+                    consensus_long * 4,
+                    fallback_long * 4,
+                ) if args.strategy == "flappy_bird" else max(EMA_WARMUP_WINDOW, ema_period * 4),
             )
             if df is None or len(df) < ema_period + 2:
                 log(f"Insufficient candle data for {args.symbol} (got {len(df) if df is not None else 0})", "ERROR")
@@ -1148,13 +1181,22 @@ def run_feg_bot(args, strategy, params, credentials,
 
             ema = df["close"].ewm(span=ema_period, adjust=False).mean().tolist()
             ema13_series = calculate_flappy_ema_series(
-                df["close"], 13, EMA_WARMUP_WINDOW
+                df["close"], consensus_short, EMA_WARMUP_WINDOW
             )
             ema21_series = calculate_flappy_ema_series(
-                df["close"], 21, EMA_WARMUP_WINDOW
+                df["close"], consensus_medium, EMA_WARMUP_WINDOW
             )
             ema55_series = calculate_flappy_ema_series(
-                df["close"], 55, EMA_WARMUP_WINDOW
+                df["close"], consensus_long, EMA_WARMUP_WINDOW
+            )
+            fallback_ema13_series = calculate_flappy_ema_series(
+                df["close"], fallback_short, EMA_WARMUP_WINDOW
+            )
+            fallback_ema21_series = calculate_flappy_ema_series(
+                df["close"], fallback_medium, EMA_WARMUP_WINDOW
+            )
+            fallback_ema55_series = calculate_flappy_ema_series(
+                df["close"], fallback_long, EMA_WARMUP_WINDOW
             )
             last = df.iloc[-1]
             prev = df.iloc[-2]
@@ -1418,6 +1460,9 @@ def run_feg_bot(args, strategy, params, credentials,
                                     min_child_candles=min_child_candles,
                                     max_child_candles=max_child_candles,
                                     mother_coverage_enabled=mother_coverage_enabled,
+                                    fallback_ema13=fallback_ema13_series[-1],
+                                    fallback_ema21=fallback_ema21_series[-1],
+                                    fallback_ema55=fallback_ema55_series[-1],
                                 )
                                 if signal:
                                     break

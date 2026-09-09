@@ -117,6 +117,25 @@ def test_command_includes_flappy_child_count_range():
     assert cmd[cmd.index("--max_child_candles") + 1] == "6"
 
 
+def test_command_includes_flappy_ema_groups():
+    cmd = bot_manager.build_bot_command(
+        "python", "bot_runner.py", "flappy_bird", "XAUUSD", "admin",
+        test=True, interval=1,
+        flappy_consensus_short=8, flappy_consensus_medium=21,
+        flappy_consensus_long=55, flappy_fallback_short=5,
+        flappy_fallback_medium=13, flappy_fallback_long=34,
+    )
+    for flag, value in (
+        ("--flappy_consensus_short", "8"),
+        ("--flappy_consensus_medium", "21"),
+        ("--flappy_consensus_long", "55"),
+        ("--flappy_fallback_short", "5"),
+        ("--flappy_fallback_medium", "13"),
+        ("--flappy_fallback_long", "34"),
+    ):
+        assert cmd[cmd.index(flag) + 1] == value
+
+
 def test_command_includes_mother_coverage_switch():
     cmd = build_bot_command(
         "python", "bot_runner.py", "flappy_bird", "XAUUSD", "admin",

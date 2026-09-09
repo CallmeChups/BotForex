@@ -276,12 +276,48 @@ def main():
                 max_candles = 0
 
         # ── ZONE 2: ENTRY ─────────────────────────────────────────────────
+        flappy_consensus_short = flappy_consensus_medium = flappy_consensus_long = None
+        flappy_fallback_short = flappy_fallback_medium = flappy_fallback_long = None
         if is_pattern:
             _section_header("📈", "ENTRY", "#10b981")
             if is_flappy_bird:
                 # Flappy uses EMA13/21/55 and its own pattern checks; these
                 # generic FEG controls are intentionally hidden.
                 ema_period = 21
+                consensus = params.get("ema_consensus", {"short": 13, "medium": 21, "long": 55})
+                fallback = params.get("ema_fallback", consensus)
+                st.markdown("**EMA đồng thuận**")
+                ema_cols = st.columns(3)
+                flappy_consensus_short = ema_cols[0].number_input(
+                    "Ngắn hạn", min_value=2, max_value=500,
+                    value=int(consensus["short"]), key=f"backtest_consensus_short",
+                )
+                flappy_consensus_medium = ema_cols[1].number_input(
+                    "Trung hạn", min_value=3, max_value=500,
+                    value=int(consensus["medium"]), key=f"backtest_consensus_medium",
+                )
+                flappy_consensus_long = ema_cols[2].number_input(
+                    "Dài hạn", min_value=4, max_value=500,
+                    value=int(consensus["long"]), key=f"backtest_consensus_long",
+                )
+                st.markdown("**EMA fallback**")
+                ema_cols = st.columns(3)
+                flappy_fallback_short = ema_cols[0].number_input(
+                    "Ngắn hạn ", min_value=2, max_value=500,
+                    value=int(fallback["short"]), key=f"backtest_fallback_short",
+                )
+                flappy_fallback_medium = ema_cols[1].number_input(
+                    "Trung hạn ", min_value=3, max_value=500,
+                    value=int(fallback["medium"]), key=f"backtest_fallback_medium",
+                )
+                flappy_fallback_long = ema_cols[2].number_input(
+                    "Dài hạn ", min_value=4, max_value=500,
+                    value=int(fallback["long"]), key=f"backtest_fallback_long",
+                )
+                if not flappy_consensus_short < flappy_consensus_medium < flappy_consensus_long:
+                    st.error("EMA đồng thuận phải thỏa: ngắn hạn < trung hạn < dài hạn")
+                if not flappy_fallback_short < flappy_fallback_medium < flappy_fallback_long:
+                    st.error("EMA fallback phải thỏa: ngắn hạn < trung hạn < dài hạn")
                 h2_exceed_pips = 0.0
                 c2_gap_pips = 0.0
                 ema_margin_pips = 0.0
@@ -722,6 +758,12 @@ def main():
                     limit_order_candles=int(limit_order_candles),
                     be_enabled=be_enabled,
                     be_r=be_r,
+                    flappy_consensus_short=flappy_consensus_short,
+                    flappy_consensus_medium=flappy_consensus_medium,
+                    flappy_consensus_long=flappy_consensus_long,
+                    flappy_fallback_short=flappy_fallback_short,
+                    flappy_fallback_medium=flappy_fallback_medium,
+                    flappy_fallback_long=flappy_fallback_long,
                     strategy=selected_strategy,
                     ema_filter_enabled=ema_filter_enabled,
                     buy_ema_side=buy_ema_side,
@@ -767,6 +809,12 @@ def main():
                 'sl_type': sl_type,
                 'entry_type': entry_type,
                 'ema_period': ema_period,
+                'flappy_consensus_short': flappy_consensus_short,
+                'flappy_consensus_medium': flappy_consensus_medium,
+                'flappy_consensus_long': flappy_consensus_long,
+                'flappy_fallback_short': flappy_fallback_short,
+                'flappy_fallback_medium': flappy_fallback_medium,
+                'flappy_fallback_long': flappy_fallback_long,
                 'h2_exceed_pips': h2_exceed_pips,
                 'c2_gap_pips': c2_gap_pips,
                 'ema_margin_pips': ema_margin_pips,

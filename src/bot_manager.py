@@ -168,6 +168,8 @@ def build_bot_command(
     min_child_candles=None,
     max_child_candles=None,
     mother_coverage_enabled=None,
+    flappy_consensus_short=None, flappy_consensus_medium=None, flappy_consensus_long=None,
+    flappy_fallback_short=None, flappy_fallback_medium=None, flappy_fallback_long=None,
 ):
     """Build command list to run bot_runner (separated for testability)."""
     cmd = [
@@ -223,6 +225,16 @@ def build_bot_command(
         cmd.extend(["--max_child_candles", str(max_child_candles)])
     if mother_coverage_enabled is not None:
         cmd.extend(["--mother_coverage_enabled", "1" if mother_coverage_enabled else "0"])
+    for name, value in (
+        ("flappy_consensus_short", flappy_consensus_short),
+        ("flappy_consensus_medium", flappy_consensus_medium),
+        ("flappy_consensus_long", flappy_consensus_long),
+        ("flappy_fallback_short", flappy_fallback_short),
+        ("flappy_fallback_medium", flappy_fallback_medium),
+        ("flappy_fallback_long", flappy_fallback_long),
+    ):
+        if value is not None:
+            cmd.extend([f"--{name}", str(value)])
     cmd.extend(["--be_enabled", "1" if be_enabled else "0"])
     cmd.extend(["--be_r", str(be_r)])
     cmd.extend(["--ema_filter_enabled", "1" if ema_filter_enabled else "0"])
@@ -290,6 +302,12 @@ def _start_bot_unlocked(
     min_child_candles: int = None,
     max_child_candles: int = None,
     mother_coverage_enabled: bool = None,
+    flappy_consensus_short: int = None,
+    flappy_consensus_medium: int = None,
+    flappy_consensus_long: int = None,
+    flappy_fallback_short: int = None,
+    flappy_fallback_medium: int = None,
+    flappy_fallback_long: int = None,
 ) -> tuple:
     """
     Start a new bot process
@@ -329,6 +347,8 @@ def _start_bot_unlocked(
         min_child_candles,
         max_child_candles,
         mother_coverage_enabled,
+        flappy_consensus_short, flappy_consensus_medium, flappy_consensus_long,
+        flappy_fallback_short, flappy_fallback_medium, flappy_fallback_long,
     )
 
     try:
@@ -392,6 +412,12 @@ def _start_bot_unlocked(
             'min_child_candles': min_child_candles,
             'max_child_candles': max_child_candles,
             'mother_coverage_enabled': mother_coverage_enabled,
+            'flappy_consensus_short': flappy_consensus_short,
+            'flappy_consensus_medium': flappy_consensus_medium,
+            'flappy_consensus_long': flappy_consensus_long,
+            'flappy_fallback_short': flappy_fallback_short,
+            'flappy_fallback_medium': flappy_fallback_medium,
+            'flappy_fallback_long': flappy_fallback_long,
             'be_enabled': be_enabled,
             'be_r': be_r,
             'ema_filter_enabled': ema_filter_enabled,

@@ -44,7 +44,13 @@ def _ema_order_valid(
     ema21: float,
     ema55: float,
     is_buy: bool,
+    fallback_ema13: float | None = None,
+    fallback_ema21: float | None = None,
+    fallback_ema55: float | None = None,
 ) -> bool:
+    fallback_ema13 = ema13 if fallback_ema13 is None else fallback_ema13
+    fallback_ema21 = ema21 if fallback_ema21 is None else fallback_ema21
+    fallback_ema55 = ema55 if fallback_ema55 is None else fallback_ema55
     standard_order = (
         ema13 > ema21 > ema55
         if is_buy else ema13 < ema21 < ema55
@@ -53,12 +59,35 @@ def _ema_order_valid(
         return True
 
     return (
-        ema13 > ema21 and ema13 < ema55
-        and father["open"] < ema55 < father["close"]
+        fallback_ema13 > fallback_ema21 and fallback_ema13 < fallback_ema55
+        and father["open"] < fallback_ema55 < father["close"]
         if is_buy else
-        ema13 < ema21 and ema13 > ema55
-        and father["open"] > ema55 > father["close"]
+        fallback_ema13 < fallback_ema21 and fallback_ema13 > fallback_ema55
+        and father["open"] > fallback_ema55 > father["close"]
     )
+
+
+def _ema_mode(
+    father: dict,
+    ema13: float,
+    ema21: float,
+    ema55: float,
+    fallback_ema13: float,
+    fallback_ema21: float,
+    fallback_ema55: float,
+    is_buy: bool,
+) -> str | None:
+    standard = ema13 > ema21 > ema55 if is_buy else ema13 < ema21 < ema55
+    if standard:
+        return "consensus"
+    fallback = (
+        fallback_ema13 > fallback_ema21 and fallback_ema13 < fallback_ema55
+        and father["open"] < fallback_ema55 < father["close"]
+        if is_buy else
+        fallback_ema13 < fallback_ema21 and fallback_ema13 > fallback_ema55
+        and father["open"] > fallback_ema55 > father["close"]
+    )
+    return "fallback" if fallback else None
 
 
 def diagnose_flappy_bird(
@@ -74,6 +103,9 @@ def diagnose_flappy_bird(
     min_child_candles: int = MIN_CHILDREN,
     max_child_candles: int = 5,
     mother_coverage_enabled: bool = True,
+    fallback_ema13: float | None = None,
+    fallback_ema21: float | None = None,
+    fallback_ema55: float | None = None,
 ) -> dict:
     """Return validation status and metrics, optionally including the audit table."""
     child_bodies = [_body(child) for child in children]
@@ -105,9 +137,23 @@ def diagnose_flappy_bird(
         "ema13": ema13,
         "ema21": ema21,
         "ema55": ema55,
+        "fallback_ema13": ema13 if fallback_ema13 is None else fallback_ema13,
+        "fallback_ema21": ema21 if fallback_ema21 is None else fallback_ema21,
+        "fallback_ema55": ema55 if fallback_ema55 is None else fallback_ema55,
         "min_father_body_points": min_father_body_points,
         "max_father_body_points": MAX_FATHER_BODY_POINTS,
     }
+    metrics["ema_mode"] = _ema_mode(
+        father, ema13, ema21, ema55,
+        metrics["fallback_ema13"], metrics["fallback_ema21"],
+        metrics["fallback_ema55"], is_buy,
+    )
+    filter_ema13 = (
+        metrics["fallback_ema13"] if metrics["ema_mode"] == "fallback" else ema13
+    )
+    filter_ema21 = (
+        metrics["fallback_ema21"] if metrics["ema_mode"] == "fallback" else ema21
+    )
     mother_body = metrics["mother_body"]
     father_body = metrics["father_body"]
     mother_is_directional = (
@@ -119,7 +165,10 @@ def diagnose_flappy_bird(
             reason = "invalid_child_count"
         elif mother_body <= 0 or father_body <= 0:
             reason = "zero_candle_body"
-        elif not _ema_order_valid(father, ema13, ema21, ema55, is_buy):
+        elif not _ema_order_valid(
+            father, ema13, ema21, ema55, is_buy,
+            metrics["fallback_ema13"], metrics["fallback_ema21"], metrics["fallback_ema55"],
+        ):
             reason = "ema_order_failed"
         elif not mother_is_directional:
             reason = "mother_direction_failed"
@@ -140,9 +189,9 @@ def diagnose_flappy_bird(
         ):
             reason = "father_upper_wick_too_large" if is_buy else "father_lower_wick_too_large"
         elif (
-            father["open"] < ema13 or father["low"] <= ema21
+            father["open"] < filter_ema13 or father["low"] <= filter_ema21
             if is_buy else
-            father["open"] > ema13 or father["high"] >= ema21
+            father["open"] > filter_ema13 or father["high"] >= filter_ema21
         ):
             reason = "father_ema_filter_failed"
         elif not children or (
@@ -169,7 +218,10 @@ def diagnose_flappy_bird(
         {
             "key": "ema_order",
             "label": "EMA chuẩn hoặc EMA55 breakout fallback",
-            "passed": _ema_order_valid(father, ema13, ema21, ema55, is_buy),
+            "passed": _ema_order_valid(
+                father, ema13, ema21, ema55, is_buy,
+                metrics["fallback_ema13"], metrics["fallback_ema21"], metrics["fallback_ema55"],
+            ),
             "actual": f"{ema13:.5f}, {ema21:.5f}, {ema55:.5f}",
             "expected": (
                 "EMA13 > EMA21 > EMA55 hoặc Cha cắt EMA55 từ dưới lên"
@@ -246,13 +298,13 @@ def diagnose_flappy_bird(
             "key": "father_ema_filter",
             "label": "OPEN Cha >= EMA13 và LOW Cha > EMA21" if is_buy else "OPEN Cha <= EMA13 và HIGH Cha < EMA21",
             "passed": (
-                father["open"] >= ema13 and father["low"] > ema21
-                if is_buy else father["open"] <= ema13 and father["high"] < ema21
+                father["open"] >= filter_ema13 and father["low"] > filter_ema21
+                if is_buy else father["open"] <= filter_ema13 and father["high"] < filter_ema21
             ),
             "actual": (
-                f'OPEN {father["open"]:.5f} >= EMA13 {ema13:.5f}; LOW {father["low"]:.5f} > EMA21 {ema21:.5f}'
+                f'OPEN {father["open"]:.5f} >= EMA {filter_ema13:.5f}; LOW {father["low"]:.5f} > EMA {filter_ema21:.5f}'
                 if is_buy else
-                f'OPEN {father["open"]:.5f} <= EMA13 {ema13:.5f}; HIGH {father["high"]:.5f} < EMA21 {ema21:.5f}'
+                f'OPEN {father["open"]:.5f} <= EMA {filter_ema13:.5f}; HIGH {father["high"]:.5f} < EMA {filter_ema21:.5f}'
             ),
             "expected": "Cả hai điều kiện đều đúng",
         },
@@ -319,6 +371,9 @@ def detect_flappy_bird_signal(
     min_child_candles: int = MIN_CHILDREN,
     max_child_candles: int = 5,
     mother_coverage_enabled: bool = True,
+    fallback_ema13: float | None = None,
+    fallback_ema21: float | None = None,
+    fallback_ema55: float | None = None,
 ) -> bool:
     """Return whether the candle window satisfies the BUY pattern."""
     return diagnose_flappy_bird(
@@ -327,6 +382,9 @@ def detect_flappy_bird_signal(
         min_child_candles=min_child_candles,
         max_child_candles=max_child_candles,
         mother_coverage_enabled=mother_coverage_enabled,
+        fallback_ema13=fallback_ema13,
+        fallback_ema21=fallback_ema21,
+        fallback_ema55=fallback_ema55,
     )["valid"]
 
 
@@ -347,6 +405,9 @@ def analyze_flappy_bird(
     min_child_candles: int = MIN_CHILDREN,
     max_child_candles: int = 5,
     mother_coverage_enabled: bool = True,
+    fallback_ema13: float | None = None,
+    fallback_ema21: float | None = None,
+    fallback_ema55: float | None = None,
 ) -> dict | None:
     """Return a standard pending limit signal or None."""
     diagnostics = diagnose_flappy_bird(
@@ -355,6 +416,9 @@ def analyze_flappy_bird(
         min_child_candles=min_child_candles,
         max_child_candles=max_child_candles,
         mother_coverage_enabled=mother_coverage_enabled,
+        fallback_ema13=fallback_ema13,
+        fallback_ema21=fallback_ema21,
+        fallback_ema55=fallback_ema55,
     )
     if not diagnostics["valid"]:
         return None
@@ -394,5 +458,8 @@ def analyze_flappy_bird(
         "ema13": ema13,
         "ema21": ema21,
         "ema55": ema55,
+        "fallback_ema13": diagnostics["metrics"]["fallback_ema13"],
+        "fallback_ema21": diagnostics["metrics"]["fallback_ema21"],
+        "fallback_ema55": diagnostics["metrics"]["fallback_ema55"],
         "debug": diagnostics,
     }

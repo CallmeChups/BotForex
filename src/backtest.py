@@ -344,6 +344,12 @@ def run_backtest(
     flappy_min_child_candles: int = 2,
     flappy_max_child_candles: int = 5,
     flappy_mother_coverage_enabled: bool = True,
+    flappy_consensus_short: int = 13,
+    flappy_consensus_medium: int = 21,
+    flappy_consensus_long: int = 55,
+    flappy_fallback_short: int = 13,
+    flappy_fallback_medium: int = 21,
+    flappy_fallback_long: int = 55,
     flappy_sl_buffer_pips: float = 5.0,
     flappy_entry_body_percent: float = 5.0,
     progress_callback: Callable[[dict], None] | None = None,
@@ -397,6 +403,12 @@ def run_backtest(
                 min_child_candles=flappy_min_child_candles,
                 max_child_candles=flappy_max_child_candles,
                 mother_coverage_enabled=flappy_mother_coverage_enabled,
+                consensus_short=flappy_consensus_short,
+                consensus_medium=flappy_consensus_medium,
+                consensus_long=flappy_consensus_long,
+                fallback_short=flappy_fallback_short,
+                fallback_medium=flappy_fallback_medium,
+                fallback_long=flappy_fallback_long,
                 sl_buffer_pips=flappy_sl_buffer_pips,
                 entry_body_percent=flappy_entry_body_percent,
                 rr_ratio=rr_ratio,
@@ -967,27 +979,45 @@ def _run_flappy_bird_backtest(
     starting_equity, limit_order_candles, max_candles, min_father_body_points,
     min_child_candles, max_child_candles, mother_coverage_enabled,
     sl_buffer_pips, entry_body_percent, rr_ratio, progress_callback=None,
+    consensus_short=13, consensus_medium=21, consensus_long=55,
+    fallback_short=13, fallback_medium=21, fallback_long=55,
 ):
     """Backtest Flappy Bird BUY LIMIT signals with deterministic fills."""
     df = df.reset_index(drop=True).copy()
     # Match Live Bot: each EMA is seeded from the latest bounded candle window.
-    df["ema13"] = calculate_flappy_ema_series(
-        df["close"], 13, EMA_WARMUP_WINDOW
+    df["ema_consensus_short"] = calculate_flappy_ema_series(
+        df["close"], consensus_short, EMA_WARMUP_WINDOW
     )
-    df["ema21"] = calculate_flappy_ema_series(
-        df["close"], 21, EMA_WARMUP_WINDOW
+    df["ema_consensus_medium"] = calculate_flappy_ema_series(
+        df["close"], consensus_medium, EMA_WARMUP_WINDOW
     )
-    df["ema55"] = calculate_flappy_ema_series(
-        df["close"], 55, EMA_WARMUP_WINDOW
+    df["ema_consensus_long"] = calculate_flappy_ema_series(
+        df["close"], consensus_long, EMA_WARMUP_WINDOW
     )
+    df["ema_fallback_short"] = calculate_flappy_ema_series(
+        df["close"], fallback_short, EMA_WARMUP_WINDOW
+    )
+    df["ema_fallback_medium"] = calculate_flappy_ema_series(
+        df["close"], fallback_medium, EMA_WARMUP_WINDOW
+    )
+    df["ema_fallback_long"] = calculate_flappy_ema_series(
+        df["close"], fallback_long, EMA_WARMUP_WINDOW
+    )
+    # Preserve legacy output columns for saved history and existing consumers.
+    df["ema13"] = df["ema_consensus_short"]
+    df["ema21"] = df["ema_consensus_medium"]
+    df["ema55"] = df["ema_consensus_long"]
     opens = df["open"].to_numpy()
     highs = df["high"].to_numpy()
     lows = df["low"].to_numpy()
     closes = df["close"].to_numpy()
     times = df["time"].to_numpy()
-    ema13_values = df["ema13"].to_numpy()
-    ema21_values = df["ema21"].to_numpy()
-    ema55_values = df["ema55"].to_numpy()
+    ema13_values = df["ema_consensus_short"].to_numpy()
+    ema21_values = df["ema_consensus_medium"].to_numpy()
+    ema55_values = df["ema_consensus_long"].to_numpy()
+    fallback_ema13_values = df["ema_fallback_short"].to_numpy()
+    fallback_ema21_values = df["ema_fallback_medium"].to_numpy()
+    fallback_ema55_values = df["ema_fallback_long"].to_numpy()
 
     def candle_at(index: int) -> dict:
         return {
@@ -1001,7 +1031,7 @@ def _run_flappy_bird_backtest(
     equity_curve_pips = [0]
     equity_curve_usd = [starting_equity]
     current_equity = starting_equity
-    i = 55
+    i = max(consensus_long, fallback_long)
     total_candles = max(0, len(df) - i)
     last_reported = -1
     _report_progress(
@@ -1009,7 +1039,7 @@ def _run_flappy_bird_backtest(
         trades=0, message="Khởi tạo EMA và chuẩn bị quét nến..."
     )
     while i < len(df):
-        processed = i - 55
+        processed = i - max(consensus_long, fallback_long)
         if processed == 0 or processed - last_reported >= max(1, total_candles // 100):
             _report_progress(
                 progress_callback, phase="scan", current=processed,
@@ -1022,9 +1052,9 @@ def _run_flappy_bird_backtest(
         ema13 = ema13_values[i]
         ema21 = ema21_values[i]
         ema55 = ema55_values[i]
-        if not ((ema13 > ema21 > ema55) or (ema13 < ema21 < ema55)):
-            i += 1
-            continue
+        fallback_ema13 = fallback_ema13_values[i]
+        fallback_ema21 = fallback_ema21_values[i]
+        fallback_ema55 = fallback_ema55_values[i]
         for child_count in range(max_child_candles, min_child_candles - 1, -1):
             mother_idx = i - child_count - 1
             if mother_idx < 0:
@@ -1041,6 +1071,9 @@ def _run_flappy_bird_backtest(
                     min_child_candles=min_child_candles,
                     max_child_candles=max_child_candles,
                     mother_coverage_enabled=mother_coverage_enabled,
+                    fallback_ema13=fallback_ema13,
+                    fallback_ema21=fallback_ema21,
+                    fallback_ema55=fallback_ema55,
                 )
                 if signal:
                     signal_child_count = child_count
@@ -1121,6 +1154,13 @@ def _run_flappy_bird_backtest(
             trade["_ema13"] = signal["ema13"]
             trade["_ema21"] = signal["ema21"]
             trade["_ema55"] = signal["ema55"]
+            trade["_ema_fallback_short"] = signal["fallback_ema13"]
+            trade["_ema_fallback_medium"] = signal["fallback_ema21"]
+            trade["_ema_fallback_long"] = signal["fallback_ema55"]
+            trade["_flappy_ema_periods"] = {
+                "consensus": [consensus_short, consensus_medium, consensus_long],
+                "fallback": [fallback_short, fallback_medium, fallback_long],
+            }
             trade["_child_count"] = signal_child_count
             trade["_min_father_body_points"] = min_father_body_points
             trade["_min_child_candles"] = min_child_candles
