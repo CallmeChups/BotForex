@@ -232,8 +232,7 @@ def main():
                 "RR Ratio",
                 value=float(params.get('rr_ratio', 2.0)),
                 min_value=0.1, max_value=20.0, step=0.1, format="%.1f",
-                disabled=is_flappy_bird,
-                help="Flappy Bird dùng RR cố định từ YAML." if is_flappy_bird else None,
+                help="Tỷ lệ Reward:Risk dùng để tính TP. Có thể override giá trị mặc định trong YAML.",
             )
         with gr1c6:
             if is_flappy_bird:
