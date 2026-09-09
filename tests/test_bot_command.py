@@ -28,6 +28,15 @@ def test_command_default_h2_flags_are_zero():
     assert "--ema_period" not in cmd  # None -> not added
 
 
+def test_command_includes_flappy_entry_body_percent():
+    cmd = build_bot_command(
+        "python", "bot_runner.py", "flappy_bird", "XAUUSD", "admin",
+        test=True, interval=60, rr_ratio=2.0,
+        flappy_entry_body_percent=12.5,
+    )
+    assert cmd[cmd.index("--entry_body_percent") + 1] == "12.5"
+
+
 def test_windows_pid_check_requires_exact_pid(monkeypatch):
     monkeypatch.setattr(bot_manager.platform, "system", lambda: "Windows")
     monkeypatch.setattr(

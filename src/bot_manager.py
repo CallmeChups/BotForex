@@ -171,6 +171,7 @@ def build_bot_command(
     flappy_consensus_short=None, flappy_consensus_medium=None, flappy_consensus_long=None,
     flappy_fallback_short=None, flappy_fallback_medium=None, flappy_fallback_long=None,
     flappy_consensus_enabled=None, flappy_fallback_enabled=None,
+    flappy_entry_body_percent=None,
 ):
     """Build command list to run bot_runner (separated for testability)."""
     cmd = [
@@ -242,6 +243,8 @@ def build_bot_command(
     ):
         if value is not None:
             cmd.extend([f"--{name}", "1" if value else "0"])
+    if flappy_entry_body_percent is not None:
+        cmd.extend(["--entry_body_percent", str(flappy_entry_body_percent)])
     cmd.extend(["--be_enabled", "1" if be_enabled else "0"])
     cmd.extend(["--be_r", str(be_r)])
     cmd.extend(["--ema_filter_enabled", "1" if ema_filter_enabled else "0"])
@@ -317,6 +320,7 @@ def _start_bot_unlocked(
     flappy_fallback_long: int = None,
     flappy_consensus_enabled: bool = None,
     flappy_fallback_enabled: bool = None,
+    flappy_entry_body_percent: float = None,
 ) -> tuple:
     """
     Start a new bot process
@@ -359,6 +363,7 @@ def _start_bot_unlocked(
         flappy_consensus_short, flappy_consensus_medium, flappy_consensus_long,
         flappy_fallback_short, flappy_fallback_medium, flappy_fallback_long,
         flappy_consensus_enabled, flappy_fallback_enabled,
+        flappy_entry_body_percent,
     )
 
     try:
@@ -422,6 +427,7 @@ def _start_bot_unlocked(
             'min_child_candles': min_child_candles,
             'max_child_candles': max_child_candles,
             'mother_coverage_enabled': mother_coverage_enabled,
+            'flappy_entry_body_percent': flappy_entry_body_percent,
             'flappy_consensus_short': flappy_consensus_short,
             'flappy_consensus_medium': flappy_consensus_medium,
             'flappy_consensus_long': flappy_consensus_long,
@@ -630,6 +636,7 @@ def switch_bot_mode(pid: int, live: bool) -> tuple:
         min_child_candles=bot.get('min_child_candles'),
         max_child_candles=bot.get('max_child_candles'),
         mother_coverage_enabled=bot.get('mother_coverage_enabled'),
+        flappy_entry_body_percent=bot.get('flappy_entry_body_percent'),
     )
 
 
@@ -755,6 +762,7 @@ def restart_bot(pid: int) -> tuple:
         c2_buy_lower_wick_cmp=bot.get('c2_buy_lower_wick_cmp', 'lt'),
         c2_sell_upper_wick_cmp=bot.get('c2_sell_upper_wick_cmp', 'lt'),
         c2_sell_lower_wick_cmp=bot.get('c2_sell_lower_wick_cmp', 'lt'),
+        flappy_entry_body_percent=bot.get('flappy_entry_body_percent'),
     )
 
 

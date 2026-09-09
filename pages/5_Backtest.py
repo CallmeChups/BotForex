@@ -277,6 +277,7 @@ def main():
         # ── ZONE 2: ENTRY ─────────────────────────────────────────────────
         flappy_consensus_short = flappy_consensus_medium = flappy_consensus_long = None
         flappy_fallback_short = flappy_fallback_medium = flappy_fallback_long = None
+        flappy_entry_body_percent = None
         flappy_consensus_enabled = flappy_fallback_enabled = None
         if is_pattern:
             _section_header("📈", "ENTRY", "#10b981")
@@ -321,6 +322,13 @@ def main():
                 flappy_fallback_enabled = st.checkbox(
                     "Bật EMA fallback", value=bool(params.get("ema_fallback_enabled", True)),
                     key="backtest_fallback_enabled",
+                )
+                flappy_entry_body_percent = st.number_input(
+                    "Entry offset (% thân Cha)",
+                    value=float(params.get("entry_body_percent", 5.0)),
+                    min_value=0.0, max_value=100.0, step=0.5, format="%.1f",
+                    key="backtest_entry_body_percent",
+                    help="BUY: Entry = Close Cha - X% thân Cha; SELL: Entry = Close Cha + X% thân Cha.",
                 )
                 if not flappy_consensus_short < flappy_consensus_medium < flappy_consensus_long:
                     st.error("EMA đồng thuận phải thỏa: ngắn hạn < trung hạn < dài hạn")
@@ -422,7 +430,7 @@ def main():
                     st.info(
                         "Flappy Bird BUY/SELL: BUY EMA13 > EMA21 > EMA55; "
                         "SELL EMA13 < EMA21 < EMA55 | "
-                        "Entry = Close Cha ± 5% thân Cha | SL/TP đối xứng"
+                        f"Entry = Close Cha ± {flappy_entry_body_percent:.1f}% thân Cha | SL/TP đối xứng"
                     )
                 elif not is_feg_stop_order:
                     _em_opts = ["close", "range_percent"]
@@ -792,7 +800,7 @@ def main():
                     flappy_max_child_candles=int(max_child_candles),
                     flappy_mother_coverage_enabled=bool(mother_coverage_enabled),
                     flappy_sl_buffer_pips=float(params.get('sl_buffer_pips', 5.0)),
-                    flappy_entry_body_percent=float(params.get('entry_body_percent', 5.0)),
+                    flappy_entry_body_percent=float(flappy_entry_body_percent),
                     progress_callback=update_backtest_progress,
                 )
             progress_bar.progress(1.0, text="Backtest hoàn tất")
@@ -811,6 +819,7 @@ def main():
                 'entry_end_time': entry_end_time.strftime('%H:%M'),
                 'entry_mode': entry_mode,
                 'entry_percent': entry_percent,
+                'entry_body_percent': flappy_entry_body_percent,
                 'rr_ratio': rr_ratio,
                 'max_candles': max_candles,
                 'buffer_k': buffer_k,

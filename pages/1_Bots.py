@@ -504,6 +504,9 @@ def show_create_bot():
                         f"{sk}_be_enabled": bool(_cfg.get('be_enabled', False)),
                         f"{sk}_be_r": float(_cfg.get('be_r', 1.0)),
                         f"{sk}_re_entry_after_sl": bool(_cfg.get('re_entry_after_sl', False)),
+                        f"{sk}_entry_body_percent": float(
+                            _cfg.get('entry_body_percent', params.get('entry_body_percent', 5.0))
+                        ),
                         f"{sk}_c2_buy_upper_wick_max_pct": _cfg.get('c2_buy_upper_wick_max_pct', None),
                         f"{sk}_c2_buy_lower_wick_max_pct": _cfg.get('c2_buy_lower_wick_max_pct', None),
                         f"{sk}_c2_sell_upper_wick_max_pct": _cfg.get('c2_sell_upper_wick_max_pct', None),
@@ -781,6 +784,15 @@ def show_create_bot():
                 "Bật EMA fallback", value=bool(params.get("ema_fallback_enabled", True)),
                 key=f"{sk}_fallback_enabled",
             )
+            flappy_entry_body_percent = st.number_input(
+                "Entry offset (% thân Cha)",
+                value=float(st.session_state.get(
+                    f"{sk}_entry_body_percent", params.get("entry_body_percent", 5.0)
+                )),
+                min_value=0.0, max_value=100.0, step=0.5, format="%.1f",
+                key=f"{sk}_entry_body_percent",
+                help="BUY: Entry = Close Cha - X% thân Cha; SELL: Entry = Close Cha + X% thân Cha.",
+            )
             if not flappy_consensus_short < flappy_consensus_medium < flappy_consensus_long:
                 st.error("EMA đồng thuận phải thỏa: ngắn hạn < trung hạn < dài hạn")
             if not flappy_fallback_short < flappy_fallback_medium < flappy_fallback_long:
@@ -794,7 +806,7 @@ def show_create_bot():
             entry_start_time = time(0, 0)
             entry_end_time = time(23, 59)
             entry_mode = "flappy_bird_limit"
-            entry_percent = float(params.get("entry_body_percent", 5.0))
+            entry_percent = float(flappy_entry_body_percent)
             c2_buy_upper_wick_max_pct = None
             c2_buy_lower_wick_max_pct = None
             c2_sell_upper_wick_max_pct = None
@@ -980,6 +992,9 @@ def show_create_bot():
                     ema_margin_pips=ema_margin_pips,
                     entry_mode=entry_mode,
                     entry_percent=entry_percent if entry_mode == "range_percent" else None,
+                    flappy_entry_body_percent=(
+                        float(flappy_entry_body_percent) if is_flappy_bird else None
+                    ),
                     tp_type=tp_type,
                     sl_type=sl_type,
                     buffer_k=buffer_k,

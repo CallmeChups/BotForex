@@ -91,6 +91,8 @@ def get_args():
                         help="Entry mode: 'close' or 'range_percent' (default: from strategy)")
     parser.add_argument("--entry_percent", type=float, default=None,
                         help="Entry percent for range_percent mode (default: from strategy)")
+    parser.add_argument("--entry_body_percent", type=float, default=None,
+                        help="Flappy Entry offset as percentage of Father body (default: from strategy)")
     parser.add_argument("--tp_type", type=str, default=None,
                         help="TP exit type: 'price_based' or 'close_based' (default: from strategy)")
     parser.add_argument("--sl_type", type=str, default=None,
@@ -1005,6 +1007,11 @@ def run_feg_bot(args, strategy, params, credentials,
     ema_period = args.ema_period or params.get('ema_period', 21)
     rr_ratio = args.rr_ratio or params.get('rr_ratio', 2.0)
     buffer_k = args.buffer_k if args.buffer_k is not None else params.get('buffer_k', 5)
+    entry_body_percent = (
+        args.entry_body_percent
+        if args.entry_body_percent is not None
+        else params.get('entry_body_percent', 5.0)
+    )
     lot_size = args.lot_size or params.get('lot_size', 0.01)
     max_candles = args.max_candles if args.max_candles is not None else params.get('max_candles', 7)
     h2_exceed_pips = args.h2_exceed_pips if args.h2_exceed_pips else params.get('h2_exceed_pips', 0.0)
@@ -1487,7 +1494,7 @@ def run_feg_bot(args, strategy, params, credentials,
                                         ema13_series[-1], ema21_series[-1], ema55_series[-1],
                                         lot_size,
                                         params.get('sl_buffer_pips', 5.0),
-                                        params.get('entry_body_percent', 5.0),
+                                        entry_body_percent,
                                         rr_ratio,
                                         min_father_body_points,
                                         direction,
