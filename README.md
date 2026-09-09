@@ -25,6 +25,10 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
+Không copy thư mục `.venv` từ máy khác; virtualenv chứa đường dẫn tuyệt đối
+đến Python của máy tạo ra nó. Trên máy mới, hãy tạo lại `.venv` và cài
+dependencies từ `requirements.txt`.
+
 Yêu cầu: MetaTrader 5 terminal đang chạy trên Windows, MT5 credentials, Telegram bot token.
 
 ## Cấu Hình

@@ -1,0 +1,1 @@
+"""BotForex application package."""
