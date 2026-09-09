@@ -1127,7 +1127,18 @@ def show_interactive_chart(trades: list, ohlc_data: pd.DataFrame, symbol: str):
         return
 
     # Indicator toggles
-    ema_cols = [c for c in ohlc_data.columns if c.startswith("ema")]
+    canonical_flappy_ema_cols = [
+        "ema_consensus_short",
+        "ema_consensus_medium",
+        "ema_consensus_long",
+        "ema_fallback_short",
+        "ema_fallback_medium",
+        "ema_fallback_long",
+    ]
+    if any(col in ohlc_data.columns for col in canonical_flappy_ema_cols):
+        ema_cols = [col for col in canonical_flappy_ema_cols if col in ohlc_data.columns]
+    else:
+        ema_cols = [c for c in ohlc_data.columns if c.startswith("ema")]
     show_ema = {}
     if ema_cols:
         with st.expander("Indicators", expanded=False):
@@ -1195,7 +1206,18 @@ def show_interactive_chart(trades: list, ohlc_data: pd.DataFrame, symbol: str):
     )
 
     # EMA overlays
-    ema_colors = {"ema21": "#FF6B00", "ema9": "#9B59B6", "ema50": "#3498DB", "ema200": "#E74C3C"}
+    ema_colors = {
+        "ema_consensus_short": "#2563EB",
+        "ema_consensus_medium": "#F97316",
+        "ema_consensus_long": "#7C3AED",
+        "ema_fallback_short": "#0D9488",
+        "ema_fallback_medium": "#DB2777",
+        "ema_fallback_long": "#92400E",
+        "ema21": "#FF6B00",
+        "ema9": "#9B59B6",
+        "ema50": "#3498DB",
+        "ema200": "#E74C3C",
+    }
     for col_name, enabled in show_ema.items():
         if enabled and col_name in chart_data.columns:
             period = col_name.replace("ema", "")
