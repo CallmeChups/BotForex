@@ -1040,7 +1040,13 @@ def display_results(results: dict, symbol: str, strategy_name: str = "", lot_mod
         if view_mode == "Table":
             show_trade_table(trades, lot_mode, strategy_name, symbol, config, results)
         else:
-            show_interactive_chart(trades, ohlc_data, symbol)
+            show_interactive_chart(
+                trades,
+                ohlc_data,
+                symbol,
+                consensus_enabled=config.get("flappy_consensus_enabled"),
+                fallback_enabled=config.get("flappy_fallback_enabled"),
+            )
 
 
 def show_trade_table(trades: list, lot_mode: str, strategy_name: str, symbol: str, config: dict = None, results: dict = None):
@@ -1127,7 +1133,13 @@ def show_trade_table(trades: list, lot_mode: str, strategy_name: str, symbol: st
         )
 
 
-def show_interactive_chart(trades: list, ohlc_data: pd.DataFrame, symbol: str):
+def show_interactive_chart(
+    trades: list,
+    ohlc_data: pd.DataFrame,
+    symbol: str,
+    consensus_enabled: bool | None = None,
+    fallback_enabled: bool | None = None,
+):
     """Show interactive candlestick chart with trade markers"""
 
     if ohlc_data is None or ohlc_data.empty:
@@ -1144,16 +1156,52 @@ def show_interactive_chart(trades: list, ohlc_data: pd.DataFrame, symbol: str):
         "ema_fallback_long",
     ]
     if any(col in ohlc_data.columns for col in canonical_flappy_ema_cols):
-        ema_cols = [col for col in canonical_flappy_ema_cols if col in ohlc_data.columns]
+        configured_groups = {
+            "consensus": consensus_enabled,
+            "fallback": fallback_enabled,
+        }
+        inferred_groups = {
+            "consensus": any(
+                trade.get("_ema_mode") == "consensus" for trade in trades
+            ),
+            "fallback": any(
+                trade.get("_ema_mode") == "fallback" for trade in trades
+            ),
+        }
+        enabled_groups = {
+            group: (
+                bool(configured_groups[group])
+                if configured_groups[group] is not None
+                else inferred_groups[group]
+            )
+            for group in ("consensus", "fallback")
+        }
+        if not any(enabled_groups.values()):
+            enabled_groups = {"consensus": True, "fallback": True}
+        ema_cols = [
+            col for col in canonical_flappy_ema_cols
+            if col in ohlc_data.columns
+            and enabled_groups["consensus" if col.startswith("ema_consensus_") else "fallback"]
+        ]
     else:
         ema_cols = [c for c in ohlc_data.columns if c.startswith("ema")]
     show_ema = {}
     if ema_cols:
         with st.expander("Indicators", expanded=False):
             cols = st.columns(min(len(ema_cols), 4))
+            ema_labels = {
+                "ema_consensus_short": "Consensus EMA ngắn",
+                "ema_consensus_medium": "Consensus EMA trung",
+                "ema_consensus_long": "Consensus EMA dài",
+                "ema_fallback_short": "Fallback EMA ngắn",
+                "ema_fallback_medium": "Fallback EMA trung",
+                "ema_fallback_long": "Fallback EMA dài",
+            }
             for i, col_name in enumerate(ema_cols):
-                period = col_name.replace("ema", "")
-                show_ema[col_name] = cols[i % 4].checkbox(f"EMA{period}", value=True, key=f"ind_{col_name}")
+                label = ema_labels.get(col_name, f"EMA{col_name.replace('ema', '')}")
+                show_ema[col_name] = cols[i % 4].checkbox(
+                    label, value=True, key=f"ind_{col_name}"
+                )
 
     # Trade selector
     trade_options = [f"Trade {i+1}: {t['date']} {t['time']} - {t['direction']} ({t['exit_type']})" for i, t in enumerate(trades)]
