@@ -1210,14 +1210,25 @@ def show_interactive_chart(
         options=range(len(trades)),
         format_func=lambda x: trade_options[x]
     )
-    chart_lookback_candles = st.number_input(
-        "Số nến trước Entry trên chart",
-        min_value=1,
-        max_value=500,
-        value=30,
-        step=1,
-        help="Số nến hiển thị trước thời điểm Entry fill.",
-    )
+    chart_candle_cols = st.columns(2)
+    with chart_candle_cols[0]:
+        chart_lookback_candles = st.number_input(
+            "Số nến trước Entry trên chart",
+            min_value=1,
+            max_value=500,
+            value=30,
+            step=1,
+            help="Số nến hiển thị trước thời điểm Entry fill.",
+        )
+    with chart_candle_cols[1]:
+        chart_forward_candles = st.number_input(
+            "Số nến sau Entry trên chart",
+            min_value=1,
+            max_value=500,
+            value=15,
+            step=1,
+            help="Số nến hiển thị sau Entry; chart vẫn giữ đủ nến để hiển thị điểm Exit.",
+        )
 
     trade = trades[selected_idx]
     if trade.get("_debug") and trade.get("_father"):
@@ -1239,9 +1250,10 @@ def show_interactive_chart(
     else:
         entry_idx = ohlc_data[entry_mask].index[0]
 
-    # Get data range (configurable candles before, candles + 15 after)
+    # Get data range around Entry while preserving the full trade and forward context.
     start_idx = max(0, entry_idx - int(chart_lookback_candles))
-    end_idx = min(len(ohlc_data), entry_idx + trade['candles'] + 15)
+    candles_after_entry = max(int(chart_forward_candles), int(trade["candles"]))
+    end_idx = min(len(ohlc_data), entry_idx + candles_after_entry + 1)
     chart_data = ohlc_data.iloc[start_idx:end_idx].copy()
 
     # Create candlestick chart
