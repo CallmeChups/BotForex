@@ -819,6 +819,22 @@ def show_create_bot():
                 higher_ema_fallback_medium = cols[1].number_input("Trung hạn", min_value=3, max_value=500, value=int(higher_fallback["medium"]), key=f"{sk}_higher_fallback_medium_multi", disabled=not higher_timeframe_filter_enabled)
                 higher_ema_fallback_long = cols[2].number_input("Dài hạn", min_value=4, max_value=500, value=int(higher_fallback["long"]), key=f"{sk}_higher_fallback_long_multi", disabled=not higher_timeframe_filter_enabled)
             flappy_entry_body_percent = st.number_input("Entry offset (% thân Cha)", value=float(params.get("entry_body_percent", 5.0)), min_value=0.0, max_value=100.0, step=0.5, format="%.1f", key=f"{sk}_entry_body_percent_multi")
+            if not flappy_consensus_short < flappy_consensus_medium < flappy_consensus_long:
+                st.error("EMA Chim bay khung hiện hành phải thỏa: ngắn hạn < trung hạn < dài hạn")
+                timeframe_relation_valid = False
+            if not flappy_fallback_short < flappy_fallback_medium < flappy_fallback_long:
+                st.error("EMA Đầu nguồn khung hiện hành phải thỏa: ngắn hạn < trung hạn < dài hạn")
+                timeframe_relation_valid = False
+            if higher_timeframe_filter_enabled and higher_ema_consensus_enabled and not (
+                higher_ema_consensus_short < higher_ema_consensus_medium < higher_ema_consensus_long
+            ):
+                st.error("EMA Chim bay khung lớn phải thỏa: ngắn hạn < trung hạn < dài hạn")
+                timeframe_relation_valid = False
+            if higher_timeframe_filter_enabled and higher_ema_fallback_enabled and not (
+                higher_ema_fallback_short < higher_ema_fallback_medium < higher_ema_fallback_long
+            ):
+                st.error("EMA Đầu nguồn khung lớn phải thỏa: ngắn hạn < trung hạn < dài hạn")
+                timeframe_relation_valid = False
             h2_exceed_pips = c2_gap_pips = ema_margin_pips = 0.0
             ema_filter_enabled = True
             buy_ema_side = sell_ema_side = "above_ema"

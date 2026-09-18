@@ -1131,9 +1131,17 @@ def run_feg_bot(args, strategy, params, credentials,
             higher_ema_groups[group][slot] = (
                 arg_value if arg_value is not None else int(config.get(slot, default))
             )
-        values = [higher_ema_groups[group][slot] for slot in ("short", "medium", "long")]
-        if not values[0] < values[1] < values[2]:
-            raise ValueError(f"Multi Flappy {group} EMA periods must be strictly increasing")
+        # These periods only drive real trading logic when the HTF filter (and
+        # this specific mode) is actually enabled; skip the ordering check
+        # otherwise so stale/disabled widget values can never block startup.
+        group_mode_enabled = (
+            higher_ema_consensus_enabled if group == "higher_ema_consensus"
+            else higher_ema_fallback_enabled
+        )
+        if higher_timeframe_filter_enabled and group_mode_enabled:
+            values = [higher_ema_groups[group][slot] for slot in ("short", "medium", "long")]
+            if not values[0] < values[1] < values[2]:
+                raise ValueError(f"Multi Flappy {group} EMA periods must be strictly increasing")
     if is_flappy and args.strategy == "multi_flappy_bird" and higher_timeframe_filter_enabled:
         if not higher_ema_consensus_enabled and not higher_ema_fallback_enabled:
             raise ValueError("At least one Multi Flappy higher timeframe mode must be enabled")
