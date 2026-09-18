@@ -16,6 +16,7 @@ from src.feg_stop_order_strategy import detect_feg_stop_order_signal
 from src.flappy_bird_strategy import (
     EMA_WARMUP_WINDOW,
     analyze_flappy_bird,
+    calculate_flappy_ema_cross_lifecycle,
     calculate_flappy_ema_series,
 )
 
@@ -341,6 +342,7 @@ def run_backtest(
     c2_sell_upper_wick_cmp: str = "lt",
     c2_sell_lower_wick_cmp: str = "lt",
     flappy_min_father_body_points: float = 2.0,
+    flappy_max_child_body_points: float = 2.0,
     flappy_min_child_candles: int = 2,
     flappy_max_child_candles: int = 5,
     flappy_mother_coverage_enabled: bool = True,
@@ -354,7 +356,19 @@ def run_backtest(
     flappy_fallback_enabled: bool = True,
     flappy_sl_buffer_pips: float = 5.0,
     flappy_entry_body_percent: float = 5.0,
+    flappy_cross_window_candles: int = 12,
     progress_callback: Callable[[dict], None] | None = None,
+    higher_timeframe_df=None,
+    higher_timeframe_filter_enabled: bool = False,
+    higher_ema_consensus_short: int = 13,
+    higher_ema_consensus_medium: int = 21,
+    higher_ema_consensus_long: int = 55,
+    higher_ema_fallback_short: int = 13,
+    higher_ema_fallback_medium: int = 21,
+    higher_ema_fallback_long: int = 55,
+    higher_ema_consensus_enabled: bool = True,
+    higher_ema_fallback_enabled: bool = True,
+    current_timeframe_filter_enabled: bool = True,
 ) -> dict:
     """
     Run backtest on historical data
@@ -389,7 +403,7 @@ def run_backtest(
     run_id = f"BT-{datetime.now().strftime('%y%m%d-%H%M%S')}-{symbol}-{uuid.uuid4().hex[:4].upper()}"
 
     if entry_type == "pattern":
-        if strategy == "flappy_bird":
+        if strategy in {"flappy_bird", "multi_flappy_bird"}:
             flappy_kwargs = dict(
                 df=df,
                 symbol=symbol,
@@ -402,6 +416,7 @@ def run_backtest(
                 limit_order_candles=limit_order_candles,
                 max_candles=max_candles,
                 min_father_body_points=flappy_min_father_body_points,
+                max_child_body_points=flappy_max_child_body_points,
                 min_child_candles=flappy_min_child_candles,
                 max_child_candles=flappy_max_child_candles,
                 mother_coverage_enabled=flappy_mother_coverage_enabled,
@@ -416,48 +431,32 @@ def run_backtest(
                 sl_buffer_pips=flappy_sl_buffer_pips,
                 entry_body_percent=flappy_entry_body_percent,
                 rr_ratio=rr_ratio,
+                higher_timeframe_df=higher_timeframe_df,
+                higher_timeframe_filter_enabled=higher_timeframe_filter_enabled,
+                higher_ema_periods={
+                    "consensus": {
+                        "short": higher_ema_consensus_short,
+                        "medium": higher_ema_consensus_medium,
+                        "long": higher_ema_consensus_long,
+                    },
+                    "fallback": {
+                        "short": higher_ema_fallback_short,
+                        "medium": higher_ema_fallback_medium,
+                        "long": higher_ema_fallback_long,
+                    },
+                },
+                higher_ema_consensus_enabled=higher_ema_consensus_enabled,
+                higher_ema_fallback_enabled=higher_ema_fallback_enabled,
+                current_timeframe_filter_enabled=current_timeframe_filter_enabled,
+                cross_window_candles=flappy_cross_window_candles,
             )
-            mode_results = []
-            if flappy_consensus_enabled:
-                mode_results.append(_run_flappy_bird_backtest(
-                    **flappy_kwargs, requested_ema_mode="consensus",
-                    progress_callback=progress_callback,
-                ))
-            if flappy_fallback_enabled:
-                mode_results.append(_run_flappy_bird_backtest(
-                    **flappy_kwargs, requested_ema_mode="fallback",
-                    progress_callback=progress_callback,
-                ))
-            if not mode_results:
-                raise ValueError("At least one Flappy EMA mode must be enabled")
-            result = mode_results[0]
-            if len(mode_results) > 1:
-                result["trades"] = sorted(
-                    [trade for item in mode_results for trade in item["trades"]],
-                    key=lambda trade: (trade.get("date", ""), trade.get("time", "")),
-                )
-                result["final_equity"] = sum(item["final_equity"] for item in mode_results) - (
-                    len(mode_results) - 1
-                ) * starting_equity
-                merged_stats = calculate_stats(result["trades"], lot_mode)
-                result.update(merged_stats)
-                result["equity_curve"] = [0]
-                result["equity_curve_usd"] = [starting_equity]
-                for trade in result["trades"]:
-                    result["equity_curve"].append(
-                        result["equity_curve"][-1] + trade["pnl_pips"]
-                    )
-                    result["equity_curve_usd"].append(
-                        result["equity_curve_usd"][-1] + trade["pnl_usd"]
-                    )
-                _report_progress(
-                    progress_callback,
-                    phase="finalize",
-                    current=len(df),
-                    total=len(df),
-                    trades=len(result["trades"]),
-                    message=f"Hoàn tất hợp nhất {len(mode_results)} EMA modes.",
-                )
+            # Consensus and fallback are scanned together in one shared
+            # candle loop inside _run_flappy_bird_backtest (each mode keeps
+            # its own independent pending/exit state), so the dataframe is
+            # only walked once even when both modes are enabled.
+            result = _run_flappy_bird_backtest(
+                **flappy_kwargs, progress_callback=progress_callback,
+            )
         elif strategy == "feg_stop_order":
             result = _run_feg_stop_order_backtest(
                 df=df, symbol=symbol, rr_ratio=rr_ratio, max_candles=max_candles,
@@ -1021,13 +1020,32 @@ def _run_feg_reverse_backtest(
 def _run_flappy_bird_backtest(
     df, symbol, lot_mode, fixed_lot, risk_percent, risk_amount, risk_mode,
     starting_equity, limit_order_candles, max_candles, min_father_body_points,
-    min_child_candles, max_child_candles, mother_coverage_enabled,
+    max_child_body_points, min_child_candles, max_child_candles, mother_coverage_enabled,
     sl_buffer_pips, entry_body_percent, rr_ratio, progress_callback=None,
     consensus_short=13, consensus_medium=21, consensus_long=55,
     fallback_short=13, fallback_medium=21, fallback_long=55,
-    requested_ema_mode=None, consensus_enabled=True, fallback_enabled=True,
+    consensus_enabled=True, fallback_enabled=True,
+    higher_timeframe_df=None, higher_timeframe_filter_enabled=False,
+    higher_ema_periods=None, higher_ema_consensus_enabled=True,
+    higher_ema_fallback_enabled=True,
+    current_timeframe_filter_enabled=True, cross_window_candles=12,
 ):
-    """Backtest Flappy Bird BUY LIMIT signals with deterministic fills."""
+    """Backtest Flappy Bird BUY/SELL LIMIT signals for every enabled EMA mode.
+
+    Consensus and fallback are independent state machines (own pending/exit
+    simulation, exactly as if backtested separately), but they now share a
+    single pass over the candle/EMA/HTF arrays instead of two full dataframe
+    scans, so the merge that used to happen after two `_run_flappy_bird_backtest`
+    calls is now produced directly by one call.
+    """
+    modes = [
+        mode for mode, enabled in (
+            ("consensus", consensus_enabled), ("fallback", fallback_enabled),
+        ) if enabled
+    ]
+    if not modes:
+        raise ValueError("At least one Flappy EMA mode must be enabled")
+
     df = df.reset_index(drop=True).copy()
     # Match Live Bot: each EMA is seeded from the latest bounded candle window.
     df["ema_consensus_short"] = calculate_flappy_ema_series(
@@ -1063,6 +1081,77 @@ def _run_flappy_bird_backtest(
     fallback_ema13_values = df["ema_fallback_short"].to_numpy()
     fallback_ema21_values = df["ema_fallback_medium"].to_numpy()
     fallback_ema55_values = df["ema_fallback_long"].to_numpy()
+    cross_directions, cross_ages = calculate_flappy_ema_cross_lifecycle(
+        df["close"], 8, 13, EMA_WARMUP_WINDOW
+    )
+    higher_data = None
+    if higher_timeframe_filter_enabled:
+        if higher_timeframe_df is None or higher_timeframe_df.empty:
+            raise ValueError("Multi Flappy higher timeframe data is required when its filter is enabled")
+        higher_data = higher_timeframe_df.reset_index(drop=True).copy()
+        higher_ema_periods = higher_ema_periods or {
+            "consensus": {"short": 13, "medium": 21, "long": 55},
+            "fallback": {"short": 13, "medium": 21, "long": 55},
+        }
+        for group_name, periods in higher_ema_periods.items():
+            for slot, period in periods.items():
+                higher_data[f"ema_{group_name}_{slot}"] = calculate_flappy_ema_series(
+                    higher_data["close"], period, EMA_WARMUP_WINDOW
+                )
+        higher_times = higher_data["time"].to_numpy()
+        higher_opens = higher_data["open"].to_numpy()
+        higher_highs = higher_data["high"].to_numpy()
+        higher_lows = higher_data["low"].to_numpy()
+        higher_closes = higher_data["close"].to_numpy()
+        higher_ema_values = {
+            group_name: {
+                slot: higher_data[f"ema_{group_name}_{slot}"].to_numpy()
+                for slot in ("short", "medium", "long")
+            }
+            for group_name in higher_ema_periods
+        }
+        # Map each current-TF candle to the latest fully closed HTF candle once.
+        # The previous implementation rebuilt an O(len(HTF)) eligible list for
+        # every current candle, turning a normal backtest into an O(n*m) scan.
+        higher_index_by_current = []
+        higher_index = -1
+        last_completed_index = len(higher_times) - 2
+        for current_time in times:
+            while (
+                higher_index < last_completed_index
+                and higher_times[higher_index + 1] <= current_time
+            ):
+                higher_index += 1
+            higher_index_by_current.append(higher_index)
+
+    def higher_filter_for(current_index, mode):
+        if not higher_timeframe_filter_enabled:
+            return None
+        index = higher_index_by_current[current_index]
+        if index < 0:
+            return {
+                "enabled": True, "mode_enabled": False, "candle": None,
+                "ema_values": {}, "mode": mode,
+            }
+        group = "consensus" if mode == "consensus" else "fallback"
+        return {
+            "enabled": True,
+            "mode_enabled": (
+                higher_ema_consensus_enabled
+                if mode == "consensus" else higher_ema_fallback_enabled
+            ),
+            "candle": {
+                "open": higher_opens[index],
+                "high": higher_highs[index],
+                "low": higher_lows[index],
+                "close": higher_closes[index],
+            },
+            "ema_values": {
+                slot: higher_ema_values[group][slot][index]
+                for slot in ("short", "medium", "long")
+            },
+            "mode": mode,
+        }
 
     def candle_at(index: int) -> dict:
         return {
@@ -1072,26 +1161,34 @@ def _run_flappy_bird_backtest(
             "close": closes[index],
         }
 
-    trades = []
-    equity_curve_pips = [0]
-    equity_curve_usd = [starting_equity]
-    current_equity = starting_equity
-    i = max(consensus_long, fallback_long)
-    total_candles = max(0, len(df) - i)
+    start = max(consensus_long, fallback_long)
+    total_candles = max(0, len(df) - start)
     last_reported = -1
     _report_progress(
         progress_callback, phase="scan", current=0, total=total_candles,
         trades=0, message="Khởi tạo EMA và chuẩn bị quét nến..."
     )
-    while i < len(df):
-        processed = i - max(consensus_long, fallback_long)
-        if processed == 0 or processed - last_reported >= max(1, total_candles // 100):
-            _report_progress(
-                progress_callback, phase="scan", current=processed,
-                total=total_candles, trades=len(trades),
-                message=f"Đang quét nến {i + 1}/{len(df)}..."
-            )
-            last_reported = processed
+
+    # Each mode keeps its own independent state (scan cursor, trades, equity)
+    # so consensus/fallback behave exactly as two isolated backtests; only the
+    # candle/EMA/HTF arrays above are computed once and shared between them.
+    state = {
+        mode: {
+            "i": start,
+            "trades": [],
+            "equity_curve_pips": [0],
+            "equity_curve_usd": [starting_equity],
+            "current_equity": starting_equity,
+        }
+        for mode in modes
+    }
+
+    def advance_mode(mode: str) -> None:
+        """Run one scan/pending/exit step for `mode` at its own cursor,
+        mirroring the original single-mode loop body (same pattern search,
+        fill and exit simulation) so behavior is unchanged per mode."""
+        st = state[mode]
+        i = st["i"]
         signal = None
         signal_child_count = 0
         ema13 = ema13_values[i]
@@ -1108,6 +1205,15 @@ def _run_flappy_bird_backtest(
             children = [candle_at(idx) for idx in range(mother_idx + 1, i)]
             father = candle_at(i)
             for direction in ("BUY", "SELL"):
+                if (
+                    cross_window_candles > 0
+                    and (
+                        cross_directions[i] != direction
+                        or cross_ages[i] is None
+                        or cross_ages[i] > cross_window_candles
+                    )
+                ):
+                    continue
                 signal = analyze_flappy_bird(
                     symbol, mother, children, father,
                     ema13, ema21, ema55,
@@ -1115,13 +1221,16 @@ def _run_flappy_bird_backtest(
                     min_father_body_points, direction,
                     min_child_candles=min_child_candles,
                     max_child_candles=max_child_candles,
+                    max_child_body_points=max_child_body_points,
                     mother_coverage_enabled=mother_coverage_enabled,
                     fallback_ema13=fallback_ema13,
                     fallback_ema21=fallback_ema21,
                     fallback_ema55=fallback_ema55,
                     consensus_enabled=consensus_enabled,
                     fallback_enabled=fallback_enabled,
-                    requested_ema_mode=requested_ema_mode,
+                    requested_ema_mode=mode,
+                    higher_timeframe_filter=higher_filter_for(i, mode),
+                    current_timeframe_filter_enabled=current_timeframe_filter_enabled,
                 )
                 if signal:
                     signal_child_count = child_count
@@ -1131,8 +1240,8 @@ def _run_flappy_bird_backtest(
             if signal:
                 break
         if not signal:
-            i += 1
-            continue
+            st["i"] = i + 1
+            return
 
         fill_pos = None
         exit_pos = None
@@ -1183,7 +1292,7 @@ def _run_flappy_bird_backtest(
         if fill_pos is not None and exit_type:
             if lot_mode == "flex":
                 lot = calculate_flex_lot_size(
-                    current_equity, risk_percent, signal["sl_pips"], symbol,
+                    st["current_equity"], risk_percent, signal["sl_pips"], symbol,
                     risk_amount=risk_amount if risk_mode == "fixed_amount" else 0.0,
                 )
             else:
@@ -1206,39 +1315,104 @@ def _run_flappy_bird_backtest(
             trade["_ema_fallback_medium"] = signal["fallback_ema21"]
             trade["_ema_fallback_long"] = signal["fallback_ema55"]
             trade["_ema_mode"] = signal["debug"]["metrics"].get("ema_mode")
+            trade["_higher_timeframe_debug"] = signal.get("higher_timeframe_debug")
+            trade["_higher_timeframe"] = signal.get("higher_timeframe")
+            if signal.get("higher_timeframe"):
+                trade["_higher_timeframe_ema"] = signal["higher_timeframe_debug"].get(
+                    "metrics", {}
+                ).get("ema")
             trade["_flappy_ema_periods"] = {
                 "consensus": [consensus_short, consensus_medium, consensus_long],
                 "fallback": [fallback_short, fallback_medium, fallback_long],
             }
             trade["_child_count"] = signal_child_count
             trade["_min_father_body_points"] = min_father_body_points
+            trade["_max_child_body_points"] = max_child_body_points
             trade["_min_child_candles"] = min_child_candles
             trade["_max_child_candles"] = max_child_candles
             trade["_mother_coverage_enabled"] = mother_coverage_enabled
             trade["_debug"] = signal["debug"]
             trade["_signal_mother_idx"] = signal["_mother_idx"]
             trade["_signal_father_idx"] = signal["_father_idx"]
-            current_equity += pnl_usd
-            trades.append(trade)
-            equity_curve_pips.append(equity_curve_pips[-1] + pnl_pips)
-            equity_curve_usd.append(current_equity)
-            i = exit_pos + 1
+            st["current_equity"] += pnl_usd
+            st["trades"].append(trade)
+            st["equity_curve_pips"].append(st["equity_curve_pips"][-1] + pnl_pips)
+            st["equity_curve_usd"].append(st["current_equity"])
+            st["i"] = exit_pos + 1
         else:
-            i = pending_end
+            st["i"] = pending_end
 
-    _report_progress(
-        progress_callback, phase="finalize", current=total_candles,
-        total=total_candles, trades=len(trades),
-        message=f"Hoàn tất quét {total_candles:,} nến, tìm thấy {len(trades)} trade."
+    # Drive every enabled mode through the shared candle/EMA/HTF arrays in one
+    # loop: at each step, only the mode whose own cursor is furthest behind
+    # advances, so consensus/fallback still scan/fill/exit independently
+    # (identical to two separate full passes) without re-scanning the
+    # dataframe once per mode.
+    while any(state[mode]["i"] < len(df) for mode in modes):
+        target = min(
+            (mode for mode in modes if state[mode]["i"] < len(df)),
+            key=lambda mode: (state[mode]["i"], modes.index(mode)),
+        )
+        advance_mode(target)
+        progressed = max(0, min(state[mode]["i"] for mode in modes) - start)
+        should_report = (
+            progressed == 0
+            or progressed - last_reported >= max(1, total_candles // 100)
+            or progressed >= total_candles
+        )
+        if should_report and progressed != last_reported:
+            _report_progress(
+                progress_callback, phase="scan", current=progressed,
+                total=total_candles,
+                trades=sum(len(state[mode]["trades"]) for mode in modes),
+                message=f"Đang quét nến {start + progressed + 1}/{len(df)}..."
+            )
+            last_reported = progressed
+
+    # Merge trades from every mode. Ties on (date, time) keep the same
+    # consensus-before-fallback order the previous two-pass merge produced.
+    mode_priority = {mode: order for order, mode in enumerate(modes)}
+    all_trades = sorted(
+        (trade for mode in modes for trade in state[mode]["trades"]),
+        key=lambda trade: (
+            trade.get("date", ""), trade.get("time", ""),
+            mode_priority.get(trade.get("_ema_mode"), len(modes)),
+        ),
     )
-    stats = calculate_stats(trades, lot_mode)
+    final_equity = sum(state[mode]["current_equity"] for mode in modes) - (
+        len(modes) - 1
+    ) * starting_equity
+
+    stats = calculate_stats(all_trades, lot_mode)
+    equity_curve_pips = [0]
+    equity_curve_usd = [starting_equity]
+    for trade in all_trades:
+        equity_curve_pips.append(equity_curve_pips[-1] + trade["pnl_pips"])
+        equity_curve_usd.append(equity_curve_usd[-1] + trade["pnl_usd"])
     stats["equity_curve"] = equity_curve_pips
     stats["equity_curve_usd"] = equity_curve_usd
-    stats["trades"] = trades
+    stats["trades"] = all_trades
     stats["lot_mode"] = lot_mode
-    stats["final_equity"] = current_equity
+    stats["final_equity"] = final_equity
     stats["starting_equity"] = starting_equity
     stats["ohlc_data"] = df
+    if higher_data is not None:
+        stats["higher_timeframe_data"] = higher_data.rename(
+            columns={
+                f"ema_{group}_{slot}": f"ema_higher_{group}_{slot}"
+                for group in ("consensus", "fallback")
+                for slot in ("short", "medium", "long")
+                if f"ema_{group}_{slot}" in higher_data.columns
+            }
+        )
+    _report_progress(
+        progress_callback, phase="finalize", current=total_candles,
+        total=total_candles, trades=len(all_trades),
+        message=(
+            f"Hoàn tất quét {total_candles:,} nến, tìm thấy {len(all_trades)} trade."
+            if len(modes) == 1
+            else f"Hoàn tất hợp nhất {len(modes)} EMA modes ({len(all_trades)} trade)."
+        )
+    )
     return stats
 
 

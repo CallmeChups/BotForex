@@ -201,10 +201,10 @@ def main():
             params = get_strategy_parameters(selected_strategy)
         else:
             st.info("No strategies defined. Using default parameters.")
-            params = {'symbols': ['XAUUSD'], 'sl_pips': 30, 'rr_ratio': 2.0, 'max_candles': 7}
+            params = {'symbols': ['XAUUSDm'], 'sl_pips': 30, 'rr_ratio': 2.0, 'max_candles': 7}
 
         # Symbol selection
-        strategy_symbols = params.get('symbols', ['XAUUSD'])
+        strategy_symbols = params.get('symbols', ['XAUUSDm'])
         symbol = st.selectbox("Symbol", options=strategy_symbols)
 
     with col2:

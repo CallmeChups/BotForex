@@ -180,7 +180,7 @@ def main():
         with col1:
             signal_date = st.date_input("Date", value=datetime.now(TIMEZONE).date())
             signal_time = st.time_input("Time", value=datetime.now(TIMEZONE).time())
-            signal_symbol = st.text_input("Symbol", value=os.getenv("SYMBOL", "XAUUSD"))
+            signal_symbol = st.text_input("Symbol", value=os.getenv("SYMBOL", "XAUUSDm"))
             signal_direction = st.selectbox("Direction", ["BUY", "SELL"])
             signal_entry = st.number_input("Entry", value=3300.0, format="%.2f")
 

@@ -1,17 +1,20 @@
-id: flappy_bird
-name: Flappy Bird BUY/SELL
+id: multi_flappy_bird
+name: Multi Flappy Bird BUY/SELL
 version: "1.0"
 description: |
-  Mirrored BUY LIMIT and SELL LIMIT patterns using configurable EMA groups, a mother
-  candle, 2-7 child candles and a directional father candle.
+  Independent clone of Flappy Bird BUY/SELL. It currently uses the same
+  configurable EMA groups, mother/children/father pattern, and limit-order
+  behavior so future Multi Flappy Bird changes remain isolated.
 author: admin
-created: "2026-09-06"
+created: "2026-09-14"
 enabled: true
 
 entry:
   type: pattern
-  timeframe: M5
-  pattern: flappy_bird
+  timeframe: M1
+  higher_timeframe: M5
+  higher_timeframe_filter_enabled: true
+  pattern: multi_flappy_bird
   ema_consensus:
     short: 13
     medium: 21
@@ -22,6 +25,17 @@ entry:
     long: 55
   ema_consensus_enabled: true
   ema_fallback_enabled: true
+  current_timeframe_filter_enabled: true
+  higher_ema_consensus:
+    short: 13
+    medium: 21
+    long: 55
+  higher_ema_fallback:
+    short: 13
+    medium: 21
+    long: 55
+  higher_ema_consensus_enabled: true
+  higher_ema_fallback_enabled: true
 
 exit:
   tp:
@@ -29,7 +43,7 @@ exit:
   sl:
     type: price_based
   time_limit:
-    enabled: false # Tạm ẩn/vô hiệu hóa EXIT TIME cho Flappy Bird.
+    enabled: false
     max_candles: 0
 
 parameters:
@@ -45,7 +59,7 @@ parameters:
   mother_coverage_enabled: true
   lot_size: 0.01
   limit_order_candles: 7
-  magic: 212400
+  magic: 212401
 
 symbols:
   - XAUUSDm

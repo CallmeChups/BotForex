@@ -37,6 +37,28 @@ def test_command_includes_flappy_entry_body_percent():
     assert cmd[cmd.index("--entry_body_percent") + 1] == "12.5"
 
 
+def test_command_includes_multi_flappy_higher_timeframe_settings():
+    cmd = build_bot_command(
+        "python", "bot_runner.py", "multi_flappy_bird", "XAUUSD", "admin",
+        test=True, interval=60,
+        higher_timeframe="M5",
+        current_timeframe_filter_enabled=True,
+        higher_timeframe_filter_enabled=True,
+        higher_ema_consensus_short=13,
+        higher_ema_consensus_medium=21,
+        higher_ema_consensus_long=55,
+        higher_ema_fallback_short=14,
+        higher_ema_fallback_medium=22,
+        higher_ema_fallback_long=56,
+        higher_ema_consensus_enabled=True,
+        higher_ema_fallback_enabled=False,
+    )
+    assert cmd[cmd.index("--higher_timeframe") + 1] == "M5"
+    assert cmd[cmd.index("--current_timeframe_filter_enabled") + 1] == "1"
+    assert cmd[cmd.index("--higher_timeframe_filter_enabled") + 1] == "1"
+    assert cmd[cmd.index("--higher_ema_fallback_enabled") + 1] == "0"
+
+
 def test_windows_pid_check_requires_exact_pid(monkeypatch):
     monkeypatch.setattr(bot_manager.platform, "system", lambda: "Windows")
     monkeypatch.setattr(
@@ -124,6 +146,14 @@ def test_command_includes_flappy_child_count_range():
     )
     assert cmd[cmd.index("--min_child_candles") + 1] == "3"
     assert cmd[cmd.index("--max_child_candles") + 1] == "6"
+
+
+def test_command_includes_flappy_max_child_body():
+    cmd = build_bot_command(
+        "python", "bot_runner.py", "flappy_bird", "XAUUSD", "admin",
+        test=True, interval=1, max_child_body_points=1.25,
+    )
+    assert cmd[cmd.index("--max_child_body_points") + 1] == "1.25"
 
 
 def test_command_includes_flappy_ema_groups():

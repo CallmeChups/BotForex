@@ -10,6 +10,17 @@ from datetime import datetime
 from typing import Optional
 
 STRATEGIES_DIR = "strategies"
+FLAPPY_STRATEGY_IDS = frozenset({"flappy_bird", "multi_flappy_bird"})
+
+
+def is_flappy_strategy(strategy_id: str) -> bool:
+    """Return whether a strategy uses the Flappy Bird engine."""
+    return strategy_id in FLAPPY_STRATEGY_IDS
+
+
+def is_multi_flappy_strategy(strategy_id: str) -> bool:
+    """Return whether a strategy uses the higher-timeframe Multi engine."""
+    return strategy_id == "multi_flappy_bird"
 
 
 def get_strategies_dir() -> str:
@@ -219,6 +230,13 @@ def get_strategy_parameters(strategy_id: str) -> dict:
         if any(value < 2 for value in values) or not values[0] < values[1] < values[2]:
             raise ValueError(f"Flappy {name} EMA periods must satisfy 2 <= short < medium < long")
 
+    higher_consensus = _ema_group(entry.get('higher_ema_consensus', {}))
+    higher_fallback = _ema_group(entry.get('higher_ema_fallback', {}))
+    for name, group in (('higher consensus', higher_consensus), ('higher fallback', higher_fallback)):
+        values = [group['short'], group['medium'], group['long']]
+        if any(value < 2 for value in values) or not values[0] < values[1] < values[2]:
+            raise ValueError(f"Multi Flappy {name} EMA periods must satisfy 2 <= short < medium < long")
+
     return {
         'timeframe': entry.get('timeframe', 'M5'),
         'entry_type': entry.get('type', 'time'),
@@ -231,6 +249,13 @@ def get_strategy_parameters(strategy_id: str) -> dict:
         'ema_fallback': ema_fallback,
         'ema_consensus_enabled': bool(entry.get('ema_consensus_enabled', True)),
         'ema_fallback_enabled': bool(entry.get('ema_fallback_enabled', True)),
+        'current_timeframe_filter_enabled': bool(entry.get('current_timeframe_filter_enabled', True)),
+        'higher_timeframe': entry.get('higher_timeframe', 'M5'),
+        'higher_timeframe_filter_enabled': bool(entry.get('higher_timeframe_filter_enabled', False)),
+        'higher_ema_consensus': higher_consensus,
+        'higher_ema_fallback': higher_fallback,
+        'higher_ema_consensus_enabled': bool(entry.get('higher_ema_consensus_enabled', True)),
+        'higher_ema_fallback_enabled': bool(entry.get('higher_ema_fallback_enabled', True)),
         'h2_exceed_pips': entry.get('h2_exceed_pips', 0.0),
         'c2_gap_pips': entry.get('c2_gap_pips', 0.0),
         'ema_margin_pips': entry.get('ema_margin_pips', 0.0),
@@ -248,6 +273,8 @@ def get_strategy_parameters(strategy_id: str) -> dict:
         'min_father_body_points': params.get('min_father_body_points', 2.0),
         'min_child_candles': params.get('min_child_candles', 2),
         'max_child_candles': params.get('max_child_candles', 5),
+        'max_child_body_points': params.get('max_child_body_points', 2.0),
+        'cross_window_candles': params.get('cross_window_candles', 12),
         'mother_coverage_enabled': params.get('mother_coverage_enabled', True),
         'limit_order_candles': params.get('limit_order_candles', 1),
         'magic': params.get('magic'),

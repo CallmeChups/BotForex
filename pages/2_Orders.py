@@ -228,7 +228,7 @@ def show_place_order(user_creds: dict):
     st.subheader("Place Manual Order")
 
     # Common symbols
-    common_symbols = ["XAUUSD", "BTCUSD", "ETHUSD", "EURUSD", "GBPUSD"]
+    common_symbols = ["XAUUSDm", "XAUUSD", "BTCUSD", "ETHUSD", "EURUSD", "GBPUSD"]
 
     col1, col2 = st.columns(2)
 
@@ -237,7 +237,7 @@ def show_place_order(user_creds: dict):
         use_custom_symbol = st.checkbox("Custom symbol", value=False, key="order_custom_symbol")
 
         if use_custom_symbol:
-            symbol = st.text_input("Symbol", value="XAUUSD", key="order_symbol")
+            symbol = st.text_input("Symbol", value="XAUUSDm", key="order_symbol")
         else:
             symbol = st.selectbox("Symbol", options=common_symbols, key="order_symbol_select")
 
@@ -401,7 +401,7 @@ def show_demo_mode():
     demo_positions = [
         {
             "ticket": 12345678,
-            "symbol": "XAUUSD",
+            "symbol": "XAUUSDm",
             "type": "BUY",
             "volume": 0.01,
             "open_price": 2650.00,

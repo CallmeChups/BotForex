@@ -66,6 +66,7 @@ def _notify_bot_stopped(bot: dict) -> None:
     """Notify the main Telegram chat when a bot is stopped from the UI."""
     strategy_labels = {
         "flappy_bird": "Flappy Bird",
+        "multi_flappy_bird": "Multi Flappy Bird",
         "feg_ema21": "FEG EMA21",
         "feg_stop_order": "FEG Stop Order",
         "feg_reverse": "FEG Reverse",
@@ -171,7 +172,14 @@ def build_bot_command(
     flappy_consensus_short=None, flappy_consensus_medium=None, flappy_consensus_long=None,
     flappy_fallback_short=None, flappy_fallback_medium=None, flappy_fallback_long=None,
     flappy_consensus_enabled=None, flappy_fallback_enabled=None,
-    flappy_entry_body_percent=None,
+    flappy_entry_body_percent=None, cross_window_candles=None,
+    higher_timeframe=None, higher_timeframe_filter_enabled=None,
+    current_timeframe_filter_enabled=None,
+    higher_ema_consensus_short=None, higher_ema_consensus_medium=None,
+    higher_ema_consensus_long=None, higher_ema_fallback_short=None,
+    higher_ema_fallback_medium=None, higher_ema_fallback_long=None,
+    higher_ema_consensus_enabled=None, higher_ema_fallback_enabled=None,
+    max_child_body_points=None,
 ):
     """Build command list to run bot_runner (separated for testability)."""
     cmd = [
@@ -225,6 +233,8 @@ def build_bot_command(
         cmd.extend(["--min_child_candles", str(min_child_candles)])
     if max_child_candles is not None:
         cmd.extend(["--max_child_candles", str(max_child_candles)])
+    if max_child_body_points is not None:
+        cmd.extend(["--max_child_body_points", str(max_child_body_points)])
     if mother_coverage_enabled is not None:
         cmd.extend(["--mother_coverage_enabled", "1" if mother_coverage_enabled else "0"])
     for name, value in (
@@ -245,6 +255,27 @@ def build_bot_command(
             cmd.extend([f"--{name}", "1" if value else "0"])
     if flappy_entry_body_percent is not None:
         cmd.extend(["--entry_body_percent", str(flappy_entry_body_percent)])
+    if cross_window_candles is not None:
+        cmd.extend(["--cross_window_candles", str(cross_window_candles)])
+    for name, value in (
+        ("higher_timeframe", higher_timeframe),
+        ("higher_ema_consensus_short", higher_ema_consensus_short),
+        ("higher_ema_consensus_medium", higher_ema_consensus_medium),
+        ("higher_ema_consensus_long", higher_ema_consensus_long),
+        ("higher_ema_fallback_short", higher_ema_fallback_short),
+        ("higher_ema_fallback_medium", higher_ema_fallback_medium),
+        ("higher_ema_fallback_long", higher_ema_fallback_long),
+    ):
+        if value is not None:
+            cmd.extend([f"--{name}", str(value)])
+    for name, value in (
+        ("higher_timeframe_filter_enabled", higher_timeframe_filter_enabled),
+        ("current_timeframe_filter_enabled", current_timeframe_filter_enabled),
+        ("higher_ema_consensus_enabled", higher_ema_consensus_enabled),
+        ("higher_ema_fallback_enabled", higher_ema_fallback_enabled),
+    ):
+        if value is not None:
+            cmd.extend([f"--{name}", "1" if value else "0"])
     cmd.extend(["--be_enabled", "1" if be_enabled else "0"])
     cmd.extend(["--be_r", str(be_r)])
     cmd.extend(["--ema_filter_enabled", "1" if ema_filter_enabled else "0"])
@@ -321,6 +352,14 @@ def _start_bot_unlocked(
     flappy_consensus_enabled: bool = None,
     flappy_fallback_enabled: bool = None,
     flappy_entry_body_percent: float = None,
+    cross_window_candles: int = None,
+    higher_timeframe=None, higher_timeframe_filter_enabled=None,
+    current_timeframe_filter_enabled=None,
+    higher_ema_consensus_short=None, higher_ema_consensus_medium=None,
+    higher_ema_consensus_long=None, higher_ema_fallback_short=None,
+    higher_ema_fallback_medium=None, higher_ema_fallback_long=None,
+    higher_ema_consensus_enabled=None, higher_ema_fallback_enabled=None,
+    max_child_body_points: float = None,
 ) -> tuple:
     """
     Start a new bot process
@@ -364,6 +403,14 @@ def _start_bot_unlocked(
         flappy_fallback_short, flappy_fallback_medium, flappy_fallback_long,
         flappy_consensus_enabled, flappy_fallback_enabled,
         flappy_entry_body_percent,
+        cross_window_candles,
+        higher_timeframe, higher_timeframe_filter_enabled,
+        current_timeframe_filter_enabled,
+        higher_ema_consensus_short, higher_ema_consensus_medium,
+        higher_ema_consensus_long, higher_ema_fallback_short,
+        higher_ema_fallback_medium, higher_ema_fallback_long,
+        higher_ema_consensus_enabled, higher_ema_fallback_enabled,
+        max_child_body_points,
     )
 
     try:
@@ -426,8 +473,10 @@ def _start_bot_unlocked(
             'limit_order_candles': limit_order_candles,
             'min_child_candles': min_child_candles,
             'max_child_candles': max_child_candles,
+            'max_child_body_points': max_child_body_points,
             'mother_coverage_enabled': mother_coverage_enabled,
             'flappy_entry_body_percent': flappy_entry_body_percent,
+            'cross_window_candles': cross_window_candles,
             'flappy_consensus_short': flappy_consensus_short,
             'flappy_consensus_medium': flappy_consensus_medium,
             'flappy_consensus_long': flappy_consensus_long,
@@ -436,6 +485,17 @@ def _start_bot_unlocked(
             'flappy_fallback_long': flappy_fallback_long,
             'flappy_consensus_enabled': flappy_consensus_enabled,
             'flappy_fallback_enabled': flappy_fallback_enabled,
+            'higher_timeframe': higher_timeframe,
+            'higher_timeframe_filter_enabled': higher_timeframe_filter_enabled,
+            'current_timeframe_filter_enabled': current_timeframe_filter_enabled,
+            'higher_ema_consensus_short': higher_ema_consensus_short,
+            'higher_ema_consensus_medium': higher_ema_consensus_medium,
+            'higher_ema_consensus_long': higher_ema_consensus_long,
+            'higher_ema_fallback_short': higher_ema_fallback_short,
+            'higher_ema_fallback_medium': higher_ema_fallback_medium,
+            'higher_ema_fallback_long': higher_ema_fallback_long,
+            'higher_ema_consensus_enabled': higher_ema_consensus_enabled,
+            'higher_ema_fallback_enabled': higher_ema_fallback_enabled,
             'be_enabled': be_enabled,
             'be_r': be_r,
             'ema_filter_enabled': ema_filter_enabled,
@@ -635,8 +695,10 @@ def switch_bot_mode(pid: int, live: bool) -> tuple:
         c2_sell_lower_wick_cmp=bot.get('c2_sell_lower_wick_cmp', 'lt'),
         min_child_candles=bot.get('min_child_candles'),
         max_child_candles=bot.get('max_child_candles'),
+        max_child_body_points=bot.get('max_child_body_points'),
         mother_coverage_enabled=bot.get('mother_coverage_enabled'),
         flappy_entry_body_percent=bot.get('flappy_entry_body_percent'),
+        cross_window_candles=bot.get('cross_window_candles'),
     )
 
 
@@ -762,7 +824,9 @@ def restart_bot(pid: int) -> tuple:
         c2_buy_lower_wick_cmp=bot.get('c2_buy_lower_wick_cmp', 'lt'),
         c2_sell_upper_wick_cmp=bot.get('c2_sell_upper_wick_cmp', 'lt'),
         c2_sell_lower_wick_cmp=bot.get('c2_sell_lower_wick_cmp', 'lt'),
+        max_child_body_points=bot.get('max_child_body_points'),
         flappy_entry_body_percent=bot.get('flappy_entry_body_percent'),
+        cross_window_candles=bot.get('cross_window_candles'),
     )
 
 

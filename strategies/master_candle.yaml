@@ -44,10 +44,10 @@ parameters:
 
 # Supported symbols
 symbols:
+  - XAUUSDm
   - XAUUSD
   - BTCUSD
   - ETHUSD
-  - XAUUSDm
   - BTCUSDm
   - ETHUSDm
   - EURUSDm

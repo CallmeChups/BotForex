@@ -75,7 +75,7 @@ def main():
             )
             symbol = st.text_input(
                 "Trading Symbol",
-                value=os.getenv("SYMBOL", "XAUUSD"),
+                value=os.getenv("SYMBOL", "XAUUSDm"),
                 help="Use XAUUSDm for Standard account, XAUUSD for Pro/Raw"
             )
 

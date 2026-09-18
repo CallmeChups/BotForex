@@ -42,10 +42,10 @@ parameters:
   # c2_sell_lower_wick_max_pct: 30.0  # SELL — râu dưới (close-low)  < body×n%. Xoá dòng = tắt.
 
 symbols:
+  - XAUUSDm
   - XAUUSD
   - BTCUSD
   - ETHUSD
-  - XAUUSDm
   - BTCUSDm
   - ETHUSDm
   - EURUSDm

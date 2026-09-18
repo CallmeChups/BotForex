@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Multi Flappy Bird - EMA Layout Mockup</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b1120;
+      --panel: #111827;
+      --panel-2: #172033;
+      --border: #273449;
+      --muted: #94a3b8;
+      --text: #e5edf8;
+      --blue: #38bdf8;
+      --purple: #a78bfa;
+      --green: #34d399;
+      --orange: #fb923c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: radial-gradient(circle at top right, #14213d 0, var(--bg) 48%);
+      color: var(--text);
+      font: 14px/1.4 Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+    }
+    .shell { max-width: 1180px; margin: 0 auto; padding: 34px 28px 56px; }
+    .eyebrow { color: var(--blue); font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+    h1 { margin: 7px 0 6px; font-size: 28px; letter-spacing: -.03em; }
+    .subtitle { margin: 0 0 26px; color: var(--muted); }
+    .toolbar {
+      display: flex; align-items: center; justify-content: space-between; gap: 16px;
+      margin-bottom: 18px; padding: 14px 16px; border: 1px solid var(--border);
+      border-radius: 12px; background: rgba(17, 24, 39, .78);
+    }
+    .toolbar-left { display: flex; align-items: center; gap: 10px; }
+    .strategy { font-weight: 700; }
+    .badge { border: 1px solid #155e75; color: #67e8f9; background: #083344; border-radius: 999px; padding: 4px 9px; font-size: 12px; }
+    .timeframe { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+    select, input {
+      width: 100%; border: 1px solid #34445e; border-radius: 7px; background: #0d1627;
+      color: var(--text); padding: 9px 10px; font: inherit;
+    }
+    select { width: 86px; padding: 7px 9px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    .card {
+      border: 1px solid var(--border); border-radius: 14px; overflow: hidden;
+      background: linear-gradient(145deg, rgba(23, 32, 51, .98), rgba(17, 24, 39, .98));
+      box-shadow: 0 18px 45px rgba(0,0,0,.2);
+    }
+    .card-head { display: flex; align-items: center; justify-content: space-between; padding: 17px 18px 14px; border-bottom: 1px solid var(--border); }
+    .card-title { display: flex; align-items: center; gap: 10px; font-weight: 750; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--blue); box-shadow: 0 0 12px var(--blue); }
+    .dot.htf { background: var(--purple); box-shadow: 0 0 12px var(--purple); }
+    .hint { color: var(--muted); font-size: 12px; }
+    .card-body { padding: 17px 18px 19px; }
+    .master-toggle {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      margin-bottom: 16px; padding: 10px 12px; border: 1px solid #334155;
+      border-radius: 9px; background: rgba(15, 23, 42, .7);
+    }
+    .master-toggle strong { font-size: 12px; }
+    .master-toggle small { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; }
+    .mode { margin-bottom: 16px; }
+    .mode:last-child { margin-bottom: 0; }
+    .mode-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; }
+    .mode-name { display: flex; align-items: center; gap: 8px; font-weight: 700; }
+    .mode-name.consensus { color: var(--green); }
+    .mode-name.fallback { color: var(--orange); }
+    .switch { position: relative; width: 34px; height: 19px; border-radius: 20px; background: #2563eb; }
+    .switch::after { content: ""; position: absolute; width: 15px; height: 15px; top: 2px; right: 2px; border-radius: 50%; background: white; }
+    .fields { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; }
+    label { display: block; color: var(--muted); font-size: 11px; margin-bottom: 5px; }
+    .footer {
+      display: flex; align-items: center; justify-content: space-between; gap: 16px;
+      margin-top: 18px; padding: 14px 16px; border: 1px solid #164e63;
+      border-radius: 12px; background: rgba(8, 51, 68, .38); color: #bae6fd;
+    }
+    .footer strong { color: white; }
+    .legend { display: flex; gap: 13px; color: var(--muted); font-size: 12px; }
+    .legend span::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: var(--blue); }
+    .legend .higher::before { background: var(--purple); }
+    @media (max-width: 760px) {
+      .shell { padding: 24px 14px 40px; }
+      .grid { grid-template-columns: 1fr; }
+      .toolbar, .footer { align-items: flex-start; flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="eyebrow">Strategy configuration / mockup</div>
+    <h1>Multi Flappy Bird</h1>
+    <p class="subtitle">EMA hiện hành và EMA khung lớn được tách riêng để dễ debug và quản lý.</p>
+
+    <section class="toolbar">
+      <div class="toolbar-left">
+        <span class="strategy">Multi Flappy Bird BUY/SELL</span>
+        <span class="badge">M1 + M5 filter</span>
+      </div>
+      <div class="timeframe">
+        <span>Khung hiện hành</span>
+        <select aria-label="Khung hiện hành"><option>M1</option></select>
+        <span>Khung lớn</span>
+        <select aria-label="Khung lớn"><option>M5</option></select>
+      </div>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <header class="card-head">
+          <div class="card-title"><span class="dot"></span> EMA khung hiện hành</div>
+          <span class="hint">M1</span>
+        </header>
+        <div class="card-body">
+          <div class="master-toggle">
+            <div><strong>Bật bộ lọc khung hiện hành</strong><small>Tắt để bỏ toàn bộ EMA M1</small></div>
+            <span class="switch" aria-label="Current timeframe filter enabled"></span>
+          </div>
+          <div class="mode">
+            <div class="mode-head"><div class="mode-name consensus">Đồng thuận <span class="hint">3 EMA</span></div><span class="switch" aria-label="Đồng thuận enabled"></span></div>
+            <div class="fields">
+              <div><label>Ngắn hạn</label><input value="13"></div>
+              <div><label>Trung hạn</label><input value="21"></div>
+              <div><label>Dài hạn</label><input value="55"></div>
+            </div>
+          </div>
+          <div class="mode">
+            <div class="mode-head"><div class="mode-name fallback">Fallback <span class="hint">3 EMA</span></div><span class="switch" aria-label="Fallback enabled"></span></div>
+            <div class="fields">
+              <div><label>Ngắn hạn</label><input value="13"></div>
+              <div><label>Trung hạn</label><input value="21"></div>
+              <div><label>Dài hạn</label><input value="55"></div>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article class="card">
+        <header class="card-head">
+          <div class="card-title"><span class="dot htf"></span> EMA khung lớn</div>
+          <span class="hint">M5 · nến đang chạy</span>
+        </header>
+        <div class="card-body">
+          <div class="master-toggle">
+            <div><strong>Bật bộ lọc khung lớn</strong><small>Tắt để bỏ toàn bộ điều kiện EMA M5</small></div>
+            <span class="switch" aria-label="Higher timeframe filter enabled"></span>
+          </div>
+          <div class="mode">
+            <div class="mode-head"><div class="mode-name consensus">Đồng thuận khung lớn <span class="hint">3 EMA</span></div><span class="switch" aria-label="Đồng thuận khung lớn enabled"></span></div>
+            <div class="fields">
+              <div><label>Ngắn hạn</label><input value="13"></div>
+              <div><label>Trung hạn</label><input value="21"></div>
+              <div><label>Dài hạn</label><input value="55"></div>
+            </div>
+          </div>
+          <div class="mode">
+            <div class="mode-head"><div class="mode-name fallback">HTF Fallback <span class="hint">3 EMA</span></div><span class="switch" aria-label="HTF fallback enabled"></span></div>
+            <div class="fields">
+              <div><label>Ngắn hạn</label><input value="13"></div>
+              <div><label>Trung hạn</label><input value="21"></div>
+              <div><label>Dài hạn</label><input value="55"></div>
+            </div>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <div class="footer">
+      <div><strong>Bộ lọc khung lớn:</strong> Đồng thuận cần Open và Close M5 cùng phía EMA dài hạn + đủ thứ tự 3 EMA. Fallback cần Close M5 đúng phía EMA dài hạn + EMA ngắn/trung hạn đúng thứ tự.</div>
+      <div class="legend"><span>Current TF</span><span class="higher">Higher TF</span></div>
+    </div>
+  </main>
+</body>
+</html>

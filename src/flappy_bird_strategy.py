@@ -2,6 +2,8 @@
 
 import math
 
+import numpy as np
+
 from src.utils import get_pip_value
 
 
@@ -17,21 +19,147 @@ def calculate_flappy_ema_series(
     window: int = EMA_WARMUP_WINDOW,
 ) -> list[float]:
     """Calculate EMA using the same bounded warmup window as the live bot."""
-    values = list(close_values)
     if span <= 0:
         raise ValueError("EMA span must be positive")
     if window <= 0:
         raise ValueError("EMA warmup window must be positive")
 
+    if isinstance(close_values, np.ndarray):
+        values = np.asarray(close_values, dtype=float)
+    else:
+        values = np.asarray(list(close_values), dtype=float)
+    if values.size == 0:
+        return []
     alpha = 2.0 / (span + 1.0)
-    result = []
-    for index in range(len(values)):
-        start = max(0, index - window + 1)
-        ema = float(values[start])
-        for value in values[start + 1:index + 1]:
-            ema = alpha * float(value) + (1.0 - alpha) * ema
-        result.append(ema)
-    return result
+    decay = 1.0 - alpha
+    warmup_end = min(values.size, window)
+    result = np.empty(values.size, dtype=float)
+    result[0] = values[0]
+    for index in range(1, warmup_end):
+        result[index] = alpha * values[index] + decay * result[index - 1]
+
+    if values.size > window:
+        # For a full bounded window the recursive EMA is a fixed convolution:
+        # the window seed has decay**(window-1), later values have alpha-weighted
+        # decay coefficients. NumPy performs this O(n*window) work in C.
+        kernel = np.empty(window, dtype=float)
+        kernel[:-1] = alpha * decay ** np.arange(window - 1)
+        kernel[-1] = decay ** (window - 1)
+        result[window - 1:] = np.convolve(values, kernel, mode="valid")
+    return result.tolist()
+
+
+def calculate_flappy_ema_snapshot(
+    close_values,
+    periods: dict[str, int],
+    window: int = EMA_WARMUP_WINDOW,
+) -> dict[str, float]:
+    """Return the latest bounded-warmup EMA values for a period group."""
+    return {
+        slot: calculate_flappy_ema_series(close_values, int(periods[slot]), window)[-1]
+        for slot in ("short", "medium", "long")
+    }
+
+
+def calculate_flappy_ema_cross_lifecycle(
+    close_values,
+    fast_period: int = 8,
+    slow_period: int = 13,
+    window: int = EMA_WARMUP_WINDOW,
+) -> tuple[list[str | None], list[int | None]]:
+    """Track the active EMA fast/slow cross direction and its candle age."""
+    fast_values = calculate_flappy_ema_series(close_values, fast_period, window)
+    slow_values = calculate_flappy_ema_series(close_values, slow_period, window)
+    directions: list[str | None] = []
+    ages: list[int | None] = []
+    active_direction = None
+    active_age = None
+    for index, (fast, slow) in enumerate(zip(fast_values, slow_values)):
+        previous_fast = fast_values[index - 1] if index else None
+        previous_slow = slow_values[index - 1] if index else None
+        if previous_fast is not None and previous_slow is not None:
+            if previous_fast <= previous_slow and fast > slow:
+                active_direction = "BUY"
+                active_age = 0
+            elif previous_fast >= previous_slow and fast < slow:
+                active_direction = "SELL"
+                active_age = 0
+            elif active_age is not None:
+                active_age += 1
+        directions.append(active_direction)
+        ages.append(active_age)
+    return directions, ages
+
+
+def diagnose_flappy_higher_timeframe(
+    candle: dict,
+    ema_values: dict[str, float],
+    direction: str,
+    mode: str,
+    enabled: bool = True,
+    mode_enabled: bool = True,
+) -> dict:
+    """Validate the HTF candle against the selected current-TF EMA mode."""
+    direction = direction.upper()
+    if direction not in {"BUY", "SELL"}:
+        return {"valid": False, "reason": "invalid_direction", "metrics": {}, "checks": []}
+    if mode not in {"consensus", "fallback"}:
+        return {"valid": False, "reason": "invalid_ema_mode", "metrics": {}, "checks": []}
+    if not enabled:
+        return {
+            "valid": True,
+            "reason": "higher_timeframe_filter_disabled",
+            "metrics": {},
+            "checks": [],
+        }
+    if not mode_enabled:
+        return {"valid": False, "reason": "higher_timeframe_mode_disabled", "metrics": {}, "checks": []}
+    short, medium, long = (float(ema_values[key]) for key in ("short", "medium", "long"))
+    is_buy = direction == "BUY"
+    full_order_ok = short > medium > long if is_buy else short < medium < long
+    short_medium_order_ok = short > medium if is_buy else short < medium
+    close_side_ok = candle["close"] > long if is_buy else candle["close"] < long
+    open_side_ok = (
+        candle["open"] > long and candle["close"] > long
+        if is_buy else candle["open"] < long and candle["close"] < long
+    )
+    order_ok = full_order_ok if mode == "consensus" else short_medium_order_ok
+    checks = [
+        {
+            "key": "ema_order",
+            "label": (
+                "3 EMA HTF đúng thứ tự"
+                if mode == "consensus" else
+                "EMA ngắn và trung hạn HTF đúng thứ tự"
+            ),
+            "passed": order_ok,
+         "actual": f"{short:.5f}, {medium:.5f}, {long:.5f}"},
+        {
+            "key": "close_side",
+            "label": "CLOSE HTF đúng phía EMA dài hạn",
+         "passed": close_side_ok, "actual": f"{candle['close']:.5f} / {long:.5f}"},
+    ]
+    if mode == "consensus":
+        checks.append({
+            "key": "open_side", "label": "OPEN HTF đúng phía EMA dài hạn",
+            "passed": candle["open"] > long if is_buy else candle["open"] < long,
+            "actual": f"OPEN={candle['open']:.5f}, CLOSE={candle['close']:.5f}, EMA={long:.5f}",
+        })
+    valid = order_ok and close_side_ok and (
+        open_side_ok if mode == "consensus" else True
+    )
+    return {
+        "valid": valid,
+        "reason": None if valid else (
+            "higher_timeframe_ema_order_failed"
+            if not order_ok else
+            "higher_timeframe_close_side_failed"
+            if not close_side_ok else
+            "higher_timeframe_open_side_failed"
+        ),
+        "metrics": {"open": candle["open"], "close": candle["close"], "ema": dict(ema_values), "mode": mode},
+        "checks": checks,
+    }
 
 
 def _body(candle: dict) -> float:
@@ -109,6 +237,9 @@ def diagnose_flappy_bird(
     consensus_enabled: bool = True,
     fallback_enabled: bool = True,
     requested_ema_mode: str | None = None,
+    higher_timeframe_filter: dict | None = None,
+    current_timeframe_filter_enabled: bool = True,
+    max_child_body_points: float = 2.0,
 ) -> dict:
     """Return validation status and metrics, optionally including the audit table."""
     child_bodies = [_body(child) for child in children]
@@ -120,12 +251,18 @@ def diagnose_flappy_bird(
     lowest_child_low = min((child["low"] for child in children), default=None)
     highest_child_body = max(child_bodies, default=0.0)
     last_child_body = child_bodies[-1] if child_bodies else 0.0
+    adjacent_children = children[-2:]
+    adjacent_child_bodies = [_body(child) for child in adjacent_children]
+    adjacent_child_high = max((child["high"] for child in adjacent_children), default=None)
+    adjacent_child_low = min((child["low"] for child in adjacent_children), default=None)
     metrics = {
         "child_count": len(children),
         "mother_body": _body(mother),
         "father_body": _body(father),
         "largest_child_body": highest_child_body,
         "last_child_body": last_child_body,
+        "adjacent_child_bodies": adjacent_child_bodies,
+        "max_child_body_points": max_child_body_points,
         "highest_child_high": highest_child_high,
         "lowest_child_low": lowest_child_low,
         "mother_high": mother["high"],
@@ -185,6 +322,33 @@ def diagnose_flappy_bird(
                 )
             )
             metrics["ema_mode"] = requested_ema_mode if requested_valid else None
+    if not current_timeframe_filter_enabled:
+        if requested_ema_mode in {"consensus", "fallback"}:
+            metrics["ema_mode"] = requested_ema_mode
+        elif consensus_enabled:
+            metrics["ema_mode"] = "consensus"
+        elif fallback_enabled:
+            metrics["ema_mode"] = "fallback"
+    higher_timeframe_debug = None
+    if metrics["ema_mode"] is not None and higher_timeframe_filter is not None:
+        if higher_timeframe_filter.get("candle") is None:
+            higher_timeframe_debug = {
+                "valid": False,
+                "reason": "higher_timeframe_data_unavailable",
+                "metrics": {},
+                "checks": [],
+            }
+        else:
+            higher_timeframe_debug = diagnose_flappy_higher_timeframe(
+                higher_timeframe_filter["candle"],
+                higher_timeframe_filter["ema_values"],
+                direction,
+                higher_timeframe_filter.get("mode", metrics["ema_mode"]),
+                bool(higher_timeframe_filter.get("enabled", True)),
+                bool(higher_timeframe_filter.get("mode_enabled", True)),
+            )
+        if not higher_timeframe_debug["valid"]:
+            metrics["ema_mode"] = None
     filter_ema13 = (
         metrics["fallback_ema13"] if metrics["ema_mode"] == "fallback" else ema13
     )
@@ -214,6 +378,8 @@ def diagnose_flappy_bird(
             mother["low"] > min(min(child["open"], child["close"]) for child in children)
         )):
             reason = "mother_body_not_covered"
+        elif any(body > max_child_body_points for body in adjacent_child_bodies):
+            reason = "child_body_above_maximum"
         elif father_body <= 1.5 * last_child_body:
             reason = "father_body_ratio_failed"
         elif (
@@ -222,15 +388,15 @@ def diagnose_flappy_bird(
             (father["close"] - father["low"] >= 0.30 * father_body)
         ):
             reason = "father_upper_wick_too_large" if is_buy else "father_lower_wick_too_large"
-        elif (
+        elif current_timeframe_filter_enabled and (
             father["open"] < filter_ema13 or father["low"] <= filter_ema21
             if is_buy else
             father["open"] > filter_ema13 or father["high"] >= filter_ema21
         ):
             reason = "father_ema_filter_failed"
         elif not children or (
-            father["close"] <= highest_child_high
-            if is_buy else father["close"] >= lowest_child_low
+            father["close"] <= adjacent_child_high
+            if is_buy else father["close"] >= adjacent_child_low
         ):
             reason = "father_close_not_above_children" if is_buy else "father_close_not_below_children"
         elif father_body <= min_father_body_points:
@@ -239,7 +405,18 @@ def diagnose_flappy_bird(
             reason = "father_body_above_maximum"
         else:
             reason = None
-        return {"valid": reason is None, "reason": reason, "metrics": metrics}
+        return {
+            "valid": reason is None and (
+                higher_timeframe_debug is None or higher_timeframe_debug["valid"]
+            ),
+            "reason": (
+                higher_timeframe_debug.get("reason")
+                if higher_timeframe_debug and not higher_timeframe_debug["valid"]
+                else reason
+            ),
+            "metrics": metrics,
+            "higher_timeframe_debug": higher_timeframe_debug,
+        }
 
     checks = [
         {
@@ -309,6 +486,15 @@ def diagnose_flappy_bird(
             ),
         },
         {
+            "key": "child_body_maximum",
+            "label": "Thân hai nến Con cuối không vượt mức tối đa",
+            "passed": bool(adjacent_children) and all(
+                body <= max_child_body_points for body in adjacent_child_bodies
+            ),
+            "actual": ", ".join(f"{body:.5f}" for body in adjacent_child_bodies),
+            "expected": f"<= {max_child_body_points:.5f}",
+        },
+        {
             "key": "father_body_ratio",
             "label": "Thân Cha > 1.5 lần thân Con cuối",
             "passed": father_body > 0 and father_body > 1.5 * last_child_body,
@@ -328,7 +514,7 @@ def diagnose_flappy_bird(
         {
             "key": "father_ema_filter",
             "label": "OPEN Cha >= EMA13 và LOW Cha > EMA21" if is_buy else "OPEN Cha <= EMA13 và HIGH Cha < EMA21",
-            "passed": (
+            "passed": not current_timeframe_filter_enabled or (
                 father["open"] >= filter_ema13 and father["low"] > filter_ema21
                 if is_buy else father["open"] <= filter_ema13 and father["high"] < filter_ema21
             ),
@@ -341,16 +527,16 @@ def diagnose_flappy_bird(
         },
         {
             "key": "father_close_breakout",
-            "label": "CLOSE Cha > HIGH Con cao nhất" if is_buy else "CLOSE Cha < LOW Con thấp nhất",
+            "label": "CLOSE Cha > HIGH hai Con cuối" if is_buy else "CLOSE Cha < LOW hai Con cuối",
             "passed": bool(children) and (
-                father["close"] > highest_child_high
-                if is_buy else father["close"] < lowest_child_low
+                father["close"] > adjacent_child_high
+                if is_buy else father["close"] < adjacent_child_low
             ),
             "actual": (
-                f'{father["close"]:.5f} > {(highest_child_high or 0):.5f}'
-                if is_buy else f'{father["close"]:.5f} < {(lowest_child_low or 0):.5f}'
+                f'{father["close"]:.5f} > {(adjacent_child_high or 0):.5f}'
+                if is_buy else f'{father["close"]:.5f} < {(adjacent_child_low or 0):.5f}'
             ),
-            "expected": "CLOSE Cha > HIGH Con cao nhất" if is_buy else "CLOSE Cha < LOW Con thấp nhất",
+            "expected": "CLOSE Cha > HIGH hai Con cuối" if is_buy else "CLOSE Cha < LOW hai Con cuối",
         },
         {
             "key": "father_minimum_body",
@@ -370,12 +556,18 @@ def diagnose_flappy_bird(
         "father_ema_filter": "father_ema_filter_failed",
         "father_close_breakout": "father_close_not_above_children" if is_buy else "father_close_not_below_children",
         "father_minimum_body": "father_body_below_minimum",
+        "child_body_maximum": "child_body_above_maximum",
     }
+    if higher_timeframe_debug is not None:
+        checks.extend(higher_timeframe_debug.get("checks", []))
     failed_check = next((check for check in checks if not check["passed"]), None)
     has_zero_body = mother_body <= 0 or father_body <= 0
     return {
         "valid": failed_check is None and not has_zero_body,
-        "reason": "zero_candle_body" if has_zero_body else (
+        "reason": (
+            higher_timeframe_debug.get("reason")
+            if higher_timeframe_debug and not higher_timeframe_debug["valid"]
+            else "zero_candle_body" if has_zero_body else (
             (
                 "father_body_below_minimum"
                 if failed_check and failed_check["key"] == "father_minimum_body"
@@ -384,9 +576,10 @@ def diagnose_flappy_bird(
                 if failed_check and failed_check["key"] == "father_minimum_body"
                 else reason_by_key.get(failed_check["key"])
             ) if failed_check else None
-        ),
+        )),
         "metrics": metrics,
         "checks": checks,
+        "higher_timeframe_debug": higher_timeframe_debug,
     }
 
 
@@ -408,6 +601,9 @@ def detect_flappy_bird_signal(
     consensus_enabled: bool = True,
     fallback_enabled: bool = True,
     requested_ema_mode: str | None = None,
+    higher_timeframe_filter: dict | None = None,
+    current_timeframe_filter_enabled: bool = True,
+    max_child_body_points: float = 2.0,
 ) -> bool:
     """Return whether the candle window satisfies the BUY pattern."""
     return diagnose_flappy_bird(
@@ -422,6 +618,9 @@ def detect_flappy_bird_signal(
         consensus_enabled=consensus_enabled,
         fallback_enabled=fallback_enabled,
         requested_ema_mode=requested_ema_mode,
+        higher_timeframe_filter=higher_timeframe_filter,
+        current_timeframe_filter_enabled=current_timeframe_filter_enabled,
+        max_child_body_points=max_child_body_points,
     )["valid"]
 
 
@@ -448,6 +647,9 @@ def analyze_flappy_bird(
     consensus_enabled: bool = True,
     fallback_enabled: bool = True,
     requested_ema_mode: str | None = None,
+    higher_timeframe_filter: dict | None = None,
+    current_timeframe_filter_enabled: bool = True,
+    max_child_body_points: float = 2.0,
 ) -> dict | None:
     """Return a standard pending limit signal or None."""
     diagnostics = diagnose_flappy_bird(
@@ -462,6 +664,9 @@ def analyze_flappy_bird(
         consensus_enabled=consensus_enabled,
         fallback_enabled=fallback_enabled,
         requested_ema_mode=requested_ema_mode,
+        higher_timeframe_filter=higher_timeframe_filter,
+        current_timeframe_filter_enabled=current_timeframe_filter_enabled,
+        max_child_body_points=max_child_body_points,
     )
     if not diagnostics["valid"]:
         return None
@@ -506,4 +711,9 @@ def analyze_flappy_bird(
         "fallback_ema55": diagnostics["metrics"]["fallback_ema55"],
         "ema_mode": diagnostics["metrics"].get("ema_mode"),
         "debug": diagnostics,
+        "higher_timeframe_debug": diagnostics.get("higher_timeframe_debug"),
+        "higher_timeframe": (
+            higher_timeframe_filter.get("candle")
+            if higher_timeframe_filter else None
+        ),
     }

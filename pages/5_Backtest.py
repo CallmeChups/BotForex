@@ -25,10 +25,14 @@ from src.auth import (require_auth, get_user_mt5_credentials, has_mt5_credential
                       get_user_mt5_backtest_credentials, set_user_mt5_backtest_credentials)
 username, name = require_auth()
 
-from src.backtest import fetch_historical_data, run_backtest
+from src.backtest import run_backtest
+from src.ohlc_cache import ensure_range
 from src.flappy_bird_strategy import diagnose_flappy_bird
-from src.utils import is_mt5_available, get_pip_value, report_page_error
-from src.strategy_manager import list_strategies, get_strategy_parameters
+from src.utils import get_pip_value, report_page_error
+from src.strategy_manager import (
+    list_strategies, get_strategy_parameters, is_flappy_strategy,
+    is_multi_flappy_strategy,
+)
 from src.backtest_history import (
     save_backtest_result,
     get_history,
@@ -136,21 +140,10 @@ def main():
 
     st.divider()
 
-    # Check MT5 availability
-    if not is_mt5_available():
-        st.error("MT5 not available (Windows only). Backtest requires MT5 for historical data.")
-        show_demo_results()
-        return
-
-    # Check if user has MT5 credentials
-    if not has_mt5_credentials(username):
-        st.warning("MT5 account not configured. Please go to Settings to add your MT5 credentials.")
-        st.page_link("pages/8_Settings.py", label="Go to Settings", icon="⚙️")
-        show_demo_results()
-        return
-
     # Get user credentials
     user_creds = get_user_mt5_credentials(username)
+    if not has_mt5_credentials(username):
+        st.info("Chưa cấu hình MT5. Backtest vẫn dùng được nếu cache local đã đủ; dữ liệu thiếu sẽ báo lỗi.")
 
     # Backtest MT5 override — dùng account khác (ví dụ real account stable hơn demo trial)
     _saved_bt = get_user_mt5_backtest_credentials(username)
@@ -204,7 +197,8 @@ def main():
     entry_type = params.get('entry_type', 'time')
     is_pattern = entry_type == 'pattern'
     is_feg_stop_order = (selected_strategy == 'feg_stop_order')
-    is_flappy_bird = (selected_strategy == 'flappy_bird')
+    is_flappy_bird = is_flappy_strategy(selected_strategy)
+    is_multi_flappy = is_multi_flappy_strategy(selected_strategy)
 
     left, _div, right = st.columns([0.58, 0.02, 0.40])
 
@@ -216,9 +210,16 @@ def main():
         _section_header("⚙", "GENERAL", "#6366f1")
         strategy_symbols = params.get('symbols', [])
         strategy_timeframe = params.get('timeframe', 'M5')
+        higher_timeframe = params.get("higher_timeframe", "M5")
         timeframe_options = ["M1", "M5", "M15", "M30", "H1", "H4", "D1"]
+        timeframe = strategy_timeframe
+        timeframe_relation_valid = True
         # Row 1: checkboxes / toggles
-        gr1c1, gr1c2, gr1c3, gr1c4, gr1c5, gr1c6 = st.columns([2, 2, 2, 2, 1, 2])
+        if is_multi_flappy:
+            gr1c1, gr1c2, gr1c3, gr1c4, gr1c5 = st.columns(5)
+            gr1c6 = st.container()
+        else:
+            gr1c1, gr1c2, gr1c3, gr1c4, gr1c5, gr1c6 = st.columns([2, 2, 2, 2, 1, 2])
         with gr1c1:
             use_custom_symbol = st.checkbox("Tùy chọn symbol", value=False)
         with gr1c2:
@@ -235,7 +236,52 @@ def main():
                 help="Tỷ lệ Reward:Risk dùng để tính TP. Có thể override giá trị mặc định trong YAML.",
             )
         with gr1c6:
-            if is_flappy_bird:
+            if False and is_multi_flappy:
+                _use_mc = True
+                current_col, higher_col = st.columns(2)
+                with current_col:
+                    st.markdown("**EMA khung hiện hành**")
+                    current_timeframe_filter_enabled = st.checkbox(
+                        "Bật bộ lọc khung hiện hành",
+                        value=bool(params.get("current_timeframe_filter_enabled", True)),
+                        key="backtest_current_filter_enabled",
+                    )
+                    consensus = params.get("ema_consensus", {"short": 13, "medium": 21, "long": 55})
+                    fallback = params.get("ema_fallback", consensus)
+                    st.markdown("**Chim bay**")
+                    cols = st.columns(3)
+                    flappy_consensus_short = cols[0].number_input("Ngắn hạn", min_value=2, max_value=500, value=int(consensus["short"]), key="backtest_consensus_short_multi", disabled=not current_timeframe_filter_enabled)
+                    flappy_consensus_medium = cols[1].number_input("Trung hạn", min_value=3, max_value=500, value=int(consensus["medium"]), key="backtest_consensus_medium_multi", disabled=not current_timeframe_filter_enabled)
+                    flappy_consensus_long = cols[2].number_input("Dài hạn", min_value=4, max_value=500, value=int(consensus["long"]), key="backtest_consensus_long_multi", disabled=not current_timeframe_filter_enabled)
+                    flappy_consensus_enabled = st.checkbox("Bật Chim bay", value=bool(params.get("ema_consensus_enabled", True)), key="backtest_consensus_enabled_multi", disabled=not current_timeframe_filter_enabled)
+                    st.markdown("**Đầu nguồn**")
+                    cols = st.columns(3)
+                    flappy_fallback_short = cols[0].number_input("Ngắn hạn", min_value=2, max_value=500, value=int(fallback["short"]), key="backtest_fallback_short_multi", disabled=not current_timeframe_filter_enabled)
+                    flappy_fallback_medium = cols[1].number_input("Trung hạn", min_value=3, max_value=500, value=int(fallback["medium"]), key="backtest_fallback_medium_multi", disabled=not current_timeframe_filter_enabled)
+                    flappy_fallback_long = cols[2].number_input("Dài hạn", min_value=4, max_value=500, value=int(fallback["long"]), key="backtest_fallback_long_multi", disabled=not current_timeframe_filter_enabled)
+                    flappy_fallback_enabled = st.checkbox("Bật Đầu nguồn", value=bool(params.get("ema_fallback_enabled", True)), key="backtest_fallback_enabled_multi", disabled=not current_timeframe_filter_enabled)
+                with higher_col:
+                    st.markdown(f"**EMA khung lớn ({higher_timeframe})**")
+                    higher_timeframe_filter_enabled = st.checkbox("Bật bộ lọc khung lớn", value=bool(params.get("higher_timeframe_filter_enabled", True)), key="backtest_higher_filter_enabled_multi")
+                    higher_timeframe = st.selectbox("Khung lớn", options=["M5", "M15", "M30", "H1", "H4"], index=0, key="backtest_higher_timeframe_multi")
+                    higher_consensus = params.get("higher_ema_consensus", {"short": 13, "medium": 21, "long": 55})
+                    higher_fallback = params.get("higher_ema_fallback", {"short": 13, "medium": 21, "long": 55})
+                    higher_ema_consensus_enabled = st.checkbox("Bật Chim bay khung lớn", value=bool(params.get("higher_ema_consensus_enabled", True)), key="backtest_higher_consensus_enabled_multi", disabled=not higher_timeframe_filter_enabled)
+                    cols = st.columns(3)
+                    higher_ema_consensus_short = cols[0].number_input("Ngắn hạn", min_value=2, max_value=500, value=int(higher_consensus["short"]), key="backtest_higher_consensus_short_multi", disabled=not higher_timeframe_filter_enabled)
+                    higher_ema_consensus_medium = cols[1].number_input("Trung hạn", min_value=3, max_value=500, value=int(higher_consensus["medium"]), key="backtest_higher_consensus_medium_multi", disabled=not higher_timeframe_filter_enabled)
+                    higher_ema_consensus_long = cols[2].number_input("Dài hạn", min_value=4, max_value=500, value=int(higher_consensus["long"]), key="backtest_higher_consensus_long_multi", disabled=not higher_timeframe_filter_enabled)
+                    higher_ema_fallback_enabled = st.checkbox("Bật Đầu nguồn khung lớn", value=bool(params.get("higher_ema_fallback_enabled", True)), key="backtest_higher_fallback_enabled_multi", disabled=not higher_timeframe_filter_enabled)
+                    cols = st.columns(3)
+                    higher_ema_fallback_short = cols[0].number_input("Ngắn hạn", min_value=2, max_value=500, value=int(higher_fallback["short"]), key="backtest_higher_fallback_short_multi", disabled=not higher_timeframe_filter_enabled)
+                    higher_ema_fallback_medium = cols[1].number_input("Trung hạn", min_value=3, max_value=500, value=int(higher_fallback["medium"]), key="backtest_higher_fallback_medium_multi", disabled=not higher_timeframe_filter_enabled)
+                    higher_ema_fallback_long = cols[2].number_input("Dài hạn", min_value=4, max_value=500, value=int(higher_fallback["long"]), key="backtest_higher_fallback_long_multi", disabled=not higher_timeframe_filter_enabled)
+                flappy_entry_body_percent = st.number_input("Entry offset (% thân Cha)", value=float(params.get("entry_body_percent", 5.0)), min_value=0.0, max_value=100.0, step=0.5, format="%.1f", key="backtest_entry_body_percent_multi")
+                ema_period = 21
+                h2_exceed_pips = c2_gap_pips = ema_margin_pips = 0.0
+                ema_filter_enabled = True
+                buy_ema_side = sell_ema_side = "above_ema"
+            elif is_flappy_bird:
                 _use_mc = True
                 st.caption("7 nến cố định")
             else:
@@ -244,24 +290,62 @@ def main():
         gr2c1, gr2c2, gr2c3, gr2c4 = st.columns([2, 2, 1, 2])
         with gr2c1:
             if use_custom_symbol:
-                symbol = st.text_input("Symbol", value=os.getenv("SYMBOL", "XAUUSD"), label_visibility="collapsed")
+                symbol = st.text_input("Symbol", value=os.getenv("SYMBOL", "XAUUSDm"), label_visibility="collapsed")
             elif strategy_symbols:
                 symbol = st.selectbox("Symbol", options=strategy_symbols, label_visibility="collapsed")
             else:
-                symbol = st.text_input("Symbol", value=os.getenv("SYMBOL", "XAUUSD"), label_visibility="collapsed")
+                symbol = st.text_input("Symbol", value=os.getenv("SYMBOL", "XAUUSDm"), label_visibility="collapsed")
         with gr2c2:
-            if use_custom_timeframe:
+            if use_custom_timeframe and not is_multi_flappy:
                 timeframe = st.selectbox("Timeframe", options=timeframe_options,
                                          index=timeframe_options.index(strategy_timeframe)
                                          if strategy_timeframe in timeframe_options else 0,
                                          label_visibility="collapsed")
             else:
                 timeframe = strategy_timeframe
-                st.selectbox("Timeframe", options=[strategy_timeframe], disabled=True, label_visibility="collapsed")
+                if not is_multi_flappy:
+                    st.selectbox("Timeframe", options=[strategy_timeframe], disabled=True, label_visibility="collapsed")
         with gr2c3:
             st.empty()
         with gr2c4:
-            if is_flappy_bird:
+            if False and is_multi_flappy:
+                current_col, higher_col = st.columns(2)
+                with current_col:
+                    st.markdown("**EMA khung hiện hành**")
+                    current_timeframe_filter_enabled = st.checkbox("Bật bộ lọc khung hiện hành", value=bool(params.get("current_timeframe_filter_enabled", True)), key="backtest_current_filter_enabled_multi")
+                    consensus = params.get("ema_consensus", {"short": 13, "medium": 21, "long": 55})
+                    fallback = params.get("ema_fallback", consensus)
+                    st.markdown("**Chim bay**")
+                    cols = st.columns(3)
+                    flappy_consensus_short = cols[0].number_input("Ngắn hạn", min_value=2, max_value=500, value=int(consensus["short"]), key="backtest_consensus_short_multi", disabled=not current_timeframe_filter_enabled)
+                    flappy_consensus_medium = cols[1].number_input("Trung hạn", min_value=3, max_value=500, value=int(consensus["medium"]), key="backtest_consensus_medium_multi", disabled=not current_timeframe_filter_enabled)
+                    flappy_consensus_long = cols[2].number_input("Dài hạn", min_value=4, max_value=500, value=int(consensus["long"]), key="backtest_consensus_long_multi", disabled=not current_timeframe_filter_enabled)
+                    flappy_consensus_enabled = st.checkbox("Bật Chim bay", value=bool(params.get("ema_consensus_enabled", True)), key="backtest_consensus_enabled_multi", disabled=not current_timeframe_filter_enabled)
+                    st.markdown("**Đầu nguồn**")
+                    cols = st.columns(3)
+                    flappy_fallback_short = cols[0].number_input("Ngắn hạn", min_value=2, max_value=500, value=int(fallback["short"]), key="backtest_fallback_short_multi", disabled=not current_timeframe_filter_enabled)
+                    flappy_fallback_medium = cols[1].number_input("Trung hạn", min_value=3, max_value=500, value=int(fallback["medium"]), key="backtest_fallback_medium_multi", disabled=not current_timeframe_filter_enabled)
+                    flappy_fallback_long = cols[2].number_input("Dài hạn", min_value=4, max_value=500, value=int(fallback["long"]), key="backtest_fallback_long_multi", disabled=not current_timeframe_filter_enabled)
+                    flappy_fallback_enabled = st.checkbox("Bật Đầu nguồn", value=bool(params.get("ema_fallback_enabled", True)), key="backtest_fallback_enabled_multi", disabled=not current_timeframe_filter_enabled)
+                with higher_col:
+                    st.markdown("**EMA khung lớn**")
+                    higher_timeframe_filter_enabled = st.checkbox("Bật bộ lọc khung lớn", value=bool(params.get("higher_timeframe_filter_enabled", True)), key="backtest_higher_filter_enabled_multi")
+                    higher_timeframe = st.selectbox("Khung lớn", options=["M5", "M15", "M30", "H1", "H4"], index=0, key="backtest_higher_timeframe_multi")
+                    higher_consensus = params.get("higher_ema_consensus", {"short": 13, "medium": 21, "long": 55})
+                    higher_fallback = params.get("higher_ema_fallback", {"short": 13, "medium": 21, "long": 55})
+                    higher_ema_consensus_enabled = st.checkbox("Bật Chim bay khung lớn", value=bool(params.get("higher_ema_consensus_enabled", True)), key="backtest_higher_consensus_enabled_multi", disabled=not higher_timeframe_filter_enabled)
+                    cols = st.columns(3)
+                    higher_ema_consensus_short = cols[0].number_input("Ngắn hạn", min_value=2, max_value=500, value=int(higher_consensus["short"]), key="backtest_higher_consensus_short_multi", disabled=not higher_timeframe_filter_enabled)
+                    higher_ema_consensus_medium = cols[1].number_input("Trung hạn", min_value=3, max_value=500, value=int(higher_consensus["medium"]), key="backtest_higher_consensus_medium_multi", disabled=not higher_timeframe_filter_enabled)
+                    higher_ema_consensus_long = cols[2].number_input("Dài hạn", min_value=4, max_value=500, value=int(higher_consensus["long"]), key="backtest_higher_consensus_long_multi", disabled=not higher_timeframe_filter_enabled)
+                    higher_ema_fallback_enabled = st.checkbox("Bật Đầu nguồn khung lớn", value=bool(params.get("higher_ema_fallback_enabled", True)), key="backtest_higher_fallback_enabled_multi", disabled=not higher_timeframe_filter_enabled)
+                    cols = st.columns(3)
+                    higher_ema_fallback_short = cols[0].number_input("Ngắn hạn", min_value=2, max_value=500, value=int(higher_fallback["short"]), key="backtest_higher_fallback_short_multi", disabled=not higher_timeframe_filter_enabled)
+                    higher_ema_fallback_medium = cols[1].number_input("Trung hạn", min_value=3, max_value=500, value=int(higher_fallback["medium"]), key="backtest_higher_fallback_medium_multi", disabled=not higher_timeframe_filter_enabled)
+                    higher_ema_fallback_long = cols[2].number_input("Dài hạn", min_value=4, max_value=500, value=int(higher_fallback["long"]), key="backtest_higher_fallback_long_multi", disabled=not higher_timeframe_filter_enabled)
+                flappy_entry_body_percent = st.number_input("Entry offset (% thân Cha)", value=float(params.get("entry_body_percent", 5.0)), min_value=0.0, max_value=100.0, step=0.5, format="%.1f", key="backtest_entry_body_percent_multi")
+                ema_period = 21
+            elif is_flappy_bird:
                 st.empty()
                 max_candles = 0
             else:
@@ -274,12 +358,110 @@ def main():
             if not _use_mc:
                 max_candles = 0
 
+        if not is_pattern:
+            entry_time_str = params.get("entry_time", "21:05")
+            use_custom_time = st.checkbox("Custom entry time", value=False, key="backtest_custom_entry_time")
+            if use_custom_time:
+                raw = st.text_input("Entry Time (HH:MM)", value=entry_time_str, max_chars=5, key="backtest_custom_entry_time_value")
+                try:
+                    entry_time = datetime.strptime(raw, "%H:%M").time()
+                except ValueError:
+                    st.error("Use HH:MM format")
+                    entry_time = datetime.strptime(entry_time_str, "%H:%M").time()
+            else:
+                entry_time = st.time_input(
+                    "Entry Time",
+                    value=datetime.strptime(entry_time_str, "%H:%M").time(),
+                    step=300,
+                    disabled=True,
+                    key="backtest_entry_time",
+                )
+                st.caption(f"Strategy default: {entry_time_str}")
+
+        if is_multi_flappy:
+            _use_mc = True
+            _section_header("📈", "EMA", "#10b981")
+            current_ema_col, higher_ema_col = st.columns(2)
+            consensus = params.get("ema_consensus", {"short": 13, "medium": 21, "long": 55})
+            fallback = params.get("ema_fallback", consensus)
+            with current_ema_col:
+                st.markdown("**Hiện hành**")
+                top_cols = st.columns(2)
+                with top_cols[0]:
+                    current_timeframe_filter_enabled = st.checkbox("Bật EMA", value=bool(params.get("current_timeframe_filter_enabled", True)), key="backtest_current_filter_enabled")
+                with top_cols[1]:
+                    timeframe = st.selectbox(
+                        "Khung",
+                        options=timeframe_options,
+                        index=timeframe_options.index(timeframe) if timeframe in timeframe_options else 0,
+                        key="backtest_timeframe_multi",
+                    )
+                st.caption("Chim bay")
+                flappy_consensus_enabled = st.checkbox("Bật Chim bay", value=bool(params.get("ema_consensus_enabled", True)), key="backtest_consensus_enabled_multi", disabled=not current_timeframe_filter_enabled)
+                cols = st.columns(3)
+                flappy_consensus_short = cols[0].number_input("Ngắn", min_value=2, max_value=500, value=int(consensus["short"]), key="backtest_consensus_short_multi", disabled=not current_timeframe_filter_enabled)
+                flappy_consensus_medium = cols[1].number_input("TB", min_value=3, max_value=500, value=int(consensus["medium"]), key="backtest_consensus_medium_multi", disabled=not current_timeframe_filter_enabled)
+                flappy_consensus_long = cols[2].number_input("Dài", min_value=4, max_value=500, value=int(consensus["long"]), key="backtest_consensus_long_multi", disabled=not current_timeframe_filter_enabled)
+                st.caption("Đầu nguồn")
+                flappy_fallback_enabled = st.checkbox("Bật Đầu nguồn", value=bool(params.get("ema_fallback_enabled", True)), key="backtest_fallback_enabled_multi", disabled=not current_timeframe_filter_enabled)
+                cols = st.columns(3)
+                flappy_fallback_short = cols[0].number_input("Ngắn", min_value=2, max_value=500, value=int(fallback["short"]), key="backtest_fallback_short_multi", disabled=not current_timeframe_filter_enabled)
+                flappy_fallback_medium = cols[1].number_input("TB", min_value=3, max_value=500, value=int(fallback["medium"]), key="backtest_fallback_medium_multi", disabled=not current_timeframe_filter_enabled)
+                flappy_fallback_long = cols[2].number_input("Dài", min_value=4, max_value=500, value=int(fallback["long"]), key="backtest_fallback_long_multi", disabled=not current_timeframe_filter_enabled)
+            with higher_ema_col:
+                st.markdown("**Khung lớn**")
+                top_cols = st.columns(2)
+                with top_cols[0]:
+                    higher_timeframe_filter_enabled = st.checkbox("Bật EMA khung lớn", value=bool(params.get("higher_timeframe_filter_enabled", True)), key="backtest_higher_filter_enabled_multi")
+                with top_cols[1]:
+                    higher_options = [option for option in timeframe_options if timeframe_options.index(option) > timeframe_options.index(timeframe)]
+                    configured_higher = params.get("higher_timeframe", "M5")
+                    if higher_options:
+                        higher_timeframe = st.selectbox(
+                            "Khung",
+                            higher_options,
+                            index=higher_options.index(configured_higher) if configured_higher in higher_options else 0,
+                            key="backtest_higher_timeframe_multi",
+                        )
+                    else:
+                        higher_timeframe = timeframe
+                        timeframe_relation_valid = False
+                        st.error("Khung hiện hành đã là khung cao nhất, không có khung lớn hợp lệ.")
+                if timeframe_options.index(higher_timeframe) <= timeframe_options.index(timeframe):
+                    timeframe_relation_valid = False
+                    st.error("Khung lớn phải lớn hơn khung hiện hành.")
+                higher_consensus = params.get("higher_ema_consensus", {"short": 13, "medium": 21, "long": 55})
+                higher_fallback = params.get("higher_ema_fallback", {"short": 13, "medium": 21, "long": 55})
+                st.caption("Chim bay")
+                higher_ema_consensus_enabled = st.checkbox("Bật Chim bay", value=bool(params.get("higher_ema_consensus_enabled", True)), key="backtest_higher_consensus_enabled_multi", disabled=not higher_timeframe_filter_enabled)
+                cols = st.columns(3)
+                higher_ema_consensus_short = cols[0].number_input("Ngắn", min_value=2, max_value=500, value=int(higher_consensus["short"]), key="backtest_higher_consensus_short_multi", disabled=not higher_timeframe_filter_enabled)
+                higher_ema_consensus_medium = cols[1].number_input("TB", min_value=3, max_value=500, value=int(higher_consensus["medium"]), key="backtest_higher_consensus_medium_multi", disabled=not higher_timeframe_filter_enabled)
+                higher_ema_consensus_long = cols[2].number_input("Dài", min_value=4, max_value=500, value=int(higher_consensus["long"]), key="backtest_higher_consensus_long_multi", disabled=not higher_timeframe_filter_enabled)
+                st.caption("Đầu nguồn")
+                higher_ema_fallback_enabled = st.checkbox("Bật Đầu nguồn", value=bool(params.get("higher_ema_fallback_enabled", True)), key="backtest_higher_fallback_enabled_multi", disabled=not higher_timeframe_filter_enabled)
+                cols = st.columns(3)
+                higher_ema_fallback_short = cols[0].number_input("Ngắn", min_value=2, max_value=500, value=int(higher_fallback["short"]), key="backtest_higher_fallback_short_multi", disabled=not higher_timeframe_filter_enabled)
+                higher_ema_fallback_medium = cols[1].number_input("TB", min_value=3, max_value=500, value=int(higher_fallback["medium"]), key="backtest_higher_fallback_medium_multi", disabled=not higher_timeframe_filter_enabled)
+                higher_ema_fallback_long = cols[2].number_input("Dài", min_value=4, max_value=500, value=int(higher_fallback["long"]), key="backtest_higher_fallback_long_multi", disabled=not higher_timeframe_filter_enabled)
+            flappy_entry_body_percent = st.number_input("Entry offset (% thân Cha)", value=float(params.get("entry_body_percent", 5.0)), min_value=0.0, max_value=100.0, step=0.5, format="%.1f", key="backtest_entry_body_percent_multi")
+            ema_period = 21
+            h2_exceed_pips = c2_gap_pips = ema_margin_pips = 0.0
+            ema_filter_enabled = True
+            buy_ema_side = sell_ema_side = "above_ema"
+
         # ── ZONE 2: ENTRY ─────────────────────────────────────────────────
-        flappy_consensus_short = flappy_consensus_medium = flappy_consensus_long = None
-        flappy_fallback_short = flappy_fallback_medium = flappy_fallback_long = None
-        flappy_entry_body_percent = None
-        flappy_consensus_enabled = flappy_fallback_enabled = None
-        if is_pattern:
+        if not is_multi_flappy:
+            flappy_consensus_short = flappy_consensus_medium = flappy_consensus_long = None
+            flappy_fallback_short = flappy_fallback_medium = flappy_fallback_long = None
+            flappy_entry_body_percent = None
+            flappy_consensus_enabled = flappy_fallback_enabled = None
+            current_timeframe_filter_enabled = True
+            higher_timeframe_filter_enabled = False
+            higher_ema_consensus_short = higher_ema_consensus_medium = higher_ema_consensus_long = 13
+            higher_ema_fallback_short = higher_ema_fallback_medium = higher_ema_fallback_long = 13
+            higher_ema_consensus_enabled = higher_ema_fallback_enabled = True
+        if is_pattern and not is_multi_flappy:
             _section_header("📈", "ENTRY", "#10b981")
             if is_flappy_bird:
                 # Flappy uses EMA13/21/55 and its own pattern checks; these
@@ -292,37 +474,117 @@ def main():
                 flappy_consensus_short = ema_cols[0].number_input(
                     "Ngắn hạn", min_value=2, max_value=500,
                     value=int(consensus["short"]), key=f"backtest_consensus_short",
+                    disabled=not current_timeframe_filter_enabled,
                 )
                 flappy_consensus_medium = ema_cols[1].number_input(
                     "Trung hạn", min_value=3, max_value=500,
                     value=int(consensus["medium"]), key=f"backtest_consensus_medium",
+                    disabled=not current_timeframe_filter_enabled,
                 )
                 flappy_consensus_long = ema_cols[2].number_input(
                     "Dài hạn", min_value=4, max_value=500,
                     value=int(consensus["long"]), key=f"backtest_consensus_long",
+                    disabled=not current_timeframe_filter_enabled,
                 )
                 st.markdown("**EMA fallback**")
                 ema_cols = st.columns(3)
                 flappy_fallback_short = ema_cols[0].number_input(
                     "Ngắn hạn ", min_value=2, max_value=500,
                     value=int(fallback["short"]), key=f"backtest_fallback_short",
+                    disabled=not current_timeframe_filter_enabled,
                 )
                 flappy_fallback_medium = ema_cols[1].number_input(
                     "Trung hạn ", min_value=3, max_value=500,
                     value=int(fallback["medium"]), key=f"backtest_fallback_medium",
+                    disabled=not current_timeframe_filter_enabled,
                 )
                 flappy_fallback_long = ema_cols[2].number_input(
                     "Dài hạn ", min_value=4, max_value=500,
                     value=int(fallback["long"]), key=f"backtest_fallback_long",
+                    disabled=not current_timeframe_filter_enabled,
                 )
                 flappy_consensus_enabled = st.checkbox(
                     "Bật EMA đồng thuận", value=bool(params.get("ema_consensus_enabled", True)),
                     key="backtest_consensus_enabled",
+                    disabled=not current_timeframe_filter_enabled,
+                )
+                current_timeframe_filter_enabled = st.checkbox(
+                    "Bật bộ lọc khung hiện hành",
+                    value=bool(params.get("current_timeframe_filter_enabled", True)),
+                    key="backtest_current_filter_enabled",
                 )
                 flappy_fallback_enabled = st.checkbox(
                     "Bật EMA fallback", value=bool(params.get("ema_fallback_enabled", True)),
                     key="backtest_fallback_enabled",
+                    disabled=not current_timeframe_filter_enabled,
                 )
+                if False and is_multi_flappy:
+                    st.markdown("**Bộ lọc khung lớn**")
+                    higher_timeframe_filter_enabled = st.checkbox(
+                        "Bật bộ lọc khung lớn",
+                        value=bool(params.get("higher_timeframe_filter_enabled", True)),
+                        key="backtest_higher_filter_enabled",
+                    )
+                    higher_timeframe = st.selectbox(
+                        "Khung lớn",
+                        options=["M5", "M15", "M30", "H1", "H4"],
+                        index=(
+                            ["M5", "M15", "M30", "H1", "H4"].index(params.get("higher_timeframe", "M5"))
+                            if params.get("higher_timeframe", "M5") in ["M5", "M15", "M30", "H1", "H4"]
+                            else 0
+                        ),
+                        key="backtest_higher_timeframe",
+                    )
+                    higher_ema_consensus_enabled = st.checkbox(
+                        "Bật Chim bay khung lớn",
+                        value=bool(params.get("higher_ema_consensus_enabled", True)),
+                        key="backtest_higher_consensus_enabled",
+                        disabled=not higher_timeframe_filter_enabled,
+                    )
+                    hcols = st.columns(3)
+                    higher_consensus = params.get(
+                        "higher_ema_consensus", {"short": 13, "medium": 21, "long": 55}
+                    )
+                    higher_ema_consensus_short = hcols[0].number_input(
+                        "Ngắn hạn HTF", min_value=2, max_value=500,
+                        value=int(higher_consensus["short"]), key="backtest_higher_consensus_short",
+                        disabled=not higher_timeframe_filter_enabled,
+                    )
+                    higher_ema_consensus_medium = hcols[1].number_input(
+                        "Trung hạn HTF", min_value=3, max_value=500,
+                        value=int(higher_consensus["medium"]), key="backtest_higher_consensus_medium",
+                        disabled=not higher_timeframe_filter_enabled,
+                    )
+                    higher_ema_consensus_long = hcols[2].number_input(
+                        "Dài hạn HTF", min_value=4, max_value=500,
+                        value=int(higher_consensus["long"]), key="backtest_higher_consensus_long",
+                        disabled=not higher_timeframe_filter_enabled,
+                    )
+                    higher_ema_fallback_enabled = st.checkbox(
+                        "Bật Đầu nguồn khung lớn",
+                        value=bool(params.get("higher_ema_fallback_enabled", True)),
+                        key="backtest_higher_fallback_enabled",
+                        disabled=not higher_timeframe_filter_enabled,
+                    )
+                    hcols = st.columns(3)
+                    higher_fallback = params.get(
+                        "higher_ema_fallback", {"short": 13, "medium": 21, "long": 55}
+                    )
+                    higher_ema_fallback_short = hcols[0].number_input(
+                        "Ngắn hạn HTF fallback", min_value=2, max_value=500,
+                        value=int(higher_fallback["short"]), key="backtest_higher_fallback_short",
+                        disabled=not higher_timeframe_filter_enabled,
+                    )
+                    higher_ema_fallback_medium = hcols[1].number_input(
+                        "Trung hạn HTF fallback", min_value=3, max_value=500,
+                        value=int(higher_fallback["medium"]), key="backtest_higher_fallback_medium",
+                        disabled=not higher_timeframe_filter_enabled,
+                    )
+                    higher_ema_fallback_long = hcols[2].number_input(
+                        "Dài hạn HTF fallback", min_value=4, max_value=500,
+                        value=int(higher_fallback["long"]), key="backtest_higher_fallback_long",
+                        disabled=not higher_timeframe_filter_enabled,
+                    )
                 flappy_entry_body_percent = st.number_input(
                     "Entry offset (% thân Cha)",
                     value=float(params.get("entry_body_percent", 5.0)),
@@ -539,20 +801,9 @@ def main():
             entry_mode = "close"
             entry_percent = 0.0
             limit_order_candles = 1
-            # time-based entry time picker (Master Candle)
             entry_time_str = params.get('entry_time', '21:05')
-            use_custom_time = st.checkbox("Custom entry time", value=False)
-            if use_custom_time:
-                raw = st.text_input("Entry Time (HH:MM)", value="21:05", max_chars=5)
-                try:
-                    entry_time = datetime.strptime(raw, "%H:%M").time()
-                except ValueError:
-                    st.error("Use HH:MM format")
-                    entry_time = datetime.strptime("21:05", "%H:%M").time()
-            else:
-                entry_time = st.time_input("Entry Time", value=datetime.strptime(entry_time_str, "%H:%M").time(),
-                                           step=300, disabled=True)
-                st.caption(f"Strategy default: {entry_time_str}")
+            if "entry_time" not in locals():
+                entry_time = datetime.strptime(entry_time_str, "%H:%M").time()
 
     with right:
         # ── ZONE 3: ORDER SETTINGS & RISK ────────────────────────────────
@@ -560,6 +811,8 @@ def main():
         os1, os2, os3, os4 = st.columns(4)
         min_child_candles = 2
         max_child_candles = 5
+        max_child_body_points = 2.0
+        cross_window_candles = 12
         mother_coverage_enabled = True
         if is_flappy_bird:
             buffer_k = 0.0
@@ -572,6 +825,23 @@ def main():
                 step=0.1,
                 format="%.1f",
                 help="Signal chỉ hợp lệ khi Body Cha lớn hơn giá trị này.",
+            )
+            max_child_body_points = st.number_input(
+                "Thân Con tối đa (price points)",
+                value=float(params.get("max_child_body_points", 2.0)),
+                min_value=0.0,
+                max_value=100000.0,
+                step=0.1,
+                format="%.1f",
+                help="Mỗi một trong 2 Nến Con cuối phải có Body không vượt quá giá trị này.",
+            )
+            cross_window_candles = st.number_input(
+                "Vòng đời sau điểm chạm cắt EMA 8/13 (nến)",
+                value=int(params.get("cross_window_candles", 12)),
+                min_value=0,
+                max_value=500,
+                step=1,
+                help="Sau cross EMA 8/13, tín hiệu phải xuất hiện trong số nến này. Đặt 0 để tắt giới hạn lifecycle.",
             )
             min_child_candles = st.number_input(
                 "Nến Con tối thiểu", value=int(params.get("min_child_candles", 2)),
@@ -689,7 +959,7 @@ def main():
     sl_pips = 0  # always calculated from candle + buffer_k
 
     # Run backtest button
-    if st.button("▶ Run Backtest", type="primary", width='stretch', key="run_backtest"):
+    if st.button("▶ Run Backtest", type="primary", width='stretch', key="run_backtest", disabled=not timeframe_relation_valid):
         try:
             with st.spinner("Fetching historical data..."):
                 # Convert dates to datetime
@@ -697,17 +967,34 @@ def main():
                 end_dt = datetime.combine(end_date, datetime.max.time()).replace(tzinfo=TIMEZONE)
 
                 # Fetch data
-                df, error = fetch_historical_data(symbol, start_dt, end_dt, user_creds, timeframe)
+                df, error, data_source = ensure_range(
+                    symbol, timeframe, start_dt, end_dt, user_creds
+                )
 
                 if error:
-                    st.error(f"Failed to fetch data: {error}")
+                    st.error(f"Không thể tải dữ liệu thị trường: {error}")
                     st.stop()
 
                 if df is None or df.empty:
                     st.warning("No data found for the selected period")
                     st.stop()
 
-                st.success(f"Fetched {len(df)} candles")
+                higher_df = None
+                if is_multi_flappy and higher_timeframe_filter_enabled:
+                    higher_df, higher_error, higher_source = ensure_range(
+                        symbol, higher_timeframe, start_dt, end_dt, user_creds
+                    )
+                    if higher_error:
+                        st.error(f"Không thể tải dữ liệu khung lớn: {higher_error}")
+                        st.stop()
+                    if higher_df is None or higher_df.empty:
+                        st.error("Không có dữ liệu cho khung lớn đã chọn.")
+                        st.stop()
+                st.success(
+                    f"Fetched {len(df)} candles"
+                    + (f" + {len(higher_df)} HTF candles" if higher_df is not None else "")
+                    + f" · Nguồn: {'cache' if data_source == 'cache' else 'MT5 + cache'}"
+                )
 
             progress_bar = st.progress(0, text="Đang chuẩn bị backtest...")
             progress_status = st.empty()
@@ -796,11 +1083,26 @@ def main():
                     c2_sell_upper_wick_cmp=c2_sell_upper_wick_cmp,
                     c2_sell_lower_wick_cmp=c2_sell_lower_wick_cmp,
                     flappy_min_father_body_points=float(min_father_body_points),
+                    flappy_max_child_body_points=float(max_child_body_points),
                     flappy_min_child_candles=int(min_child_candles),
                     flappy_max_child_candles=int(max_child_candles),
                     flappy_mother_coverage_enabled=bool(mother_coverage_enabled),
                     flappy_sl_buffer_pips=float(params.get('sl_buffer_pips', 5.0)),
                     flappy_entry_body_percent=float(flappy_entry_body_percent),
+                    flappy_cross_window_candles=int(cross_window_candles),
+                    higher_timeframe_df=higher_df,
+                    higher_timeframe_filter_enabled=bool(
+                        is_multi_flappy and higher_timeframe_filter_enabled
+                    ),
+                    higher_ema_consensus_short=int(higher_ema_consensus_short),
+                    higher_ema_consensus_medium=int(higher_ema_consensus_medium),
+                    higher_ema_consensus_long=int(higher_ema_consensus_long),
+                    higher_ema_fallback_short=int(higher_ema_fallback_short),
+                    higher_ema_fallback_medium=int(higher_ema_fallback_medium),
+                    higher_ema_fallback_long=int(higher_ema_fallback_long),
+                    higher_ema_consensus_enabled=bool(higher_ema_consensus_enabled),
+                    higher_ema_fallback_enabled=bool(higher_ema_fallback_enabled),
+                    current_timeframe_filter_enabled=bool(current_timeframe_filter_enabled),
                     progress_callback=update_backtest_progress,
                 )
             progress_bar.progress(1.0, text="Backtest hoàn tất")
@@ -836,12 +1138,25 @@ def main():
                 'flappy_fallback_long': flappy_fallback_long,
                 'flappy_consensus_enabled': flappy_consensus_enabled,
                 'flappy_fallback_enabled': flappy_fallback_enabled,
+                'current_timeframe_filter_enabled': current_timeframe_filter_enabled,
+                'higher_timeframe': higher_timeframe,
+                'higher_timeframe_filter_enabled': higher_timeframe_filter_enabled,
+                'higher_ema_consensus_short': higher_ema_consensus_short,
+                'higher_ema_consensus_medium': higher_ema_consensus_medium,
+                'higher_ema_consensus_long': higher_ema_consensus_long,
+                'higher_ema_fallback_short': higher_ema_fallback_short,
+                'higher_ema_fallback_medium': higher_ema_fallback_medium,
+                'higher_ema_fallback_long': higher_ema_fallback_long,
+                'higher_ema_consensus_enabled': higher_ema_consensus_enabled,
+                'higher_ema_fallback_enabled': higher_ema_fallback_enabled,
                 'h2_exceed_pips': h2_exceed_pips,
                 'c2_gap_pips': c2_gap_pips,
                 'ema_margin_pips': ema_margin_pips,
                 'limit_order_candles': int(limit_order_candles),
                 'min_child_candles': int(min_child_candles),
                 'max_child_candles': int(max_child_candles),
+                'max_child_body_points': float(max_child_body_points),
+                'cross_window_candles': int(cross_window_candles),
                 'mother_coverage_enabled': bool(mother_coverage_enabled),
                 'be_enabled': be_enabled,
                 'be_r': be_r,
@@ -1046,6 +1361,10 @@ def display_results(results: dict, symbol: str, strategy_name: str = "", lot_mod
                 symbol,
                 consensus_enabled=config.get("flappy_consensus_enabled"),
                 fallback_enabled=config.get("flappy_fallback_enabled"),
+                higher_timeframe_data=results.get("higher_timeframe_data"),
+                higher_timeframe_filter_enabled=config.get("higher_timeframe_filter_enabled"),
+                higher_consensus_enabled=config.get("higher_ema_consensus_enabled"),
+                higher_fallback_enabled=config.get("higher_ema_fallback_enabled"),
             )
 
 
@@ -1139,6 +1458,10 @@ def show_interactive_chart(
     symbol: str,
     consensus_enabled: bool | None = None,
     fallback_enabled: bool | None = None,
+    higher_timeframe_data: pd.DataFrame | None = None,
+    higher_timeframe_filter_enabled: bool | None = None,
+    higher_consensus_enabled: bool | None = None,
+    higher_fallback_enabled: bool | None = None,
 ):
     """Show interactive candlestick chart with trade markers"""
 
@@ -1146,7 +1469,41 @@ def show_interactive_chart(
         st.warning("No OHLC data available for chart")
         return
 
-    # Indicator toggles
+    # Select the trade before indicators so the chart follows its actual EMA mode.
+    trade_options = [f"Trade {i+1}: {t['date']} {t['time']} - {t['direction']} ({t['exit_type']})" for i, t in enumerate(trades)]
+    selected_idx = st.selectbox(
+        "Select Trade to View",
+        options=range(len(trades)),
+        index=min(
+            max(int(st.session_state.get("specific_trade_index", 0)), 0),
+            len(trades) - 1,
+        ),
+        format_func=lambda x: trade_options[x],
+    )
+    trade = trades[selected_idx]
+    selected_mode = trade.get("_ema_mode")
+    if selected_mode not in {"consensus", "fallback"}:
+        selected_mode = "consensus" if consensus_enabled is not False else "fallback"
+    mode_label = {"consensus": "Chim bay", "fallback": "Đầu nguồn"}[selected_mode]
+
+    has_higher_timeframe_chart = (
+        higher_timeframe_data is not None
+        and not higher_timeframe_data.empty
+        and {"time", "open", "high", "low", "close"}.issubset(higher_timeframe_data.columns)
+    )
+    timeframe_options = ["Khung hiện hành"]
+    if has_higher_timeframe_chart:
+        timeframe_options.append("Khung lớn")
+    selected_timeframe = st.radio(
+        "Khung hiển thị",
+        options=timeframe_options,
+        horizontal=True,
+        key="specific_trade_timeframe",
+    )
+    use_higher_timeframe_chart = selected_timeframe == "Khung lớn"
+    chart_source = higher_timeframe_data if use_higher_timeframe_chart else ohlc_data
+
+    # Show only the EMA group matching the selected trade and chart timeframe.
     canonical_flappy_ema_cols = [
         "ema_consensus_short",
         "ema_consensus_medium",
@@ -1155,61 +1512,47 @@ def show_interactive_chart(
         "ema_fallback_medium",
         "ema_fallback_long",
     ]
-    if any(col in ohlc_data.columns for col in canonical_flappy_ema_cols):
-        configured_groups = {
-            "consensus": consensus_enabled,
-            "fallback": fallback_enabled,
-        }
-        inferred_groups = {
-            "consensus": any(
-                trade.get("_ema_mode") == "consensus" for trade in trades
-            ),
-            "fallback": any(
-                trade.get("_ema_mode") == "fallback" for trade in trades
-            ),
-        }
-        enabled_groups = {
-            group: (
-                bool(configured_groups[group])
-                if configured_groups[group] is not None
-                else inferred_groups[group]
-            )
-            for group in ("consensus", "fallback")
-        }
-        if not any(enabled_groups.values()):
-            enabled_groups = {"consensus": True, "fallback": True}
+    if use_higher_timeframe_chart:
+        higher_prefix = f"ema_higher_{selected_mode}_"
         ema_cols = [
-            col for col in canonical_flappy_ema_cols
-            if col in ohlc_data.columns
-            and enabled_groups["consensus" if col.startswith("ema_consensus_") else "fallback"]
+            f"{higher_prefix}{slot}"
+            for slot in ("short", "medium", "long")
+            if f"{higher_prefix}{slot}" in higher_timeframe_data.columns
         ]
     else:
-        ema_cols = [c for c in ohlc_data.columns if c.startswith("ema")]
+        if any(col in ohlc_data.columns for col in canonical_flappy_ema_cols):
+            ema_cols = [
+                col for col in canonical_flappy_ema_cols
+                if col in ohlc_data.columns
+                and col.startswith(f"ema_{selected_mode}_")
+            ]
+        else:
+            ema_cols = [c for c in ohlc_data.columns if c.startswith("ema")]
+
+    if use_higher_timeframe_chart:
+        ema_cols = [
+            col for col in ema_cols
+            if (
+                higher_consensus_enabled if selected_mode == "consensus"
+                else higher_fallback_enabled
+            ) is not False
+        ]
     show_ema = {}
     if ema_cols:
         with st.expander("Indicators", expanded=False):
-            cols = st.columns(min(len(ema_cols), 4))
-            ema_labels = {
-                "ema_consensus_short": "Consensus EMA ngắn",
-                "ema_consensus_medium": "Consensus EMA trung",
-                "ema_consensus_long": "Consensus EMA dài",
-                "ema_fallback_short": "Fallback EMA ngắn",
-                "ema_fallback_medium": "Fallback EMA trung",
-                "ema_fallback_long": "Fallback EMA dài",
-            }
-            for i, col_name in enumerate(ema_cols):
-                label = ema_labels.get(col_name, f"EMA{col_name.replace('ema', '')}")
-                show_ema[col_name] = cols[i % 4].checkbox(
-                    label, value=True, key=f"ind_{col_name}"
+            st.caption(
+                f"Đang hiển thị: {mode_label} · "
+                f"{selected_timeframe.lower()}"
+            )
+            ema_labels = {"short": "EMA ngắn", "medium": "EMA trung", "long": "EMA dài"}
+            for col_name in ema_cols:
+                slot = col_name.rsplit("_", 1)[-1]
+                show_ema[col_name] = st.checkbox(
+                    ema_labels.get(slot, slot.title()),
+                    value=True,
+                    key=f"ind_{'higher' if use_higher_timeframe_chart else 'current'}_{col_name}",
                 )
 
-    # Trade selector
-    trade_options = [f"Trade {i+1}: {t['date']} {t['time']} - {t['direction']} ({t['exit_type']})" for i, t in enumerate(trades)]
-    selected_idx = st.selectbox(
-        "Select Trade to View",
-        options=range(len(trades)),
-        format_func=lambda x: trade_options[x]
-    )
     chart_candle_cols = st.columns(2)
     with chart_candle_cols[0]:
         chart_lookback_candles = st.number_input(
@@ -1230,7 +1573,6 @@ def show_interactive_chart(
             help="Số nến hiển thị sau Entry; chart vẫn giữ đủ nến để hiển thị điểm Exit.",
         )
 
-    trade = trades[selected_idx]
     if trade.get("_debug") and trade.get("_father"):
         show_flappy_debug(trade, symbol)
 
@@ -1238,23 +1580,28 @@ def show_interactive_chart(
     trade_datetime_str = f"{trade['date']} {trade['time']}"
     trade_dt = datetime.strptime(trade_datetime_str, "%Y-%m-%d %H:%M")
 
-    # Filter OHLC data around the trade (30 candles before and after)
-    ohlc_data['time_naive'] = ohlc_data['time'].dt.tz_localize(None) if ohlc_data['time'].dt.tz is not None else ohlc_data['time']
+    # Filter the selected timeframe around the trade.
+    chart_source = chart_source.copy()
+    chart_source["time_naive"] = (
+        chart_source["time"].dt.tz_localize(None)
+        if chart_source["time"].dt.tz is not None
+        else chart_source["time"]
+    )
 
-    # Find the entry candle index
-    entry_mask = ohlc_data['time_naive'] == trade_dt
-    if not entry_mask.any():
-        # Try to find closest candle
-        time_diffs = abs(ohlc_data['time_naive'] - trade_dt)
-        entry_idx = time_diffs.idxmin()
+    # HTF candles do not usually have the exact trade minute; use the candle
+    # containing the trade timestamp, while current-TF keeps exact matching.
+    entry_mask = chart_source["time_naive"] == trade_dt
+    if entry_mask.any():
+        entry_idx = chart_source.index.get_loc(chart_source[entry_mask].index[0])
     else:
-        entry_idx = ohlc_data[entry_mask].index[0]
+        entry_positions = chart_source["time_naive"].searchsorted(trade_dt, side="right") - 1
+        entry_idx = min(max(int(entry_positions), 0), len(chart_source) - 1)
 
     # Get data range around Entry while preserving the full trade and forward context.
     start_idx = max(0, entry_idx - int(chart_lookback_candles))
     candles_after_entry = max(int(chart_forward_candles), int(trade["candles"]))
-    end_idx = min(len(ohlc_data), entry_idx + candles_after_entry + 1)
-    chart_data = ohlc_data.iloc[start_idx:end_idx].copy()
+    end_idx = min(len(chart_source), entry_idx + candles_after_entry + 1)
+    chart_data = chart_source.iloc[start_idx:end_idx].copy()
 
     # Create candlestick chart
     fig = make_subplots(rows=1, cols=1)
@@ -1281,6 +1628,12 @@ def show_interactive_chart(
         "ema_fallback_short": "#0D9488",
         "ema_fallback_medium": "#DB2777",
         "ema_fallback_long": "#92400E",
+        "ema_higher_consensus_short": "#1D4ED8",
+        "ema_higher_consensus_medium": "#EA580C",
+        "ema_higher_consensus_long": "#6D28D9",
+        "ema_higher_fallback_short": "#0F766E",
+        "ema_higher_fallback_medium": "#BE185D",
+        "ema_higher_fallback_long": "#78350F",
         "ema21": "#FF6B00",
         "ema9": "#9B59B6",
         "ema50": "#3498DB",
@@ -1288,23 +1641,26 @@ def show_interactive_chart(
     }
     for col_name, enabled in show_ema.items():
         if enabled and col_name in chart_data.columns:
-            period = col_name.replace("ema", "")
             color = ema_colors.get(col_name, "#888888")
+            slot = col_name.rsplit("_", 1)[-1]
             fig.add_trace(go.Scatter(
                 x=chart_data['time'],
                 y=chart_data[col_name],
                 mode='lines',
-                line=dict(color=color, width=1.5),
-                name=f"EMA{period}",
+                line=dict(
+                    color=color,
+                    width=2.0 if use_higher_timeframe_chart else 1.5,
+                ),
+                name=f"{mode_label} EMA {slot}",
                 legendgroup=col_name
             ))
 
-    # Get time range for horizontal lines
+    # Get time range for horizontal lines.
     x_min = chart_data['time'].iloc[0]
     x_max = chart_data['time'].iloc[-1]
 
     # Entry marker
-    entry_time = ohlc_data.iloc[entry_idx]['time']
+    entry_time = chart_data.iloc[min(entry_idx - start_idx, len(chart_data) - 1)]["time"]
     entry_price = trade['entry']
 
     fig.add_trace(
@@ -1363,8 +1719,8 @@ def show_interactive_chart(
 
     # Exit marker
     exit_candle_idx = entry_idx + trade['candles']
-    if exit_candle_idx < len(ohlc_data):
-        exit_time = ohlc_data.iloc[exit_candle_idx]['time']
+    if exit_candle_idx < len(chart_source):
+        exit_time = chart_source.iloc[exit_candle_idx]['time']
     else:
         exit_time = chart_data['time'].iloc[-1]
 
@@ -1403,7 +1759,271 @@ def show_interactive_chart(
         )
     )
 
-    st.plotly_chart(fig, width='stretch')
+    st.plotly_chart(fig, width='stretch', key="specific_trade_chart")
+
+    # Temporarily disabled because rendering this chart adds significant
+    # latency to large backtests. Re-enable after chart rendering is optimized.
+    if False:
+        """
+    # Overview chart for every trade in the selected backtest period.
+    st.subheader("All Trades")
+    all_timeframe = st.radio(
+        "Khung hiển thị All Trades",
+        options=timeframe_options,
+        index=timeframe_options.index(selected_timeframe),
+        horizontal=True,
+        key="all_trades_timeframe",
+    )
+    use_higher_all_timeframe = all_timeframe == "Khung lớn"
+    all_chart_source = (
+        higher_timeframe_data if use_higher_all_timeframe else ohlc_data
+    )
+    all_chart_source = all_chart_source.copy()
+    all_chart_source["time_naive"] = (
+        all_chart_source["time"].dt.tz_localize(None)
+        if all_chart_source["time"].dt.tz is not None
+        else all_chart_source["time"]
+    )
+    all_ema_prefix = (
+        f"ema_higher_" if use_higher_all_timeframe else "ema_"
+    )
+    all_ema_cols = [
+        col for col in all_chart_source.columns
+        if col.startswith(all_ema_prefix)
+        and (
+            col.endswith("_short")
+            or col.endswith("_medium")
+            or col.endswith("_long")
+        )
+    ]
+    st.caption(
+        "Hover để xem thông tin trade. Click Entry hoặc Exit của trade để "
+        "chuyển chart specific phía trên."
+    )
+    all_fig = go.Figure()
+    all_fig.add_trace(
+        go.Candlestick(
+            x=all_chart_source["time"],
+            open=all_chart_source["open"],
+            high=all_chart_source["high"],
+            low=all_chart_source["low"],
+            close=all_chart_source["close"],
+            name="Price",
+            increasing_line_color="green",
+            decreasing_line_color="red",
+        )
+    )
+    for ema_col in all_ema_cols:
+        slot = ema_col.rsplit("_", 1)[-1]
+        mode = "Chim bay" if "consensus" in ema_col else "Đầu nguồn"
+        color = ema_colors.get(ema_col, "#64748B")
+        all_fig.add_trace(
+            go.Scattergl(
+                x=all_chart_source["time"],
+                y=all_chart_source[ema_col],
+                mode="lines",
+                line=dict(color=color, width=1.5),
+                name=f"{mode} EMA {slot}",
+                hoverinfo="skip",
+            )
+        )
+
+    entry_times = []
+    entry_prices = []
+    entry_customdata = []
+    entry_hover = []
+    exit_times = []
+    exit_prices = []
+    exit_customdata = []
+    exit_hover = []
+
+    # Keep the same price-level references as the specific chart, but draw
+    # each trade's levels only during that trade's lifetime.
+    period_start = all_chart_source["time"].iloc[0]
+    period_end = all_chart_source["time"].iloc[-1]
+
+    def event_time_on_chart(timestamp):
+        event_dt = pd.Timestamp(timestamp)
+        if event_dt.tzinfo is not None:
+            event_dt = event_dt.tz_localize(None)
+        positions = all_chart_source["time_naive"].searchsorted(
+            event_dt, side="right"
+        ) - 1
+        position = min(max(int(positions), 0), len(all_chart_source) - 1)
+        return all_chart_source.iloc[position]["time"]
+
+    for index, item in enumerate(trades):
+        trade_number = index + 1
+        entry_times.append(
+            event_time_on_chart(f"{item['date']} {item['time']}")
+        )
+        entry_prices.append(item["entry"])
+        entry_customdata.append([index])
+        entry_hover.append(
+            f"Trade #{trade_number}<br>"
+            f"{item['direction']} · Entry<br>"
+            f"Price: {item['entry']:.5f}<br>"
+            f"P&L: {item['pnl_pips']:+.1f} pips"
+        )
+        exit_position = item.get("_exit_pos")
+        if isinstance(exit_position, int) and 0 <= exit_position < len(ohlc_data):
+            exit_timestamp = ohlc_data.iloc[int(exit_position)]["time"]
+        else:
+            exit_timestamp = (
+                f"{item['date']} {item.get('exit_time', item['time'])}"
+            )
+        exit_times.append(event_time_on_chart(exit_timestamp))
+        exit_prices.append(item["exit_price"])
+        exit_customdata.append([index])
+        exit_hover.append(
+            f"Trade #{trade_number}<br>"
+            f"{item['direction']} · {item['exit_type']}<br>"
+            f"Price: {item['exit_price']:.5f}<br>"
+            f"P&L: {item['pnl_pips']:+.1f} pips"
+        )
+
+        all_fig.add_trace(
+            go.Scattergl(
+                x=[entry_times[-1], exit_times[-1]],
+                y=[item["entry"], item["entry"]],
+                mode="lines",
+                line=dict(color="#2563EB", width=1, dash="dot"),
+                name=f"Trade {trade_number} Entry",
+                legendgroup=f"trade_{index}",
+                showlegend=False,
+                hoverinfo="skip",
+            )
+        )
+        all_fig.add_trace(
+            go.Scattergl(
+                x=[entry_times[-1], exit_times[-1]],
+                y=[item["sl"], item["sl"]],
+                mode="lines",
+                line=dict(color="#DC2626", width=1, dash="dash"),
+                name=f"Trade {trade_number} SL",
+                legendgroup=f"trade_{index}",
+                showlegend=False,
+                hoverinfo="skip",
+            )
+        )
+        all_fig.add_trace(
+            go.Scattergl(
+                x=[entry_times[-1], exit_times[-1]],
+                y=[item["tp"], item["tp"]],
+                mode="lines",
+                line=dict(color="#16A34A", width=1, dash="dash"),
+                name=f"Trade {trade_number} TP",
+                legendgroup=f"trade_{index}",
+                showlegend=False,
+                hoverinfo="skip",
+            )
+        )
+
+    all_fig.add_trace(
+        go.Scatter(
+            x=entry_times,
+            y=entry_prices,
+            mode="markers",
+            name="Entry",
+            customdata=entry_customdata,
+            text=entry_hover,
+            hovertemplate="%{text}<extra></extra>",
+            marker=dict(
+                symbol="triangle-up",
+                size=10,
+                color=[
+                    "#16A34A" if item["direction"] == "BUY" else "#DC2626"
+                    for item in trades
+                ],
+                line=dict(color="#0F172A", width=0.5),
+            ),
+        )
+    )
+    all_fig.add_trace(
+        go.Scatter(
+            x=exit_times,
+            y=exit_prices,
+            mode="markers",
+            name="Exit",
+            customdata=exit_customdata,
+            text=exit_hover,
+            hovertemplate="%{text}<extra></extra>",
+            marker=dict(
+                symbol="x",
+                size=9,
+                color=[
+                    "#16A34A" if item["pnl_pips"] >= 0 else "#DC2626"
+                    for item in trades
+                ],
+                line=dict(width=1.5),
+            ),
+        )
+    )
+    visible_values = []
+    visible_source = all_chart_source[
+        (all_chart_source["time"] >= x_min)
+        & (all_chart_source["time"] <= x_max)
+    ]
+    for price_column in ("high", "low"):
+        visible_values.extend(
+            visible_source[price_column].dropna().astype(float).tolist()
+        )
+    for ema_col in all_ema_cols:
+        visible_values.extend(
+            visible_source[ema_col].dropna().astype(float).tolist()
+        )
+    for index, item in enumerate(trades):
+        entry_time = pd.Timestamp(entry_times[index])
+        exit_time = pd.Timestamp(exit_times[index])
+        if exit_time >= x_min and entry_time <= x_max:
+            visible_values.extend(
+                [float(item["entry"]), float(item["sl"]), float(item["tp"])]
+            )
+    if visible_values:
+        visible_min = min(visible_values)
+        visible_max = max(visible_values)
+        visible_padding = max((visible_max - visible_min) * 0.08, 0.01)
+        all_y_range = [
+            visible_min - visible_padding,
+            visible_max + visible_padding,
+        ]
+    else:
+        all_y_range = None
+    all_fig.update_layout(
+        title=f"All Trades ({len(trades)} trades)",
+        xaxis_title="Time",
+        yaxis_title="Price",
+        xaxis_rangeslider_visible=False,
+        xaxis=dict(
+            range=[x_min, x_max],
+            minallowed=period_start,
+            maxallowed=period_end,
+        ),
+        yaxis=dict(range=all_y_range) if all_y_range else {},
+        uirevision=(
+            f"all:{selected_idx}:{selected_timeframe}:{all_timeframe}:"
+            f"{chart_lookback_candles}:{chart_forward_candles}"
+        ),
+        height=600,
+        showlegend=True,
+    )
+    all_selection = st.plotly_chart(
+        all_fig,
+        width="stretch",
+        key="all_trades_chart",
+        on_select="rerun",
+        selection_mode=("points",),
+    )
+    if all_selection and all_selection.selection.points:
+        selected_point = all_selection.selection.points[0]
+        selected_customdata = selected_point.get("customdata")
+        if selected_customdata:
+            clicked_idx = int(selected_customdata[0])
+            if clicked_idx != st.session_state.get("specific_trade_index", selected_idx):
+                st.session_state["specific_trade_index"] = clicked_idx
+                st.rerun()
+
+        """
 
     # Trade details
     col1, col2, col3, col4 = st.columns(4)
@@ -1437,6 +2057,7 @@ def show_flappy_debug(trade: dict, symbol: str):
         min_father_body_points=trade.get("_min_father_body_points", 2.0),
         min_child_candles=trade.get("_min_child_candles", 2),
         max_child_candles=trade.get("_max_child_candles", 5),
+        max_child_body_points=trade.get("_max_child_body_points", 2.0),
         mother_coverage_enabled=trade.get("_mother_coverage_enabled", True),
         include_checks=True,
         direction=trade.get("direction", "BUY"),

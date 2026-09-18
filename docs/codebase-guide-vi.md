@@ -276,11 +276,11 @@ Các trường phổ biến: `rr_ratio`, `buffer_k`, `lot_size`, `entry_mode`, `
 
 Strategy BUY/SELL LIMIT trên M5, được triển khai riêng trong `src/flappy_bird_strategy.py` và được định tuyến riêng trong backtest/live runner:
 
-- Flappy có hai bộ EMA cấu hình riêng: `ema_consensus` cho thứ tự đồng thuận
+- Flappy có hai bộ EMA cấu hình riêng: `ema_consensus` cho mode Chim bay
   và `ema_fallback` cho nhánh fallback. Mỗi bộ gồm `short`, `medium`, `long`;
   mặc định cả hai là `13/21/55`.
 - BUY dùng bộ đồng thuận theo thứ tự `short > medium > long`; SELL dùng thứ tự
-  ngược lại. Fallback dùng bộ EMA fallback khi short/medium nằm đúng phía của
+  ngược lại. Đầu nguồn dùng bộ EMA fallback khi short/medium nằm đúng phía của
   long và Nến Cha cắt EMA fallback long theo đúng hướng.
 - Có số nến Con trong khoảng `min_child_candles`–`max_child_candles`, mặc định
   là 2–5; các giá trị này được truyền đồng nhất qua Backtest và Live Bot.
@@ -335,6 +335,60 @@ Khi chạy trực tiếp, dùng `--strategy flappy_bird`. Strategy hỗ trợ c�
 SELL; symbol được phép theo YAML hiện tại là `XAUUSD` và `XAUUSDm`.
 `2.0 price points` là chênh lệch tuyệt đối giữa OPEN và CLOSE của nến Cha,
 không phải 2 lần giá thị trường.
+
+### Shared OHLC cache
+
+Backtest dùng cache SQLite dùng chung trên máy tại `data/ohlc_cache.sqlite3`.
+Trang `Data Setup` (`pages/0_Data_Setup.py`) mặc định preload 90 ngày gần nhất
+cho `XAUUSDm` ở các timeframe được chọn, thường là M1 và M5 cho Multi Flappy
+Bird. Cache được khóa theo `symbol`, `timeframe` và thời điểm mở nến; append
+được deduplicate bằng khóa chính.
+
+Backtest kiểm tra cache trước khi đọc dữ liệu. Nếu khoảng thời gian yêu cầu
+thiếu phần đầu hoặc phần cuối, hệ thống chỉ fetch phần thiếu từ MT5 rồi append
+vào database trước khi chạy. Vì cache dùng chung cho toàn bộ user trên máy,
+credentials chỉ được dùng để cập nhật dữ liệu, không tạo namespace riêng.
+
+### Multi Flappy Bird (`multi_flappy_bird`)
+
+Multi Flappy Bird hiện là bản clone độc lập của Flappy Bird: dùng cùng engine
+signal, các tham số EMA, UI Backtest/Create Bot và luồng Live Bot. Strategy có
+YAML riêng tại `strategies/multi_flappy_bird.yaml` và magic mặc định riêng
+`212401`, để các thay đổi nghiệp vụ tiếp theo không ảnh hưởng Flappy Bird gốc.
+Timeframe hiện hành mặc định là M1, khung lớn mặc định là M5.
+
+Multi có hai bộ lọc EMA độc lập:
+
+- **Bộ lọc khung hiện hành**: có master toggle, Chim bay và Đầu nguồn; mỗi
+  mode có bộ EMA ngắn/trung/dài riêng.
+- **Bộ lọc khung lớn**: có master toggle, Đồng thuận khung lớn và Fallback
+  khung lớn; cũng có sáu EMA riêng, mặc định `13/21/55`.
+
+Mode hiện hành chỉ được xác nhận bởi mode cùng tên ở khung lớn. Chim bay khung
+lớn yêu cầu đủ thứ tự EMA ngắn > trung > dài (đảo chiều cho SELL) và cả OPEN,
+CLOSE nằm đúng phía EMA dài. Đầu nguồn khung lớn chỉ yêu cầu EMA ngắn/trung đúng
+thứ tự (đảo chiều cho SELL) và CLOSE nằm đúng phía EMA dài. Khi bật bộ lọc khung lớn, hệ thống chỉ dùng nến khung lớn đã đóng
+gần nhất không vượt quá thời điểm nến Cha, tránh look-ahead trong Backtest.
+Tắt master khung lớn sẽ bỏ toàn bộ điều kiện khung lớn; tắt master hiện hành sẽ
+bỏ điều kiện thứ tự EMA hiện hành nhưng vẫn giữ pattern Mẹ/Con/Cha.
+
+Khi chạy trực tiếp, dùng `--strategy multi_flappy_bird`. Các flag HTF được
+truyền qua `bot_manager` để restart/recovery giữ nguyên cấu hình.
+
+Trong `Trade Analysis` của Backtest, chart specific trade có switch `Khung hiện
+hành`/`Khung lớn`. Khung hiện hành dùng nến current timeframe và chỉ vẽ EMA
+current của mode trade; Khung lớn dùng nến HTF thật và chỉ vẽ EMA HTF cùng mode.
+Hai bộ dữ liệu đã có sẵn trong kết quả backtest nên switch không fetch MT5 hoặc
+chạy lại strategy. Entry/Exit và các đường Entry/SL/TP vẫn được giữ trên cả hai
+view. Switch chỉ xuất hiện khi kết quả có OHLC HTF hợp lệ.
+
+Chart `All Trades` cũng có switch cùng hai lựa chọn timeframe. Chart này vẽ
+đầy đủ candlestick, EMA, các đường Entry/SL/TP và marker Entry/Exit của mọi
+trade trong toàn bộ period `Ngày bắt đầu` đến `Ngày kết thúc`; marker được quy
+đổi về candle tương ứng của timeframe đó. Viewport ban đầu được đặt đúng theo
+cửa sổ chart specific đang chọn; user có thể kéo sang quá khứ/tương lai trong
+giới hạn period. Các đường Entry/SL/TP của từng trade chỉ kéo từ Entry đến
+Exit để giữ chart dễ đọc.
 
 ### Pip, risk và exit
 

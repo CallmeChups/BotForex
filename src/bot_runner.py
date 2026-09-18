@@ -25,9 +25,11 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(_REPO_ROOT, ".env"), override=True)
 
 from src.utils import _in_time_window
+from src.strategy_manager import is_flappy_strategy
 from src.flappy_bird_strategy import (
     EMA_WARMUP_WINDOW,
     calculate_flappy_ema_series,
+    calculate_flappy_ema_cross_lifecycle,
 )
 
 TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
@@ -74,6 +76,10 @@ def get_args():
                         help="Minimum child candles (Flappy Bird)")
     parser.add_argument("--max_child_candles", type=int, default=None,
                         help="Maximum child candles (Flappy Bird)")
+    parser.add_argument("--max_child_body_points", type=float, default=None,
+                        help="Maximum body size for each of the final two child candles")
+    parser.add_argument("--cross_window_candles", type=int, default=None,
+                        help="Maximum candles after EMA 8/13 cross for a Flappy signal")
     parser.add_argument("--mother_coverage_enabled", type=int, default=None,
                         help="Require Mother wick/body coverage of children (Flappy Bird)")
     parser.add_argument("--flappy_consensus_enabled", type=int, default=None)
@@ -93,6 +99,23 @@ def get_args():
                         help="Entry percent for range_percent mode (default: from strategy)")
     parser.add_argument("--entry_body_percent", type=float, default=None,
                         help="Flappy Entry offset as percentage of Father body (default: from strategy)")
+    parser.add_argument("--higher_timeframe", type=str, default=None,
+                        help="Multi Flappy higher timeframe, e.g. M5")
+    parser.add_argument("--higher_timeframe_filter_enabled", type=int, default=None,
+                        help="Multi Flappy HTF filter: 1=enabled, 0=disabled")
+    parser.add_argument("--current_timeframe_filter_enabled", type=int, default=None,
+                        help="Multi Flappy current-TF filter: 1=enabled, 0=disabled")
+    for group, label in (
+        ("higher_ema_consensus", "higher timeframe consensus"),
+        ("higher_ema_fallback", "higher timeframe fallback"),
+    ):
+        for slot in ("short", "medium", "long"):
+            parser.add_argument(
+                f"--{group}_{slot}", type=int, default=None,
+                help=f"Multi Flappy {label} {slot} EMA period",
+            )
+    parser.add_argument("--higher_ema_consensus_enabled", type=int, default=None)
+    parser.add_argument("--higher_ema_fallback_enabled", type=int, default=None)
     parser.add_argument("--tp_type", type=str, default=None,
                         help="TP exit type: 'price_based' or 'close_based' (default: from strategy)")
     parser.add_argument("--sl_type", type=str, default=None,
@@ -361,7 +384,7 @@ def run_bot(args):
         elif args.strategy == 'feg_reverse':
             run_feg_reverse_bot(args, strategy, params, credentials,
                                 entry_start_time=entry_start, entry_end_time=entry_end)
-        elif args.strategy == 'flappy_bird':
+        elif is_flappy_strategy(args.strategy):
             run_feg_bot(args, strategy, params, credentials,
                         entry_start_time=entry_start, entry_end_time=entry_end)
         else:
@@ -1003,6 +1026,9 @@ def run_feg_bot(args, strategy, params, credentials,
     from src.orders import place_order, close_position, place_limit_order, cancel_pending_order
 
     strategy_label = "Flappy Bird" if args.strategy == "flappy_bird" else "FEG"
+    is_flappy = is_flappy_strategy(args.strategy)
+    if is_flappy:
+        strategy_label = "Multi Flappy Bird" if args.strategy == "multi_flappy_bird" else "Flappy Bird"
     timeframe = args.timeframe or params.get('timeframe', 'M5')
     ema_period = args.ema_period or params.get('ema_period', 21)
     rr_ratio = args.rr_ratio or params.get('rr_ratio', 2.0)
@@ -1023,12 +1049,12 @@ def run_feg_bot(args, strategy, params, credentials,
     limit_order_candles = (
         args.limit_order_candles
         if args.limit_order_candles is not None
-        else params.get('limit_order_candles', 7 if args.strategy == 'flappy_bird' else 1)
+        else params.get('limit_order_candles', 7 if is_flappy else 1)
     )
     if limit_order_candles <= 0:
         raise ValueError("limit_order_candles must be positive")
     max_candles = (
-        0 if args.strategy == "flappy_bird"
+        0 if is_flappy
         else args.max_candles if args.max_candles is not None
         else params.get('max_candles', 7)
     )
@@ -1044,6 +1070,15 @@ def run_feg_bot(args, strategy, params, credentials,
     max_child_candles = (
         args.max_child_candles if args.max_child_candles is not None
         else params.get("max_child_candles", 5)
+    )
+    max_child_body_points = (
+        args.max_child_body_points if args.max_child_body_points is not None
+        else params.get("max_child_body_points", 2.0)
+    )
+    cross_window_candles = (
+        args.cross_window_candles
+        if args.cross_window_candles is not None
+        else params.get("cross_window_candles", 12)
     )
     ema_groups = {}
     for group in ("consensus", "fallback"):
@@ -1064,6 +1099,44 @@ def run_feg_bot(args, strategy, params, credentials,
     fallback_short, fallback_medium, fallback_long = (
         ema_groups["fallback"][slot] for slot in ("short", "medium", "long")
     )
+    higher_ema_consensus_enabled = (
+        bool(args.higher_ema_consensus_enabled)
+        if args.higher_ema_consensus_enabled is not None
+        else bool(params.get("higher_ema_consensus_enabled", True))
+    )
+    higher_ema_fallback_enabled = (
+        bool(args.higher_ema_fallback_enabled)
+        if args.higher_ema_fallback_enabled is not None
+        else bool(params.get("higher_ema_fallback_enabled", True))
+    )
+    higher_timeframe = (
+        args.higher_timeframe or params.get("higher_timeframe", "M5")
+    )
+    higher_timeframe_filter_enabled = (
+        bool(args.higher_timeframe_filter_enabled)
+        if args.higher_timeframe_filter_enabled is not None
+        else bool(params.get("higher_timeframe_filter_enabled", False))
+    )
+    current_timeframe_filter_enabled = (
+        bool(args.current_timeframe_filter_enabled)
+        if args.current_timeframe_filter_enabled is not None
+        else bool(params.get("current_timeframe_filter_enabled", True))
+    )
+    higher_ema_groups = {}
+    for group in ("higher_ema_consensus", "higher_ema_fallback"):
+        config = params.get(group, {})
+        higher_ema_groups[group] = {}
+        for slot, default in (("short", 13), ("medium", 21), ("long", 55)):
+            arg_value = getattr(args, f"{group}_{slot}")
+            higher_ema_groups[group][slot] = (
+                arg_value if arg_value is not None else int(config.get(slot, default))
+            )
+        values = [higher_ema_groups[group][slot] for slot in ("short", "medium", "long")]
+        if not values[0] < values[1] < values[2]:
+            raise ValueError(f"Multi Flappy {group} EMA periods must be strictly increasing")
+    if is_flappy and args.strategy == "multi_flappy_bird" and higher_timeframe_filter_enabled:
+        if not higher_ema_consensus_enabled and not higher_ema_fallback_enabled:
+            raise ValueError("At least one Multi Flappy higher timeframe mode must be enabled")
     consensus_enabled = (
         bool(args.flappy_consensus_enabled)
         if args.flappy_consensus_enabled is not None
@@ -1122,7 +1195,7 @@ def run_feg_bot(args, strategy, params, credentials,
     if c2_sell_upper_wick_max_pct is not None: _ws.append(f"upper{c2_sell_upper_wick_cmp}{c2_sell_upper_wick_max_pct}%")
     if c2_sell_lower_wick_max_pct is not None: _ws.append(f"lower{c2_sell_lower_wick_cmp}{c2_sell_lower_wick_max_pct}%")
     wick_log = f"WickFilter=BUY({','.join(_wb) or 'OFF'}) SELL({','.join(_ws) or 'OFF'})"
-    if args.strategy == "flappy_bird":
+    if is_flappy:
         log(
             f"Flappy Bird params: consensus EMA{consensus_short}/{consensus_medium}/{consensus_long}, "
             f"fallback EMA{fallback_short}/{fallback_medium}/{fallback_long}, RR={rr_ratio}, "
@@ -1176,7 +1249,7 @@ def run_feg_bot(args, strategy, params, credentials,
                 time.sleep(args.interval)
                 continue
 
-            if args.strategy == "flappy_bird" and not args.test and not state_recovered:
+            if is_flappy and not args.test and not state_recovered:
                 pending_orders, active_trades = _recover_flappy_state(
                     mt5, args.symbol, flappy_magic, limit_order_candles,
                     timeframe, lot_size,
@@ -1192,13 +1265,40 @@ def run_feg_bot(args, strategy, params, credentials,
                     EMA_WARMUP_WINDOW,
                     consensus_long * 4,
                     fallback_long * 4,
-                ) if args.strategy == "flappy_bird" else max(EMA_WARMUP_WINDOW, ema_period * 4),
+                ) if is_flappy else max(EMA_WARMUP_WINDOW, ema_period * 4),
             )
             if df is None or len(df) < ema_period + 2:
                 log(f"Insufficient candle data for {args.symbol} (got {len(df) if df is not None else 0})", "ERROR")
                 send_telegram(f"❌ Insufficient candle data\nSymbol: {args.symbol}", is_error=True)
                 time.sleep(args.interval)
                 continue
+
+            higher_df = None
+            higher_ema_series = {}
+            if is_flappy and args.strategy == "multi_flappy_bird" and higher_timeframe_filter_enabled:
+                higher_longest = max(
+                    higher_ema_groups["higher_ema_consensus"]["long"],
+                    higher_ema_groups["higher_ema_fallback"]["long"],
+                )
+                higher_df = get_recent_candles(
+                    mt5, args.symbol, higher_timeframe,
+                    count=max(EMA_WARMUP_WINDOW, higher_longest * 4),
+                )
+                if higher_df is None or len(higher_df) < higher_longest + 2:
+                    log(
+                        f"Insufficient higher timeframe data for {args.symbol} "
+                        f"({higher_timeframe}, got {len(higher_df) if higher_df is not None else 0})",
+                        "ERROR",
+                    )
+                    time.sleep(args.interval)
+                    continue
+                for group_name, group_periods in higher_ema_groups.items():
+                    higher_ema_series[group_name] = {
+                        slot: calculate_flappy_ema_series(
+                            higher_df["close"], period, EMA_WARMUP_WINDOW
+                        )
+                        for slot, period in group_periods.items()
+                    }
 
             ema = df["close"].ewm(span=ema_period, adjust=False).mean().tolist()
             ema13_series = calculate_flappy_ema_series(
@@ -1218,6 +1318,9 @@ def run_feg_bot(args, strategy, params, credentials,
             )
             fallback_ema55_series = calculate_flappy_ema_series(
                 df["close"], fallback_long, EMA_WARMUP_WINDOW
+            )
+            cross_directions, cross_ages = calculate_flappy_ema_cross_lifecycle(
+                df["close"], 8, 13, EMA_WARMUP_WINDOW
             )
             last = df.iloc[-1]
             prev = df.iloc[-2]
@@ -1304,7 +1407,7 @@ def run_feg_bot(args, strategy, params, credentials,
                                 )
                     else:
                         # Order gone from MT5 pending list — check if it became a position (filled)
-                        if args.strategy == "flappy_bird":
+                        if is_flappy:
                             pending_ref = type(
                                 "PendingOrderRef", (), {
                                     "ticket": mt5_ticket,
@@ -1362,7 +1465,7 @@ def run_feg_bot(args, strategy, params, credentials,
                             trade["sl"] = entry_p
                             trade["be_triggered"] = True
                             log(f"[{trade.get('order_id','')}] BE triggered — SL → {entry_p:.2f}")
-                    if args.strategy == "flappy_bird":
+                    if is_flappy:
                         if trade["direction"] == "BUY" and candle["low"] <= trade["sl"]:
                             exit_type, exit_price = "SL", trade["sl"]
                         elif trade["direction"] == "BUY" and candle["high"] >= trade["tp"]:
@@ -1467,7 +1570,7 @@ def run_feg_bot(args, strategy, params, credentials,
                     )
                     if enabled and (re_entry_after_sl or mode not in occupied_modes)
                 ]
-                can_scan = bool(enabled_modes) or args.strategy != "flappy_bird"
+                can_scan = bool(enabled_modes) or not is_flappy
                 log(f"New candle {candle_time.strftime('%H:%M')} | "
                     f"C1: O={prev['open']:.2f} H={prev['high']:.2f} L={prev['low']:.2f} C={prev['close']:.2f} | "
                     f"C2: O={last['open']:.2f} H={last['high']:.2f} L={last['low']:.2f} C={last['close']:.2f} | "
@@ -1475,7 +1578,7 @@ def run_feg_bot(args, strategy, params, credentials,
                 if in_window and can_scan:
                     scan_mode = None
                     signal = None
-                    if args.strategy == 'flappy_bird':
+                    if is_flappy:
                         from src.flappy_bird_strategy import analyze_flappy_bird
                         c2 = {"open": last["open"], "high": last["high"], "low": last["low"], "close": last["close"]}
                         for candidate_mode in enabled_modes:
@@ -1489,6 +1592,50 @@ def run_feg_bot(args, strategy, params, credentials,
                                     for idx in range(mother_idx + 1, len(df) - 1)
                                 ]
                                 for direction in ("BUY", "SELL"):
+                                    if (
+                                        cross_window_candles > 0
+                                        and (
+                                            cross_directions[-1] != direction
+                                            or cross_ages[-1] is None
+                                            or cross_ages[-1] > cross_window_candles
+                                        )
+                                    ):
+                                        continue
+                                    higher_filter = None
+                                    if (
+                                        args.strategy == "multi_flappy_bird"
+                                        and higher_timeframe_filter_enabled
+                                    ):
+                                        eligible = higher_df[
+                                            higher_df["time"] <= int(last["time"])
+                                        ]
+                                        if len(eligible) == 0:
+                                            continue
+                                        htf_idx = eligible.index[-1]
+                                        htf_candle = higher_df.loc[
+                                            htf_idx, ["open", "high", "low", "close"]
+                                        ].to_dict()
+                                        htf_group = (
+                                            "higher_ema_consensus"
+                                            if candidate_mode == "consensus"
+                                            else "higher_ema_fallback"
+                                        )
+                                        higher_filter = {
+                                            "enabled": (
+                                                True
+                                            ),
+                                            "mode_enabled": (
+                                                higher_ema_consensus_enabled
+                                                if candidate_mode == "consensus"
+                                                else higher_ema_fallback_enabled
+                                            ),
+                                            "candle": htf_candle,
+                                            "ema_values": {
+                                                slot: values[htf_idx]
+                                                for slot, values in higher_ema_series[htf_group].items()
+                                            },
+                                            "mode": candidate_mode,
+                                        }
                                     signal = analyze_flappy_bird(
                                         args.symbol, mother, children, c2,
                                         ema13_series[-1], ema21_series[-1], ema55_series[-1],
@@ -1500,6 +1647,7 @@ def run_feg_bot(args, strategy, params, credentials,
                                         direction,
                                         min_child_candles=min_child_candles,
                                         max_child_candles=max_child_candles,
+                                        max_child_body_points=max_child_body_points,
                                         mother_coverage_enabled=mother_coverage_enabled,
                                         fallback_ema13=fallback_ema13_series[-1],
                                         fallback_ema21=fallback_ema21_series[-1],
@@ -1507,6 +1655,8 @@ def run_feg_bot(args, strategy, params, credentials,
                                         consensus_enabled=consensus_enabled,
                                         fallback_enabled=fallback_enabled,
                                         requested_ema_mode=candidate_mode,
+                                        higher_timeframe_filter=higher_filter,
+                                        current_timeframe_filter_enabled=current_timeframe_filter_enabled,
                                     )
                                     if signal:
                                         scan_mode = candidate_mode
@@ -1531,7 +1681,7 @@ def run_feg_bot(args, strategy, params, credentials,
                     log(f"Signal scan ({scan_mode or 'generic'}): {signal['direction'] if signal else 'NO SIGNAL'}"
                         + (f" entry={signal['entry_price']:.2f} sl={signal['stop_loss']:.2f} tp={signal['take_profit']:.2f}" if signal else ""))
                     if signal:
-                        if args.strategy == "flappy_bird" and _has_duplicate_pending(
+                        if is_flappy and _has_duplicate_pending(
                             mt5, pending_orders, signal, args.symbol,
                             params.get("magic", 212400),
                         ):
@@ -1555,8 +1705,8 @@ def run_feg_bot(args, strategy, params, credentials,
                             args.symbol, signal["direction"], trade_lot, signal["entry_price"],
                             sl=signal["stop_loss"], tp=signal["take_profit"],
                             credentials=credentials, test=bool(args.test),
-                            magic=flappy_magic if args.strategy == 'flappy_bird' else 212100,
-                            comment=f"FLAPPY-{order_id[-4:]}" if args.strategy == 'flappy_bird' else f"FEG-{order_id[-4:]}",
+                            magic=flappy_magic if is_flappy else 212100,
+                            comment=f"FLAPPY-{order_id[-4:]}" if is_flappy else f"FEG-{order_id[-4:]}",
                         )
                         if not ok_limit:
                             log(f"[{order_id}] Failed to place limit order: {msg_limit}", "ERROR")

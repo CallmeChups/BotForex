@@ -38,10 +38,10 @@ parameters:
   re_entry_after_sl: false
 
 symbols:
+  - XAUUSDm
   - XAUUSD
   - BTCUSD
   - ETHUSD
-  - XAUUSDm
   - BTCUSDm
   - ETHUSDm
   - EURUSDm
