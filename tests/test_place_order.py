@@ -71,6 +71,14 @@ def test_place_order_live_sends_and_returns_ticket(monkeypatch):
 def test_place_limit_order_accepts_placed_retcode(monkeypatch):
     class FakeSymbolInfo:
         visible = True
+        trade_tick_size = 0.01
+        point = 0.01
+        digits = 2
+        trade_stops_level = 0
+
+    class FakeTick:
+        bid = 101.0
+        ask = 101.1
 
     class FakeResult:
         retcode = 10008
@@ -92,6 +100,9 @@ def test_place_limit_order_accepts_placed_retcode(monkeypatch):
         def symbol_select(self, symbol, enabled):
             return True
 
+        def symbol_info_tick(self, symbol):
+            return FakeTick()
+
         def order_send(self, request):
             return FakeResult()
 
@@ -104,7 +115,7 @@ def test_place_limit_order_accepts_placed_retcode(monkeypatch):
     monkeypatch.setitem(sys.modules, "MetaTrader5", fake)
 
     success, message, ticket = orders.place_limit_order(
-        "XAUUSD", "SELL", 0.01, price=100.0, sl=102.0, tp=96.0,
+        "XAUUSD", "SELL", 0.01, price=102.0, sl=104.0, tp=98.0,
         test=False, magic=212400, comment="FLAPPY-TEST",
     )
     assert success is True

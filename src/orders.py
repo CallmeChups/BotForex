@@ -9,6 +9,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 import os
+import math
 import pandas as pd
 
 from src.utils import is_mt5_available, get_pip_value
@@ -431,10 +432,63 @@ def place_limit_order(
                 mt5.shutdown()
                 return False, f"Failed to select {symbol}", None
 
+        tick = mt5.symbol_info_tick(symbol)
+        if tick is None or not tick.ask or not tick.bid:
+            mt5.shutdown()
+            return False, f"Failed to get current price for {symbol}", None
+
+        tick_size = float(
+            getattr(symbol_info, "trade_tick_size", 0.0)
+            or getattr(symbol_info, "point", 0.0)
+            or 0.00001
+        )
+        digits = int(getattr(symbol_info, "digits", 5))
+
+        def _round_to_tick(value: float, rounding: str) -> float:
+            units = value / tick_size
+            if rounding == "down":
+                units = math.floor(units + 1e-9)
+            elif rounding == "up":
+                units = math.ceil(units - 1e-9)
+            else:
+                units = round(units)
+            return round(units * tick_size, digits)
+
         if direction.upper() == "BUY":
             order_type = mt5_module.ORDER_TYPE_BUY_LIMIT
+            price = _round_to_tick(float(price), "down")
+            sl = _round_to_tick(float(sl), "down") if sl is not None else None
+            tp = _round_to_tick(float(tp), "up") if tp is not None else None
         else:
             order_type = mt5_module.ORDER_TYPE_SELL_LIMIT
+            price = _round_to_tick(float(price), "up")
+            sl = _round_to_tick(float(sl), "up") if sl is not None else None
+            tp = _round_to_tick(float(tp), "down") if tp is not None else None
+
+        stops_level = float(getattr(symbol_info, "trade_stops_level", 0) or 0)
+        min_distance = stops_level * float(getattr(symbol_info, "point", tick_size) or tick_size)
+        if direction.upper() == "BUY":
+            distance = float(tick.ask) - price
+            if distance <= 0:
+                mt5.shutdown()
+                return False, (
+                    f"Limit order skipped: BUY_LIMIT price {price:.{digits}f} "
+                    f"is not below current ask {float(tick.ask):.{digits}f}"
+                ), None
+        else:
+            distance = price - float(tick.bid)
+            if distance <= 0:
+                mt5.shutdown()
+                return False, (
+                    f"Limit order skipped: SELL_LIMIT price {price:.{digits}f} "
+                    f"is not above current bid {float(tick.bid):.{digits}f}"
+                ), None
+        if min_distance > 0 and distance < min_distance:
+            mt5.shutdown()
+            return False, (
+                f"Limit order skipped: price is only {distance:.{digits}f} "
+                f"from market; broker requires at least {min_distance:.{digits}f}"
+            ), None
 
         request = {
             "action": mt5_module.TRADE_ACTION_PENDING,
