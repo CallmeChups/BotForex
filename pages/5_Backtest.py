@@ -847,6 +847,12 @@ def main():
         no_mother_father_wick_max_pct = 40.0
         no_mother_cross_window_candles = 15
         no_mother_sl_buffer_pips = 5.0
+        if is_multi_flappy:
+            use_mother_candle = st.checkbox(
+                "Sử dụng Nến Mẹ",
+                value=bool(params.get("use_mother_candle", True)),
+                key="backtest_use_mother_candle_multi",
+            )
         if is_flappy_bird:
             buffer_k = 0.0
             re_entry_after_sl = False
@@ -859,45 +865,38 @@ def main():
                 format="%.1f",
                 help="Signal chỉ hợp lệ khi Body Cha lớn hơn giá trị này.",
             )
-            max_child_body_points = st.number_input(
-                "Thân Con tối đa (price points)",
-                value=float(params.get("max_child_body_points", 2.0)),
-                min_value=0.0,
-                max_value=100000.0,
-                step=0.1,
-                format="%.1f",
-                help="Mỗi một trong 2 Nến Con cuối phải có Body không vượt quá giá trị này.",
-            )
-            cross_window_candles = st.number_input(
-                "Vòng đời sau điểm chạm cắt EMA 8/13 (nến)",
-                value=int(params.get("cross_window_candles", 12)),
-                min_value=0,
-                max_value=500,
-                step=1,
-                help="Sau cross EMA 8/13, tín hiệu phải xuất hiện trong số nến này. Đặt 0 để tắt giới hạn lifecycle.",
-            )
-            min_child_candles = st.number_input(
-                "Nến Con tối thiểu", value=int(params.get("min_child_candles", 2)),
-                min_value=2, max_value=20, step=1,
-            )
-            max_child_candles = st.number_input(
-                "Nến Con tối đa", value=int(params.get("max_child_candles", 5)),
-                min_value=2, max_value=20, step=1,
-            )
-            if max_child_candles < min_child_candles:
-                st.error("Nến Con tối đa phải >= tối thiểu.")
-                max_child_candles = min_child_candles
-            mother_coverage_enabled = st.checkbox(
-                "Kiểm tra Mẹ bao thân Nến Con",
-                value=bool(params.get("mother_coverage_enabled", True)),
-                help="Bật: yêu cầu biên Mẹ bao trùm thân các Nến Con.",
-            )
-            if is_multi_flappy:
-                use_mother_candle = st.checkbox(
-                    "Sử dụng Nến Mẹ",
-                    value=bool(params.get("use_mother_candle", True)),
-                    key="backtest_use_mother_candle_multi",
+            if not is_multi_flappy or use_mother_candle:
+                max_child_body_points = st.number_input(
+                    "Thân Con tối đa (price points)",
+                    value=float(params.get("max_child_body_points", 2.0)),
+                    min_value=0.0, max_value=100000.0, step=0.1,
+                    format="%.1f",
+                    help="Body của các Nến Con cuối trong pattern có Mẹ.",
                 )
+                cross_window_candles = st.number_input(
+                    "Vòng đời sau điểm chạm cắt EMA 8/13 (nến)",
+                    value=int(params.get("cross_window_candles", 12)),
+                    min_value=0, max_value=500, step=1,
+                )
+                min_child_candles = st.number_input(
+                    "Nến Con tối thiểu",
+                    value=int(params.get("min_child_candles", 2)),
+                    min_value=2, max_value=20, step=1,
+                )
+                max_child_candles = st.number_input(
+                    "Nến Con tối đa",
+                    value=int(params.get("max_child_candles", 5)),
+                    min_value=2, max_value=20, step=1,
+                )
+                if max_child_candles < min_child_candles:
+                    st.error("Nến Con tối đa phải >= tối thiểu.")
+                    max_child_candles = min_child_candles
+                mother_coverage_enabled = st.checkbox(
+                    "Kiểm tra Mẹ bao thân Nến Con",
+                    value=bool(params.get("mother_coverage_enabled", True)),
+                    help="Bật: yêu cầu biên Mẹ bao trùm thân các Nến Con.",
+                )
+            if is_multi_flappy:
                 if not use_mother_candle:
                     no_mother_child_candles = st.number_input(
                         "Số Nến Con",
