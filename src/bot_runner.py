@@ -82,6 +82,14 @@ def get_args():
                         help="Maximum candles after EMA 8/13 cross for a Flappy signal")
     parser.add_argument("--mother_coverage_enabled", type=int, default=None,
                         help="Require Mother wick/body coverage of children (Flappy Bird)")
+    parser.add_argument("--use_mother_candle", type=int, default=None,
+                        help="Multi Flappy: require Mother candle (1/0)")
+    parser.add_argument("--no_mother_child_candles", type=int, default=None)
+    parser.add_argument("--no_mother_child_body_ratio", type=float, default=None)
+    parser.add_argument("--no_mother_child_body_max_points", type=float, default=None)
+    parser.add_argument("--no_mother_father_wick_max_pct", type=float, default=None)
+    parser.add_argument("--no_mother_cross_window_candles", type=int, default=None)
+    parser.add_argument("--no_mother_sl_buffer_pips", type=float, default=None)
     parser.add_argument("--flappy_consensus_enabled", type=int, default=None)
     parser.add_argument("--flappy_fallback_enabled", type=int, default=None)
     for group, label in (
@@ -1080,6 +1088,41 @@ def run_feg_bot(args, strategy, params, credentials,
         if args.cross_window_candles is not None
         else params.get("cross_window_candles", 12)
     )
+    use_mother_candle = (
+        bool(args.use_mother_candle)
+        if args.use_mother_candle is not None
+        else bool(params.get("use_mother_candle", True))
+    )
+    no_mother_child_candles = (
+        args.no_mother_child_candles
+        if args.no_mother_child_candles is not None
+        else int(params.get("no_mother_child_candles", 2))
+    )
+    no_mother_child_body_ratio = (
+        args.no_mother_child_body_ratio
+        if args.no_mother_child_body_ratio is not None
+        else float(params.get("no_mother_child_body_ratio", 1.5))
+    )
+    no_mother_child_body_max_points = (
+        args.no_mother_child_body_max_points
+        if args.no_mother_child_body_max_points is not None
+        else float(params.get("no_mother_child_body_max_points", 1.5))
+    )
+    no_mother_father_wick_max_pct = (
+        args.no_mother_father_wick_max_pct
+        if args.no_mother_father_wick_max_pct is not None
+        else float(params.get("no_mother_father_wick_max_pct", 40.0))
+    )
+    no_mother_cross_window_candles = (
+        args.no_mother_cross_window_candles
+        if args.no_mother_cross_window_candles is not None
+        else int(params.get("no_mother_cross_window_candles", 15))
+    )
+    no_mother_sl_buffer_pips = (
+        args.no_mother_sl_buffer_pips
+        if args.no_mother_sl_buffer_pips is not None
+        else float(params.get("no_mother_sl_buffer_pips", 5.0))
+    )
     ema_groups = {}
     for group in ("consensus", "fallback"):
         ema_groups[group] = {}
@@ -1590,22 +1633,47 @@ def run_feg_bot(args, strategy, params, credentials,
                         from src.flappy_bird_strategy import analyze_flappy_bird
                         c2 = {"open": last["open"], "high": last["high"], "low": last["low"], "close": last["close"]}
                         for candidate_mode in enabled_modes:
-                            for child_count in range(max_child_candles, min_child_candles - 1, -1):
-                                mother_idx = len(df) - child_count - 2
-                                if mother_idx < 0:
+                            child_counts = (
+                                [no_mother_child_candles]
+                                if args.strategy == "multi_flappy_bird" and not use_mother_candle
+                                else range(max_child_candles, min_child_candles - 1, -1)
+                            )
+                            for child_count in child_counts:
+                                mother_idx = (
+                                    len(df) - child_count - 2
+                                    if use_mother_candle or args.strategy != "multi_flappy_bird"
+                                    else None
+                                )
+                                if mother_idx is not None and mother_idx < 0:
                                     continue
-                                mother = df.loc[mother_idx, ["open", "high", "low", "close"]].to_dict()
+                                mother = (
+                                    df.loc[mother_idx, ["open", "high", "low", "close"]].to_dict()
+                                    if mother_idx is not None else None
+                                )
+                                child_start = (
+                                    mother_idx + 1
+                                    if mother_idx is not None
+                                    else len(df) - 1 - child_count
+                                )
                                 children = [
                                     df.loc[idx, ["open", "high", "low", "close"]].to_dict()
-                                    for idx in range(mother_idx + 1, len(df) - 1)
+                                    for idx in range(child_start, len(df) - 1)
                                 ]
                                 for direction in ("BUY", "SELL"):
                                     if (
-                                        cross_window_candles > 0
+                                        (
+                                            no_mother_cross_window_candles
+                                            if args.strategy == "multi_flappy_bird" and not use_mother_candle
+                                            else cross_window_candles
+                                        ) > 0
                                         and (
                                             cross_directions[-1] != direction
                                             or cross_ages[-1] is None
-                                            or cross_ages[-1] > cross_window_candles
+                                            or cross_ages[-1] > (
+                                                no_mother_cross_window_candles
+                                                if args.strategy == "multi_flappy_bird" and not use_mother_candle
+                                                else cross_window_candles
+                                            )
                                         )
                                     ):
                                         continue
@@ -1665,6 +1733,12 @@ def run_feg_bot(args, strategy, params, credentials,
                                         requested_ema_mode=candidate_mode,
                                         higher_timeframe_filter=higher_filter,
                                         current_timeframe_filter_enabled=current_timeframe_filter_enabled,
+                                        use_mother_candle=use_mother_candle,
+                                        no_mother_child_candles=no_mother_child_candles,
+                                        no_mother_child_body_ratio=no_mother_child_body_ratio,
+                                        no_mother_child_body_max_points=no_mother_child_body_max_points,
+                                        no_mother_father_wick_max_pct=no_mother_father_wick_max_pct,
+                                        no_mother_sl_buffer_pips=no_mother_sl_buffer_pips,
                                     )
                                     if signal:
                                         scan_mode = candidate_mode

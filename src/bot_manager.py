@@ -180,6 +180,10 @@ def build_bot_command(
     higher_ema_fallback_medium=None, higher_ema_fallback_long=None,
     higher_ema_consensus_enabled=None, higher_ema_fallback_enabled=None,
     max_child_body_points=None,
+    use_mother_candle=None, no_mother_child_candles=None,
+    no_mother_child_body_ratio=None, no_mother_child_body_max_points=None,
+    no_mother_father_wick_max_pct=None, no_mother_cross_window_candles=None,
+    no_mother_sl_buffer_pips=None,
 ):
     """Build command list to run bot_runner (separated for testability)."""
     cmd = [
@@ -237,6 +241,21 @@ def build_bot_command(
         cmd.extend(["--max_child_body_points", str(max_child_body_points)])
     if mother_coverage_enabled is not None:
         cmd.extend(["--mother_coverage_enabled", "1" if mother_coverage_enabled else "0"])
+    if strategy == "multi_flappy_bird":
+        for name, value in (
+            ("use_mother_candle", use_mother_candle),
+            ("no_mother_child_candles", no_mother_child_candles),
+            ("no_mother_child_body_ratio", no_mother_child_body_ratio),
+            ("no_mother_child_body_max_points", no_mother_child_body_max_points),
+            ("no_mother_father_wick_max_pct", no_mother_father_wick_max_pct),
+            ("no_mother_cross_window_candles", no_mother_cross_window_candles),
+            ("no_mother_sl_buffer_pips", no_mother_sl_buffer_pips),
+        ):
+            if value is not None:
+                cmd.extend([
+                    f"--{name}",
+                    ("1" if value else "0") if name == "use_mother_candle" else str(value),
+                ])
     for name, value in (
         ("flappy_consensus_short", flappy_consensus_short),
         ("flappy_consensus_medium", flappy_consensus_medium),
@@ -360,6 +379,12 @@ def _start_bot_unlocked(
     higher_ema_fallback_medium=None, higher_ema_fallback_long=None,
     higher_ema_consensus_enabled=None, higher_ema_fallback_enabled=None,
     max_child_body_points: float = None,
+    use_mother_candle: bool = None, no_mother_child_candles: int = None,
+    no_mother_child_body_ratio: float = None,
+    no_mother_child_body_max_points: float = None,
+    no_mother_father_wick_max_pct: float = None,
+    no_mother_cross_window_candles: int = None,
+    no_mother_sl_buffer_pips: float = None,
 ) -> tuple:
     """
     Start a new bot process
@@ -411,6 +436,10 @@ def _start_bot_unlocked(
         higher_ema_fallback_medium, higher_ema_fallback_long,
         higher_ema_consensus_enabled, higher_ema_fallback_enabled,
         max_child_body_points,
+        use_mother_candle, no_mother_child_candles,
+        no_mother_child_body_ratio, no_mother_child_body_max_points,
+        no_mother_father_wick_max_pct, no_mother_cross_window_candles,
+        no_mother_sl_buffer_pips,
     )
 
     try:

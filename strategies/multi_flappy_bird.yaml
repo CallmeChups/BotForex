@@ -47,6 +47,13 @@ exit:
     max_candles: 0
 
 parameters:
+  use_mother_candle: true
+  no_mother_child_candles: 2
+  no_mother_child_body_ratio: 1.5
+  no_mother_child_body_max_points: 1.5
+  no_mother_father_wick_max_pct: 40.0
+  no_mother_cross_window_candles: 15
+  no_mother_sl_buffer_pips: 5.0
   entry_body_percent: 5.0
   sl_buffer_pips: 5.0
   rr_ratio: 2.0

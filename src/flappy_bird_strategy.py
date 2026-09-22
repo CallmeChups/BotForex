@@ -219,7 +219,7 @@ def _ema_mode(
 
 
 def diagnose_flappy_bird(
-    mother: dict,
+    mother: dict | None,
     children: list[dict],
     father: dict,
     ema13: float,
@@ -240,8 +240,26 @@ def diagnose_flappy_bird(
     higher_timeframe_filter: dict | None = None,
     current_timeframe_filter_enabled: bool = True,
     max_child_body_points: float = 2.0,
+    use_mother_candle: bool = True,
+    no_mother_child_candles: int = 2,
+    no_mother_child_body_ratio: float = 1.5,
+    no_mother_child_body_max_points: float = 1.5,
+    no_mother_father_wick_max_pct: float = 40.0,
 ) -> dict:
     """Return validation status and metrics, optionally including the audit table."""
+    if no_mother_child_candles < 1:
+        raise ValueError("no_mother_child_candles must be positive")
+    if no_mother_child_body_ratio <= 0:
+        raise ValueError("no_mother_child_body_ratio must be positive")
+    if no_mother_child_body_max_points < 0:
+        raise ValueError("no_mother_child_body_max_points must be non-negative")
+    if not 0 <= no_mother_father_wick_max_pct <= 100:
+        raise ValueError("no_mother_father_wick_max_pct must be between 0 and 100")
+    if use_mother_candle and mother is None:
+        raise ValueError("mother is required when use_mother_candle is enabled")
+    if not use_mother_candle and mother is not None:
+        mother = None
+
     child_bodies = [_body(child) for child in children]
     direction = direction.upper()
     if direction not in {"BUY", "SELL"}:
@@ -257,7 +275,7 @@ def diagnose_flappy_bird(
     adjacent_child_low = min((child["low"] for child in adjacent_children), default=None)
     metrics = {
         "child_count": len(children),
-        "mother_body": _body(mother),
+        "mother_body": _body(mother) if mother is not None else None,
         "father_body": _body(father),
         "largest_child_body": highest_child_body,
         "last_child_body": last_child_body,
@@ -265,8 +283,8 @@ def diagnose_flappy_bird(
         "max_child_body_points": max_child_body_points,
         "highest_child_high": highest_child_high,
         "lowest_child_low": lowest_child_low,
-        "mother_high": mother["high"],
-        "mother_low": mother["low"],
+        "mother_high": mother["high"] if mother is not None else None,
+        "mother_low": mother["low"] if mother is not None else None,
         "father_upper_wick": max(0.0, father["high"] - father["close"]),
         "father_lower_wick": max(0.0, father["close"] - father["low"]),
         "father_wick_pct": (
@@ -282,6 +300,10 @@ def diagnose_flappy_bird(
         "fallback_ema55": ema55 if fallback_ema55 is None else fallback_ema55,
         "min_father_body_points": min_father_body_points,
         "max_father_body_points": MAX_FATHER_BODY_POINTS,
+        "pattern_mode": "with_mother" if use_mother_candle else "without_mother",
+        "no_mother_child_body_ratio": no_mother_child_body_ratio,
+        "no_mother_child_body_max_points": no_mother_child_body_max_points,
+        "no_mother_father_wick_max_pct": no_mother_father_wick_max_pct,
     }
     metrics["ema_mode"] = _ema_mode(
         father, ema13, ema21, ema55,
@@ -355,49 +377,78 @@ def diagnose_flappy_bird(
     filter_ema21 = (
         metrics["fallback_ema21"] if metrics["ema_mode"] == "fallback" else ema21
     )
-    mother_body = metrics["mother_body"]
+    mother_body = metrics["mother_body"] or 0.0
     father_body = metrics["father_body"]
     mother_is_directional = (
-        mother["close"] > mother["open"]
-        if is_buy else mother["close"] < mother["open"]
+        mother is not None and (
+            mother["close"] > mother["open"]
+            if is_buy else mother["close"] < mother["open"]
+        )
+    )
+    no_mother_children_inside_father = bool(children) and (
+        father["low"] <= min(child["low"] for child in children)
+        and father["high"] >= max(child["high"] for child in children)
+    )
+    no_mother_child_bodies_valid = bool(children) and all(
+        body < father_body / no_mother_child_body_ratio
+        and body < no_mother_child_body_max_points
+        for body in child_bodies
+    )
+    no_mother_wick_valid = father_body > 0 and (
+        father["high"] - father["close"]
+        if is_buy else father["close"] - father["low"]
+    ) < (no_mother_father_wick_max_pct / 100.0) * father_body
+    no_mother_ema_valid = (
+        father["open"] >= ema21 if is_buy else father["open"] <= ema21
     )
     if not include_checks:
-        if not min_child_candles <= len(children) <= max_child_candles:
+        if not use_mother_candle and len(children) != no_mother_child_candles:
+            reason = "no_mother_child_count_invalid"
+        elif use_mother_candle and not min_child_candles <= len(children) <= max_child_candles:
             reason = "invalid_child_count"
-        elif mother_body <= 0 or father_body <= 0:
+        elif (use_mother_candle and mother_body <= 0) or father_body <= 0:
             reason = "zero_candle_body"
         elif metrics["ema_mode"] is None:
             reason = "ema_order_failed"
-        elif not mother_is_directional:
+        elif use_mother_candle and not mother_is_directional:
             reason = "mother_direction_failed"
-        elif any(mother_body <= body for body in child_bodies):
+        elif use_mother_candle and any(mother_body <= body for body in child_bodies):
             reason = "mother_body_not_larger"
-        elif mother_coverage_enabled and (not children or (
+        elif use_mother_candle and mother_coverage_enabled and (not children or (
             mother["high"] < max(max(child["open"], child["close"]) for child in children)
             if is_buy else
             mother["low"] > min(min(child["open"], child["close"]) for child in children)
         )):
             reason = "mother_body_not_covered"
-        elif any(body > max_child_body_points for body in adjacent_child_bodies):
+        elif not use_mother_candle and not no_mother_children_inside_father:
+            reason = "no_mother_children_outside_father"
+        elif not use_mother_candle and not no_mother_child_bodies_valid:
+            reason = "no_mother_child_body_above_maximum"
+        elif use_mother_candle and any(body > max_child_body_points for body in adjacent_child_bodies):
             reason = "child_body_above_maximum"
-        elif father_body <= 1.5 * last_child_body:
+        elif use_mother_candle and father_body <= 1.5 * last_child_body:
             reason = "father_body_ratio_failed"
-        elif (
+        elif use_mother_candle and (
             (father["high"] - father["close"] >= 0.30 * father_body)
             if is_buy else
             (father["close"] - father["low"] >= 0.30 * father_body)
         ):
             reason = "father_upper_wick_too_large" if is_buy else "father_lower_wick_too_large"
+        elif not use_mother_candle and not no_mother_wick_valid:
+            reason = "no_mother_father_wick_too_large"
         elif current_timeframe_filter_enabled and (
+            (
             father["open"] < filter_ema13 or father["low"] <= filter_ema21
             if is_buy else
             father["open"] > filter_ema13 or father["high"] >= filter_ema21
+            )
+            if use_mother_candle else not no_mother_ema_valid
         ):
             reason = "father_ema_filter_failed"
-        elif not children or (
+        elif use_mother_candle and (not children or (
             father["close"] <= adjacent_child_high
             if is_buy else father["close"] >= adjacent_child_low
-        ):
+        )):
             reason = "father_close_not_above_children" if is_buy else "father_close_not_below_children"
         elif father_body <= min_father_body_points:
             reason = "father_body_below_minimum"
@@ -422,7 +473,11 @@ def diagnose_flappy_bird(
         {
             "key": "child_count",
             "label": "Số nến Con trong khoảng cấu hình",
-            "passed": min_child_candles <= len(children) <= max_child_candles,
+            "passed": (
+                len(children) == no_mother_child_candles
+                if not use_mother_candle
+                else min_child_candles <= len(children) <= max_child_candles
+            ),
             "actual": len(children),
             "expected": f"{min_child_candles}..{max_child_candles}",
         },
@@ -440,14 +495,17 @@ def diagnose_flappy_bird(
         {
             "key": "mother_body",
             "label": "Thân Mẹ lớn hơn mọi thân Con",
-            "passed": mother_body > 0 and all(mother_body > body for body in child_bodies),
+            "passed": (
+                mother_body > 0 and all(mother_body > body for body in child_bodies)
+                if use_mother_candle else True
+            ),
             "actual": f"{mother_body:.5f} > {highest_child_body:.5f}",
             "expected": "Body Mẹ > Body Con lớn nhất",
         },
         {
             "key": "mother_direction",
             "label": "Nến Mẹ cùng chiều với chiến lược",
-            "passed": mother_is_directional,
+            "passed": mother_is_directional if use_mother_candle else True,
             "actual": (
                 "Bullish" if mother["close"] > mother["open"]
                 else "Bearish" if mother["close"] < mother["open"]
@@ -459,6 +517,7 @@ def diagnose_flappy_bird(
             "key": "mother_coverage",
             "label": "HIGH Mẹ bao trùm thân các Con" if is_buy else "LOW Mẹ bao trùm thân các Con",
             "passed": (
+                True if not use_mother_candle else
                 bool(children)
                 and (
                     not mother_coverage_enabled
@@ -474,11 +533,13 @@ def diagnose_flappy_bird(
                 )
             ),
             "actual": (
+                "Không áp dụng" if not use_mother_candle else
                 f'{mother["high"]:.5f} >= {max((max(child["open"], child["close"]) for child in children), default=0):.5f}'
                 if is_buy else
                 f'{mother["low"]:.5f} <= {min((min(child["open"], child["close"]) for child in children), default=0):.5f}'
             ),
             "expected": (
+                "Không áp dụng" if not use_mother_candle else
                 "Bật: HIGH Mẹ >= thân trên cao nhất của Con"
                 if is_buy and mother_coverage_enabled else
                 "Bật: LOW Mẹ <= thân dưới thấp nhất của Con"
@@ -488,33 +549,55 @@ def diagnose_flappy_bird(
         {
             "key": "child_body_maximum",
             "label": "Thân hai nến Con cuối không vượt mức tối đa",
-            "passed": bool(adjacent_children) and all(
-                body <= max_child_body_points for body in adjacent_child_bodies
+            "passed": (
+                no_mother_child_bodies_valid
+                if not use_mother_candle else
+                bool(adjacent_children) and all(
+                    body <= max_child_body_points for body in adjacent_child_bodies
+                )
             ),
             "actual": ", ".join(f"{body:.5f}" for body in adjacent_child_bodies),
-            "expected": f"<= {max_child_body_points:.5f}",
+            "expected": (
+                f"mỗi Con < body Cha / {no_mother_child_body_ratio:g} "
+                f"và < {no_mother_child_body_max_points:g}"
+                if not use_mother_candle else f"<= {max_child_body_points:.5f}"
+            ),
         },
         {
             "key": "father_body_ratio",
             "label": "Thân Cha > 1.5 lần thân Con cuối",
-            "passed": father_body > 0 and father_body > 1.5 * last_child_body,
-            "actual": f"{father_body:.5f} > {1.5 * last_child_body:.5f}",
-            "expected": "Body Cha > 1.5 x Body Con cuối",
+            "passed": (
+                True if not use_mother_candle else
+                father_body > 0 and father_body > 1.5 * last_child_body
+            ),
+            "actual": (
+                "Không áp dụng" if not use_mother_candle
+                else f"{father_body:.5f} > {1.5 * last_child_body:.5f}"
+            ),
+            "expected": (
+                "Không áp dụng" if not use_mother_candle
+                else "Body Cha > 1.5 x Body Con cuối"
+            ),
         },
         {
             "key": "father_upper_wick",
             "label": "Râu trên Cha < 30% thân Cha" if is_buy else "Râu dưới Cha < 30% thân Cha",
-            "passed": father_body > 0 and (
+            "passed": (
+                no_mother_wick_valid if not use_mother_candle else
+                father_body > 0 and (
                 father["high"] - father["close"] < 0.30 * father_body
                 if is_buy else father["close"] - father["low"] < 0.30 * father_body
+                )
             ),
             "actual": f'{metrics["father_wick_pct"] or 0:.2f}%',
-            "expected": "< 30%",
+            "expected": f'< {no_mother_father_wick_max_pct:g}%'
+            if not use_mother_candle else "< 30%",
         },
         {
             "key": "father_ema_filter",
             "label": "OPEN Cha >= EMA13 và LOW Cha > EMA21" if is_buy else "OPEN Cha <= EMA13 và HIGH Cha < EMA21",
             "passed": not current_timeframe_filter_enabled or (
+                no_mother_ema_valid if not use_mother_candle else
                 father["open"] >= filter_ema13 and father["low"] > filter_ema21
                 if is_buy else father["open"] <= filter_ema13 and father["high"] < filter_ema21
             ),
@@ -528,11 +611,15 @@ def diagnose_flappy_bird(
         {
             "key": "father_close_breakout",
             "label": "CLOSE Cha > HIGH hai Con cuối" if is_buy else "CLOSE Cha < LOW hai Con cuối",
-            "passed": bool(children) and (
+            "passed": (
+                True if not use_mother_candle else
+                bool(children) and (
                 father["close"] > adjacent_child_high
                 if is_buy else father["close"] < adjacent_child_low
+                )
             ),
             "actual": (
+                "Không áp dụng" if not use_mother_candle else
                 f'{father["close"]:.5f} > {(adjacent_child_high or 0):.5f}'
                 if is_buy else f'{father["close"]:.5f} < {(adjacent_child_low or 0):.5f}'
             ),
@@ -557,11 +644,15 @@ def diagnose_flappy_bird(
         "father_close_breakout": "father_close_not_above_children" if is_buy else "father_close_not_below_children",
         "father_minimum_body": "father_body_below_minimum",
         "child_body_maximum": "child_body_above_maximum",
+        "no_mother_child_count": "no_mother_child_count_invalid",
+        "no_mother_children_inside_father": "no_mother_children_outside_father",
+        "no_mother_child_body": "no_mother_child_body_above_maximum",
+        "no_mother_father_wick": "no_mother_father_wick_too_large",
     }
     if higher_timeframe_debug is not None:
         checks.extend(higher_timeframe_debug.get("checks", []))
     failed_check = next((check for check in checks if not check["passed"]), None)
-    has_zero_body = mother_body <= 0 or father_body <= 0
+    has_zero_body = (use_mother_candle and mother_body <= 0) or father_body <= 0
     return {
         "valid": failed_check is None and not has_zero_body,
         "reason": (
@@ -584,7 +675,7 @@ def diagnose_flappy_bird(
 
 
 def detect_flappy_bird_signal(
-    mother: dict,
+    mother: dict | None,
     children: list[dict],
     father: dict,
     ema13: float,
@@ -604,6 +695,11 @@ def detect_flappy_bird_signal(
     higher_timeframe_filter: dict | None = None,
     current_timeframe_filter_enabled: bool = True,
     max_child_body_points: float = 2.0,
+    use_mother_candle: bool = True,
+    no_mother_child_candles: int = 2,
+    no_mother_child_body_ratio: float = 1.5,
+    no_mother_child_body_max_points: float = 1.5,
+    no_mother_father_wick_max_pct: float = 40.0,
 ) -> bool:
     """Return whether the candle window satisfies the BUY pattern."""
     return diagnose_flappy_bird(
@@ -621,12 +717,17 @@ def detect_flappy_bird_signal(
         higher_timeframe_filter=higher_timeframe_filter,
         current_timeframe_filter_enabled=current_timeframe_filter_enabled,
         max_child_body_points=max_child_body_points,
+        use_mother_candle=use_mother_candle,
+        no_mother_child_candles=no_mother_child_candles,
+        no_mother_child_body_ratio=no_mother_child_body_ratio,
+        no_mother_child_body_max_points=no_mother_child_body_max_points,
+        no_mother_father_wick_max_pct=no_mother_father_wick_max_pct,
     )["valid"]
 
 
 def analyze_flappy_bird(
     symbol: str,
-    mother: dict,
+    mother: dict | None,
     children: list[dict],
     father: dict,
     ema13: float,
@@ -650,6 +751,12 @@ def analyze_flappy_bird(
     higher_timeframe_filter: dict | None = None,
     current_timeframe_filter_enabled: bool = True,
     max_child_body_points: float = 2.0,
+    use_mother_candle: bool = True,
+    no_mother_child_candles: int = 2,
+    no_mother_child_body_ratio: float = 1.5,
+    no_mother_child_body_max_points: float = 1.5,
+    no_mother_father_wick_max_pct: float = 40.0,
+    no_mother_sl_buffer_pips: float | None = None,
 ) -> dict | None:
     """Return a standard pending limit signal or None."""
     diagnostics = diagnose_flappy_bird(
@@ -667,6 +774,11 @@ def analyze_flappy_bird(
         higher_timeframe_filter=higher_timeframe_filter,
         current_timeframe_filter_enabled=current_timeframe_filter_enabled,
         max_child_body_points=max_child_body_points,
+        use_mother_candle=use_mother_candle,
+        no_mother_child_candles=no_mother_child_candles,
+        no_mother_child_body_ratio=no_mother_child_body_ratio,
+        no_mother_child_body_max_points=no_mother_child_body_max_points,
+        no_mother_father_wick_max_pct=no_mother_father_wick_max_pct,
     )
     if not diagnostics["valid"]:
         return None
@@ -677,11 +789,29 @@ def analyze_flappy_bird(
     is_buy = direction.upper() == "BUY"
     entry_price = father["close"] + (1 if not is_buy else -1) * father_body * (entry_body_percent / 100.0)
     if is_buy:
-        stop_loss = min(father["low"], last_child["low"]) - sl_buffer_pips * pip_value
+        stop_reference = min(
+            father["low"],
+            *(child["low"] for child in children),
+        ) if not use_mother_candle else min(father["low"], last_child["low"])
+        buffer_pips = (
+            no_mother_sl_buffer_pips
+            if not use_mother_candle and no_mother_sl_buffer_pips is not None
+            else sl_buffer_pips
+        )
+        stop_loss = stop_reference - buffer_pips * pip_value
         sl_pips = (entry_price - stop_loss) / pip_value
         take_profit = entry_price + sl_pips * pip_value * rr_ratio
     else:
-        stop_loss = max(father["high"], last_child["high"]) + sl_buffer_pips * pip_value
+        stop_reference = max(
+            father["high"],
+            *(child["high"] for child in children),
+        ) if not use_mother_candle else max(father["high"], last_child["high"])
+        buffer_pips = (
+            no_mother_sl_buffer_pips
+            if not use_mother_candle and no_mother_sl_buffer_pips is not None
+            else sl_buffer_pips
+        )
+        stop_loss = stop_reference + buffer_pips * pip_value
         sl_pips = (stop_loss - entry_price) / pip_value
         take_profit = entry_price - sl_pips * pip_value * rr_ratio
     if (

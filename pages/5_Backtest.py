@@ -199,6 +199,32 @@ def main():
     is_feg_stop_order = (selected_strategy == 'feg_stop_order')
     is_flappy_bird = is_flappy_strategy(selected_strategy)
     is_multi_flappy = is_multi_flappy_strategy(selected_strategy)
+    consensus = params.get("ema_consensus", {"short": 13, "medium": 21, "long": 55})
+    fallback = params.get("ema_fallback", consensus)
+    higher_consensus = params.get("higher_ema_consensus", consensus)
+    higher_fallback = params.get("higher_ema_fallback", fallback)
+    flappy_consensus_short = int(consensus["short"])
+    flappy_consensus_medium = int(consensus["medium"])
+    flappy_consensus_long = int(consensus["long"])
+    flappy_fallback_short = int(fallback["short"])
+    flappy_fallback_medium = int(fallback["medium"])
+    flappy_fallback_long = int(fallback["long"])
+    flappy_consensus_enabled = bool(params.get("ema_consensus_enabled", True))
+    flappy_fallback_enabled = bool(params.get("ema_fallback_enabled", True))
+    current_timeframe_filter_enabled = bool(
+        params.get("current_timeframe_filter_enabled", True)
+    )
+    higher_timeframe_filter_enabled = bool(
+        params.get("higher_timeframe_filter_enabled", False)
+    ) if is_multi_flappy else False
+    higher_ema_consensus_short = int(higher_consensus["short"])
+    higher_ema_consensus_medium = int(higher_consensus["medium"])
+    higher_ema_consensus_long = int(higher_consensus["long"])
+    higher_ema_fallback_short = int(higher_fallback["short"])
+    higher_ema_fallback_medium = int(higher_fallback["medium"])
+    higher_ema_fallback_long = int(higher_fallback["long"])
+    higher_ema_consensus_enabled = bool(params.get("higher_ema_consensus_enabled", True))
+    higher_ema_fallback_enabled = bool(params.get("higher_ema_fallback_enabled", True))
 
     left, _div, right = st.columns([0.58, 0.02, 0.40])
 
@@ -814,6 +840,13 @@ def main():
         max_child_body_points = 2.0
         cross_window_candles = 12
         mother_coverage_enabled = True
+        use_mother_candle = True
+        no_mother_child_candles = 2
+        no_mother_child_body_ratio = 1.5
+        no_mother_child_body_max_points = 1.5
+        no_mother_father_wick_max_pct = 40.0
+        no_mother_cross_window_candles = 15
+        no_mother_sl_buffer_pips = 5.0
         if is_flappy_bird:
             buffer_k = 0.0
             re_entry_after_sl = False
@@ -859,6 +892,49 @@ def main():
                 value=bool(params.get("mother_coverage_enabled", True)),
                 help="Bật: yêu cầu biên Mẹ bao trùm thân các Nến Con.",
             )
+            if is_multi_flappy:
+                use_mother_candle = st.checkbox(
+                    "Sử dụng Nến Mẹ",
+                    value=bool(params.get("use_mother_candle", True)),
+                    key="backtest_use_mother_candle_multi",
+                )
+                if not use_mother_candle:
+                    no_mother_child_candles = st.number_input(
+                        "Số Nến Con",
+                        value=int(params.get("no_mother_child_candles", 2)),
+                        min_value=1, max_value=20, step=1,
+                        key="backtest_no_mother_child_candles_multi",
+                    )
+                    no_mother_child_body_ratio = st.number_input(
+                        "Tỷ lệ body Cha / body Con",
+                        value=float(params.get("no_mother_child_body_ratio", 1.5)),
+                        min_value=0.01, max_value=100.0, step=0.1,
+                        key="backtest_no_mother_child_body_ratio_multi",
+                    )
+                    no_mother_child_body_max_points = st.number_input(
+                        "Body Con tối đa",
+                        value=float(params.get("no_mother_child_body_max_points", 1.5)),
+                        min_value=0.0, max_value=100000.0, step=0.1,
+                        key="backtest_no_mother_child_body_max_points_multi",
+                    )
+                    no_mother_father_wick_max_pct = st.number_input(
+                        "Râu Cha tối đa (%)",
+                        value=float(params.get("no_mother_father_wick_max_pct", 40.0)),
+                        min_value=0.0, max_value=100.0, step=1.0,
+                        key="backtest_no_mother_father_wick_max_pct_multi",
+                    )
+                    no_mother_cross_window_candles = st.number_input(
+                        "Cross EMA tối đa (nến)",
+                        value=int(params.get("no_mother_cross_window_candles", 15)),
+                        min_value=0, max_value=500, step=1,
+                        key="backtest_no_mother_cross_window_candles_multi",
+                    )
+                    no_mother_sl_buffer_pips = st.number_input(
+                        "SL buffer (pip)",
+                        value=float(params.get("no_mother_sl_buffer_pips", 5.0)),
+                        min_value=0.0, max_value=200.0, step=0.5,
+                        key="backtest_no_mother_sl_buffer_pips_multi",
+                    )
             st.caption(
                 f"SL buffer cố định: {params.get('sl_buffer_pips', 5.0):g} pips · "
                 f"Pending expiry mặc định {params.get('limit_order_candles', 7)} nến"
@@ -1090,6 +1166,21 @@ def main():
                     flappy_sl_buffer_pips=float(params.get('sl_buffer_pips', 5.0)),
                     flappy_entry_body_percent=float(flappy_entry_body_percent),
                     flappy_cross_window_candles=int(cross_window_candles),
+                    flappy_use_mother_candle=(
+                        bool(use_mother_candle) if is_multi_flappy else True
+                    ),
+                    flappy_no_mother_child_candles=int(no_mother_child_candles),
+                    flappy_no_mother_child_body_ratio=float(no_mother_child_body_ratio),
+                    flappy_no_mother_child_body_max_points=float(
+                        no_mother_child_body_max_points
+                    ),
+                    flappy_no_mother_father_wick_max_pct=float(
+                        no_mother_father_wick_max_pct
+                    ),
+                    flappy_no_mother_cross_window_candles=int(
+                        no_mother_cross_window_candles
+                    ),
+                    flappy_no_mother_sl_buffer_pips=float(no_mother_sl_buffer_pips),
                     higher_timeframe_df=higher_df,
                     higher_timeframe_filter_enabled=bool(
                         is_multi_flappy and higher_timeframe_filter_enabled

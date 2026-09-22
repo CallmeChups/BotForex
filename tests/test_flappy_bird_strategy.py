@@ -192,6 +192,63 @@ def test_flappy_bird_mother_coverage_can_be_disabled():
     )
 
 
+def test_flappy_bird_consensus_accepts_two_children_without_mother():
+    children = [
+        _candle(101.0, 103.0, 100.0, 102.0),
+        _candle(102.0, 104.0, 101.0, 103.0),
+    ]
+    father = _candle(105.0, 108.0, 99.0, 108.0)
+
+    diagnostics = diagnose_flappy_bird(
+        None, children, father, 104.0, 103.0, 100.0,
+        direction="BUY",
+        use_mother_candle=False,
+        no_mother_child_body_ratio=1.5,
+        no_mother_child_body_max_points=1.5,
+        no_mother_father_wick_max_pct=40.0,
+    )
+
+    assert diagnostics["valid"] is True
+    assert diagnostics["metrics"]["pattern_mode"] == "without_mother"
+
+
+def test_flappy_bird_without_mother_uses_configured_child_body_limit():
+    children = [
+        _candle(101.0, 103.0, 100.0, 102.0),
+        _candle(102.0, 104.0, 101.0, 103.0),
+    ]
+    father = _candle(105.0, 108.0, 99.0, 108.0)
+
+    diagnostics = diagnose_flappy_bird(
+        None, children, father, 104.0, 103.0, 100.0,
+        direction="BUY",
+        use_mother_candle=False,
+        no_mother_child_body_ratio=3.0,
+        no_mother_child_body_max_points=0.5,
+    )
+
+    assert diagnostics["valid"] is False
+    assert diagnostics["reason"] == "no_mother_child_body_above_maximum"
+
+
+def test_flappy_bird_without_mother_uses_all_children_for_stop_loss():
+    children = [
+        _candle(101.0, 103.0, 98.0, 102.0),
+        _candle(102.0, 104.0, 101.0, 103.0),
+    ]
+    father = _candle(105.0, 108.0, 97.0, 108.0)
+
+    signal = analyze_flappy_bird(
+        "XAUUSD", None, children, father, 104.0, 103.0, 100.0,
+        direction="BUY",
+        use_mother_candle=False,
+        no_mother_sl_buffer_pips=2.0,
+    )
+
+    assert signal["debug"]["metrics"]["pattern_mode"] == "without_mother"
+    assert signal["stop_loss"] == pytest.approx(96.8)
+
+
 def test_flappy_bird_limits_both_adjacent_child_bodies_and_breakout():
     mother, children, father = _valid_parts()
     assert not detect_flappy_bird_signal(

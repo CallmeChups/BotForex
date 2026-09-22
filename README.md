@@ -174,6 +174,15 @@ Mức lệnh:
   backtest ưu tiên SL; trường hợp này không được dùng để suy diễn thứ tự khớp
   lệnh live của MT5.
 
+**Multi Flappy Bird** là strategy riêng cho bộ lọc M1/M5. Mặc định vẫn dùng
+Nến Mẹ như Flappy Bird hiện tại. Trong Create Bot và Backtest có thể tắt
+`Sử dụng Nến Mẹ` để chạy pattern 2 Nến Con + Nến Cha. Các ngưỡng riêng của
+mode này được cấu hình trong YAML và có thể override từ UI/CLI:
+`no_mother_child_body_ratio`, `no_mother_child_body_max_points`,
+`no_mother_father_wick_max_pct`, `no_mother_cross_window_candles` và
+`no_mother_sl_buffer_pips`. Strategy Flappy Bird cũ không hiển thị hoặc sử
+dụng các tham số no-mother.
+
 Backtest chỉ lưu dữ liệu nến/EMA tối thiểu để không làm chậm toàn bộ lượt chạy.
 Khi xem **Interactive Chart**, mục **Flappy Bird Signal Debug** sẽ tính audit
 on-demand cho đúng trade đang chọn: cửa sổ Mẹ–Con–Cha, thời điểm Entry fill,

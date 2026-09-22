@@ -357,6 +357,13 @@ def run_backtest(
     flappy_sl_buffer_pips: float = 5.0,
     flappy_entry_body_percent: float = 5.0,
     flappy_cross_window_candles: int = 12,
+    flappy_use_mother_candle: bool = True,
+    flappy_no_mother_child_candles: int = 2,
+    flappy_no_mother_child_body_ratio: float = 1.5,
+    flappy_no_mother_child_body_max_points: float = 1.5,
+    flappy_no_mother_father_wick_max_pct: float = 40.0,
+    flappy_no_mother_cross_window_candles: int = 15,
+    flappy_no_mother_sl_buffer_pips: float = 5.0,
     progress_callback: Callable[[dict], None] | None = None,
     higher_timeframe_df=None,
     higher_timeframe_filter_enabled: bool = False,
@@ -449,6 +456,13 @@ def run_backtest(
                 higher_ema_fallback_enabled=higher_ema_fallback_enabled,
                 current_timeframe_filter_enabled=current_timeframe_filter_enabled,
                 cross_window_candles=flappy_cross_window_candles,
+                use_mother_candle=flappy_use_mother_candle,
+                no_mother_child_candles=flappy_no_mother_child_candles,
+                no_mother_child_body_ratio=flappy_no_mother_child_body_ratio,
+                no_mother_child_body_max_points=flappy_no_mother_child_body_max_points,
+                no_mother_father_wick_max_pct=flappy_no_mother_father_wick_max_pct,
+                no_mother_cross_window_candles=flappy_no_mother_cross_window_candles,
+                no_mother_sl_buffer_pips=flappy_no_mother_sl_buffer_pips,
             )
             # Consensus and fallback are scanned together in one shared
             # candle loop inside _run_flappy_bird_backtest (each mode keeps
@@ -1029,6 +1043,10 @@ def _run_flappy_bird_backtest(
     higher_ema_periods=None, higher_ema_consensus_enabled=True,
     higher_ema_fallback_enabled=True,
     current_timeframe_filter_enabled=True, cross_window_candles=12,
+    use_mother_candle=True, no_mother_child_candles=2,
+    no_mother_child_body_ratio=1.5, no_mother_child_body_max_points=1.5,
+    no_mother_father_wick_max_pct=40.0, no_mother_cross_window_candles=15,
+    no_mother_sl_buffer_pips=5.0,
 ):
     """Backtest Flappy Bird BUY/SELL LIMIT signals for every enabled EMA mode.
 
@@ -1197,20 +1215,32 @@ def _run_flappy_bird_backtest(
         fallback_ema13 = fallback_ema13_values[i]
         fallback_ema21 = fallback_ema21_values[i]
         fallback_ema55 = fallback_ema55_values[i]
-        for child_count in range(max_child_candles, min_child_candles - 1, -1):
-            mother_idx = i - child_count - 1
-            if mother_idx < 0:
+        child_counts = (
+            [no_mother_child_candles]
+            if not use_mother_candle
+            else range(max_child_candles, min_child_candles - 1, -1)
+        )
+        for child_count in child_counts:
+            mother_idx = i - child_count - 1 if use_mother_candle else None
+            if use_mother_candle and mother_idx < 0:
                 continue
-            mother = candle_at(mother_idx)
-            children = [candle_at(idx) for idx in range(mother_idx + 1, i)]
+            mother = candle_at(mother_idx) if mother_idx is not None else None
+            child_start = mother_idx + 1 if mother_idx is not None else i - child_count
+            children = [candle_at(idx) for idx in range(child_start, i)]
             father = candle_at(i)
             for direction in ("BUY", "SELL"):
                 if (
-                    cross_window_candles > 0
+                    (
+                        no_mother_cross_window_candles
+                        if not use_mother_candle else cross_window_candles
+                    ) > 0
                     and (
                         cross_directions[i] != direction
                         or cross_ages[i] is None
-                        or cross_ages[i] > cross_window_candles
+                        or cross_ages[i] > (
+                            no_mother_cross_window_candles
+                            if not use_mother_candle else cross_window_candles
+                        )
                     )
                 ):
                     continue
@@ -1231,6 +1261,12 @@ def _run_flappy_bird_backtest(
                     requested_ema_mode=mode,
                     higher_timeframe_filter=higher_filter_for(i, mode),
                     current_timeframe_filter_enabled=current_timeframe_filter_enabled,
+                    use_mother_candle=use_mother_candle,
+                    no_mother_child_candles=no_mother_child_candles,
+                    no_mother_child_body_ratio=no_mother_child_body_ratio,
+                    no_mother_child_body_max_points=no_mother_child_body_max_points,
+                    no_mother_father_wick_max_pct=no_mother_father_wick_max_pct,
+                    no_mother_sl_buffer_pips=no_mother_sl_buffer_pips,
                 )
                 if signal:
                     signal_child_count = child_count
@@ -1302,9 +1338,22 @@ def _run_flappy_bird_backtest(
                 exit_price, times[exit_pos], exit_pos - fill_pos + 1,
                 symbol, exit_pos=exit_pos,
             )
-            trade["_mother"] = {**signal["mother"], "time": times[signal["_mother_idx"]]}
+            trade["_mother"] = (
+                {**signal["mother"], "time": times[signal["_mother_idx"]]}
+                if signal.get("mother") is not None and signal.get("_mother_idx") is not None
+                else None
+            )
             trade["_children"] = [
-                {**child, "time": times[signal["_mother_idx"] + child_offset + 1]}
+                {
+                    **child,
+                    "time": times[
+                        (
+                            signal["_mother_idx"] + child_offset + 1
+                            if signal.get("_mother_idx") is not None
+                            else signal["_father_idx"] - len(signal["children"]) + child_offset
+                        )
+                    ],
+                }
                 for child_offset, child in enumerate(signal["children"])
             ]
             trade["_father"] = {**signal["father"], "time": times[signal["_father_idx"]]}
@@ -1327,6 +1376,7 @@ def _run_flappy_bird_backtest(
             }
             trade["_child_count"] = signal_child_count
             trade["_min_father_body_points"] = min_father_body_points
+            trade["_use_mother_candle"] = use_mother_candle
             trade["_max_child_body_points"] = max_child_body_points
             trade["_min_child_candles"] = min_child_candles
             trade["_max_child_candles"] = max_child_candles

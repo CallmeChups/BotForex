@@ -1046,6 +1046,13 @@ def show_create_bot():
         if is_flappy_bird:
             buffer_k = 0.0
             re_entry_after_sl = False
+            use_mother_candle = True
+            no_mother_child_candles = 2
+            no_mother_child_body_ratio = 1.5
+            no_mother_child_body_max_points = 1.5
+            no_mother_father_wick_max_pct = 40.0
+            no_mother_cross_window_candles = 15
+            no_mother_sl_buffer_pips = 5.0
             with _or_col1:
                 sl_buffer_pips = float(params.get('sl_buffer_pips', 5.0))
                 min_father_body_points = st.number_input(
@@ -1094,6 +1101,50 @@ def show_create_bot():
                     key=f"{sk}_mother_coverage_enabled",
                     help="Bật: yêu cầu biên Mẹ bao trùm thân các Nến Con.",
                 )
+                if is_multi_flappy:
+                    st.markdown("**Pattern không có Nến Mẹ**")
+                    use_mother_candle = st.checkbox(
+                        "Sử dụng Nến Mẹ",
+                        value=bool(params.get("use_mother_candle", True)),
+                        key=f"{sk}_use_mother_candle",
+                    )
+                    if not use_mother_candle:
+                        no_mother_child_candles = st.number_input(
+                            "Số Nến Con",
+                            value=int(params.get("no_mother_child_candles", 2)),
+                            min_value=1, max_value=20, step=1,
+                            key=f"{sk}_no_mother_child_candles",
+                        )
+                        no_mother_child_body_ratio = st.number_input(
+                            "Tỷ lệ body Cha / body Con",
+                            value=float(params.get("no_mother_child_body_ratio", 1.5)),
+                            min_value=0.01, max_value=100.0, step=0.1,
+                            key=f"{sk}_no_mother_child_body_ratio",
+                        )
+                        no_mother_child_body_max_points = st.number_input(
+                            "Body Con tối đa",
+                            value=float(params.get("no_mother_child_body_max_points", 1.5)),
+                            min_value=0.0, max_value=100000.0, step=0.1,
+                            key=f"{sk}_no_mother_child_body_max_points",
+                        )
+                        no_mother_father_wick_max_pct = st.number_input(
+                            "Râu Cha tối đa (%)",
+                            value=float(params.get("no_mother_father_wick_max_pct", 40.0)),
+                            min_value=0.0, max_value=100.0, step=1.0,
+                            key=f"{sk}_no_mother_father_wick_max_pct",
+                        )
+                        no_mother_cross_window_candles = st.number_input(
+                            "Cross EMA tối đa (nến)",
+                            value=int(params.get("no_mother_cross_window_candles", 15)),
+                            min_value=0, max_value=500, step=1,
+                            key=f"{sk}_no_mother_cross_window_candles",
+                        )
+                        no_mother_sl_buffer_pips = st.number_input(
+                            "SL buffer (pip)",
+                            value=float(params.get("no_mother_sl_buffer_pips", 5.0)),
+                            min_value=0.0, max_value=200.0, step=0.5,
+                            key=f"{sk}_no_mother_sl_buffer_pips",
+                        )
         else:
             min_child_candles = None
             max_child_candles = None
@@ -1243,6 +1294,25 @@ def show_create_bot():
                     higher_ema_consensus_enabled=higher_ema_consensus_enabled,
                     higher_ema_fallback_enabled=higher_ema_fallback_enabled,
                     current_timeframe_filter_enabled=current_timeframe_filter_enabled,
+                    use_mother_candle=use_mother_candle if is_multi_flappy else None,
+                    no_mother_child_candles=(
+                        int(no_mother_child_candles) if is_multi_flappy else None
+                    ),
+                    no_mother_child_body_ratio=(
+                        float(no_mother_child_body_ratio) if is_multi_flappy else None
+                    ),
+                    no_mother_child_body_max_points=(
+                        float(no_mother_child_body_max_points) if is_multi_flappy else None
+                    ),
+                    no_mother_father_wick_max_pct=(
+                        float(no_mother_father_wick_max_pct) if is_multi_flappy else None
+                    ),
+                    no_mother_cross_window_candles=(
+                        int(no_mother_cross_window_candles) if is_multi_flappy else None
+                    ),
+                    no_mother_sl_buffer_pips=(
+                        float(no_mother_sl_buffer_pips) if is_multi_flappy else None
+                    ),
                     lot_mode=lot_mode,
                     risk_mode=risk_mode if lot_mode == "flex" else None,
                     risk_percent=risk_percent if lot_mode == "flex" else None,

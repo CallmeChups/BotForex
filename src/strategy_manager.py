@@ -276,6 +276,21 @@ def get_strategy_parameters(strategy_id: str) -> dict:
         'max_child_body_points': params.get('max_child_body_points', 2.0),
         'cross_window_candles': params.get('cross_window_candles', 12),
         'mother_coverage_enabled': params.get('mother_coverage_enabled', True),
+        'use_mother_candle': bool(params.get('use_mother_candle', True)),
+        'no_mother_child_candles': int(params.get('no_mother_child_candles', 2)),
+        'no_mother_child_body_ratio': float(params.get('no_mother_child_body_ratio', 1.5)),
+        'no_mother_child_body_max_points': float(
+            params.get('no_mother_child_body_max_points', 1.5)
+        ),
+        'no_mother_father_wick_max_pct': float(
+            params.get('no_mother_father_wick_max_pct', 40.0)
+        ),
+        'no_mother_cross_window_candles': int(
+            params.get('no_mother_cross_window_candles', 15)
+        ),
+        'no_mother_sl_buffer_pips': float(
+            params.get('no_mother_sl_buffer_pips', 5.0)
+        ),
         'limit_order_candles': params.get('limit_order_candles', 1),
         'magic': params.get('magic'),
         're_entry_after_sl': params.get('re_entry_after_sl', False),
