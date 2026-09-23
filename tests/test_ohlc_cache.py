@@ -70,3 +70,32 @@ def test_ensure_range_does_not_fetch_active_candle(tmp_path, monkeypatch):
     assert error is None
     assert source == "cache"
     assert len(loaded) == 2
+
+
+def test_ensure_range_ignores_leading_daily_session_break(tmp_path, monkeypatch):
+    path = tmp_path / "ohlc.sqlite3"
+    candles = pd.DataFrame([{
+        "time": datetime(2026, 6, 1, 22, 0, tzinfo=timezone.utc),
+        "open": 100,
+        "high": 101,
+        "low": 99,
+        "close": 100.5,
+    }])
+    append_candles("XAUUSDm", "M5", candles, path)
+
+    def fail_fetch(*args, **kwargs):
+        return None, "normal session break"
+
+    monkeypatch.setattr("src.ohlc_cache._fetch_mt5_range", fail_fetch)
+    loaded, error, source = ensure_range(
+        "XAUUSDm",
+        "M5",
+        datetime(2026, 6, 1, 17, 0, tzinfo=timezone.utc),
+        datetime(2026, 6, 2, 0, 0, tzinfo=timezone.utc),
+        {},
+        path,
+    )
+
+    assert error is None
+    assert source == "cache"
+    assert len(loaded) == 1

@@ -29,7 +29,10 @@ def _get_data_credentials(username: str) -> tuple[dict, str]:
 
 def main():
     st.title("💾 Market Data Setup")
-    st.caption("Cache dùng chung trên máy cho Backtest. Mặc định preload 90 ngày gần nhất.")
+    st.caption(
+        "Cache dùng chung trên máy cho Backtest. Mặc định preload 1 năm gần nhất. "
+        "Để tải được M1 đủ 1 năm, MT5 cần Max bars in chart tối thiểu 1,000,000."
+    )
 
     col1, col2 = st.columns(2)
     with col1:
@@ -37,8 +40,8 @@ def main():
         symbol = st.text_input("Symbol", value="XAUUSDm").strip()
         days = st.number_input(
             "Số ngày preload", min_value=90, max_value=3650,
-            value=90, step=90,
-            help="Mặc định là 90 ngày; có thể tải thêm lịch sử khi cần.",
+            value=365, step=30,
+            help="Có thể tải tối đa 10 năm; MT5 phải có đủ history và Max bars in chart phù hợp.",
         )
     with col2:
         timeframes = st.multiselect(

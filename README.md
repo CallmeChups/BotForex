@@ -231,11 +231,35 @@ BotForex/
 │   ├── orders.py            # MT5 order execution
 │   └── utils.py             # Shared helpers
 ├── strategies/              # Strategy YAML configs
+├── indicators/               # Indicator MQL5 cho MetaTrader 5
 ├── scripts/                 # verify_backtest.py, start_streamlit.bat
 ├── .github/workflows/       # deploy.yml CI/CD
 ├── tests/                   # 25 pytest tests
 └── docs/                    # Documentation
 ```
+
+### Indicator đỉnh đáy cho MT5
+
+Mã nguồn [SwingStructureMaster.mq5](indicators/SwingStructureMaster.mq5) là
+indicator độc lập cho MetaTrader 5. Sao chép hoặc biên dịch tệp này trong
+MetaEditor, sau đó thêm vào biểu đồ. Indicator có ba chế độ:
+
+- **Đường nối đỉnh đáy**: dùng độ sâu và khoảng đảo chiều tối thiểu.
+- **Nến mẫu**: xác nhận đỉnh/đáy khi nến cao hơn hoặc thấp hơn các nến xung quanh.
+- **Tùy chỉnh**: cài số nến mỗi bên, khoảng cách giá, số nến tối thiểu và bộ lọc ATR.
+
+Indicator hiển thị swing bằng các dấu chấm màu; có thể bật thêm đường nối giữa
+các điểm. Các điểm được phát hiện đều chờ đủ nến xác nhận, phù hợp để dùng làm
+nền cho EA.
+
+Tài liệu chi tiết xem tại [docs/mt5-swing-structure-master.md](docs/mt5-swing-structure-master.md).
+Các lưu ý khi viết indicator MQL5 được ghi tại
+[indicators/MT5_INDICATOR_NOTES.txt](indicators/MT5_INDICATOR_NOTES.txt).
+
+Indicator support/resistance theo phiên nằm tại
+[indicators/SessionSupportResistance.mq5](indicators/SessionSupportResistance.mq5).
+Mô tả logic và các phiên mặc định nằm trong
+[docs/mt5-session-support-resistance.md](docs/mt5-session-support-resistance.md).
 
 ## Tests
 

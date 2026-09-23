@@ -6,6 +6,7 @@ import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -19,6 +20,8 @@ TIMEFRAME_MINUTES = {
 OHLC_COLUMNS = (
     "time", "open", "high", "low", "close", "tick_volume", "spread", "real_volume"
 )
+LOCAL_TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
+MARKET_HOLIDAYS = {(1, 1), (12, 25), (12, 26)}
 
 
 def _connect(path: Path = CACHE_FILE) -> sqlite3.Connection:
@@ -200,11 +203,41 @@ def _interior_gaps(
             # a same-day gap of up to six hours as a normal market closure.
             if previous.date() == current.date() and gap_duration <= timedelta(hours=6):
                 continue
+            if _is_expected_market_closure(
+                previous.to_pydatetime(), current.to_pydatetime()
+            ):
+                continue
             gaps.append((
                 previous.to_pydatetime() + step,
                 current.to_pydatetime() - step,
             ))
     return gaps
+
+
+def _is_expected_market_closure(start: datetime, end: datetime) -> bool:
+    """Return whether a boundary gap is a normal weekend/session closure."""
+    start_local = start.astimezone(LOCAL_TIMEZONE)
+    end_local = end.astimezone(LOCAL_TIMEZONE)
+    duration = end_local - start_local
+    if duration <= timedelta(0):
+        return False
+    if duration > timedelta(days=3):
+        return False
+    if start_local.date() == end_local.date() and duration <= timedelta(hours=6):
+        return True
+    calendar_days = (end_local.date() - start_local.date()).days
+    crosses_weekend = any(
+        (start_local + timedelta(days=offset)).weekday() >= 5
+        for offset in range(calendar_days + 1)
+    )
+    # Keep holiday handling explicit: broker CFD feeds commonly close longer
+    # than the daily break on these fixed-date market holidays.
+    return crosses_weekend or any(
+        (start_local + timedelta(days=offset)).strftime("%m-%d") in {
+            f"{month:02d}-{day:02d}" for month, day in MARKET_HOLIDAYS
+        }
+        for offset in range(calendar_days + 1)
+    )
 
 
 def _fetch_mt5_range(
@@ -303,7 +336,32 @@ def _fetch_mt5_range(
         frame["time"] = pd.to_datetime(frame["time"], unit="s", utc=True).dt.tz_convert(
             "Asia/Ho_Chi_Minh"
         )
-        return frame.sort_values("time").reset_index(drop=True), None
+        frame = frame.sort_values("time").reset_index(drop=True)
+        # MT5 can return a recent subset silently when the terminal's
+        # "Max bars in chart" limit is lower than the requested history.
+        # Do not mark that subset as a successful preload; otherwise the cache
+        # looks healthy while the requested leading months remain unavailable.
+        requested_start = start.astimezone(timezone.utc)
+        requested_end = end.astimezone(timezone.utc)
+        actual_start = pd.Timestamp(frame["time"].iloc[0]).tz_convert("UTC").to_pydatetime()
+        actual_end = pd.Timestamp(frame["time"].iloc[-1]).tz_convert("UTC").to_pydatetime()
+        tolerance = timedelta(days=7)
+        if actual_start > requested_start + tolerance:
+            return None, (
+                f"MT5 chỉ trả dữ liệu {symbol} {timeframe} từ "
+                f"{actual_start.strftime('%Y-%m-%d %H:%M')} trong khi cần từ "
+                f"{requested_start.strftime('%Y-%m-%d %H:%M')}. "
+                "Hãy tăng MT5 > Tools > Options > Charts > Max bars in chart "
+                "(khuyến nghị 1,000,000), restart MT5 và mở lại chart/timeframe."
+            )
+        if actual_end < requested_end - tolerance:
+            return None, (
+                f"MT5 chỉ trả dữ liệu {symbol} {timeframe} đến "
+                f"{actual_end.strftime('%Y-%m-%d %H:%M')} trong khi cần đến "
+                f"{requested_end.strftime('%Y-%m-%d %H:%M')}. "
+                "Hãy mở chart đúng symbol/timeframe để MT5 tải thêm history rồi thử lại."
+            )
+        return frame, None
     except Exception as error:
         return None, str(error)
     finally:
@@ -334,6 +392,7 @@ def ensure_range(
     end = normalized_end
     metadata = get_metadata(symbol, timeframe, path)
     fetch_ranges = []
+    fetched_any = False
     if metadata is None:
         fetch_ranges.append((start, end))
     else:
@@ -357,6 +416,8 @@ def ensure_range(
             continue
         frame, error = _fetch_mt5_range(symbol, timeframe, fetch_start, fetch_end, credentials)
         if error:
+            if _is_expected_market_closure(fetch_start, fetch_end):
+                continue
             direction = "đầu" if fetch_start <= start.astimezone(timezone.utc) else "cuối"
             return None, (
                 f"Cache thiếu dữ liệu ở {direction} khoảng yêu cầu "
@@ -364,6 +425,7 @@ def ensure_range(
                 f"{fetch_end.strftime('%Y-%m-%d %H:%M')}). {error}"
             ), "error"
         append_candles(symbol, timeframe, frame, path)
+        fetched_any = True
 
     for fetch_start, fetch_end in _interior_gaps(symbol, timeframe, start, end, path):
         frame, error = _fetch_mt5_range(symbol, timeframe, fetch_start, fetch_end, credentials)
@@ -374,8 +436,31 @@ def ensure_range(
                 f"{fetch_end.strftime('%Y-%m-%d %H:%M')}). {error}"
             ), "error"
         append_candles(symbol, timeframe, frame, path)
+        fetched_any = True
 
     result = load_range(symbol, timeframe, start, end, path)
     if result.empty:
         return None, "Cache không có dữ liệu trong khoảng đã chọn.", "missing"
-    return result, None, "fetched" if fetch_ranges else "cache"
+    requested_start = start.astimezone(timezone.utc)
+    requested_end = end.astimezone(timezone.utc)
+    actual_start = pd.Timestamp(result["time"].iloc[0]).tz_convert("UTC").to_pydatetime()
+    actual_end = pd.Timestamp(result["time"].iloc[-1]).tz_convert("UTC").to_pydatetime()
+    if actual_start > requested_start and not _is_expected_market_closure(
+        requested_start, actual_start
+    ):
+        return None, (
+            f"Cache chưa đủ dữ liệu đầu khoảng yêu cầu: có từ "
+            f"{actual_start.strftime('%Y-%m-%d %H:%M')} UTC, cần từ "
+            f"{requested_start.strftime('%Y-%m-%d %H:%M')} UTC. "
+            "Hãy preload lại sau khi MT5 tải đủ history."
+        ), "missing"
+    if actual_end < requested_end and not _is_expected_market_closure(
+        actual_end, requested_end
+    ):
+        return None, (
+            f"Cache chưa đủ dữ liệu cuối khoảng yêu cầu: có đến "
+            f"{actual_end.strftime('%Y-%m-%d %H:%M')} UTC, cần đến "
+            f"{requested_end.strftime('%Y-%m-%d %H:%M')} UTC. "
+            "Hãy preload lại sau khi MT5 tải đủ history."
+        ), "missing"
+    return result, None, "fetched" if fetched_any else "cache"
