@@ -1377,6 +1377,12 @@ def _run_flappy_bird_backtest(
             trade["_child_count"] = signal_child_count
             trade["_min_father_body_points"] = min_father_body_points
             trade["_use_mother_candle"] = use_mother_candle
+            trade["_no_mother_child_candles"] = no_mother_child_candles
+            trade["_no_mother_child_body_ratio"] = no_mother_child_body_ratio
+            trade["_no_mother_child_body_max_points"] = no_mother_child_body_max_points
+            trade["_no_mother_father_wick_max_pct"] = no_mother_father_wick_max_pct
+            trade["_no_mother_cross_window_candles"] = no_mother_cross_window_candles
+            trade["_no_mother_sl_buffer_pips"] = no_mother_sl_buffer_pips
             trade["_max_child_body_points"] = max_child_body_points
             trade["_min_child_candles"] = min_child_candles
             trade["_max_child_candles"] = max_child_candles

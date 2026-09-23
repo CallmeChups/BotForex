@@ -249,6 +249,24 @@ def test_flappy_bird_without_mother_uses_all_children_for_stop_loss():
     assert signal["stop_loss"] == pytest.approx(96.8)
 
 
+def test_flappy_bird_without_mother_debug_checks_do_not_access_mother():
+    children = [
+        _candle(101.0, 103.0, 100.0, 102.0),
+        _candle(102.0, 104.0, 101.0, 103.0),
+    ]
+    father = _candle(105.0, 108.0, 99.0, 108.0)
+
+    diagnostics = diagnose_flappy_bird(
+        None, children, father, 104.0, 103.0, 100.0,
+        direction="BUY",
+        include_checks=True,
+        use_mother_candle=False,
+    )
+
+    assert diagnostics["valid"] is True
+    assert diagnostics["checks"][3]["actual"] == "Không áp dụng"
+
+
 def test_flappy_bird_limits_both_adjacent_child_bodies_and_breakout():
     mother, children, father = _valid_parts()
     assert not detect_flappy_bird_signal(

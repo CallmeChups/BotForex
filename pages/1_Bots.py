@@ -1058,48 +1058,51 @@ def show_create_bot():
             max_child_body_points = float(params.get("max_child_body_points", 2.0))
             cross_window_candles = int(params.get("cross_window_candles", 12))
             if is_multi_flappy:
-                st.markdown("**Pattern**")
+                st.markdown("**Cấu hình pattern**")
                 use_mother_candle = st.checkbox(
                     "Sử dụng Nến Mẹ",
                     value=bool(params.get("use_mother_candle", True)),
                     key=f"{sk}_use_mother_candle",
                 )
+                if use_mother_candle:
+                    st.markdown("**Pattern có Nến Mẹ**")
             with _or_col1:
                 sl_buffer_pips = float(params.get('sl_buffer_pips', 5.0))
                 min_father_body_points = st.number_input(
-                    "Thân Cha tối thiểu (price points)",
+                    "Thân nến Cha tối thiểu (giá)",
                     value=float(params.get("min_father_body_points", 2.0)),
                     min_value=0.0,
                     max_value=100000.0,
                     step=0.1,
                     format="%.1f",
                     key=f"{sk}_min_father_body_points",
-                    help="Signal chỉ hợp lệ khi Body Cha lớn hơn giá trị này.",
+                    help="Signal chỉ hợp lệ khi thân nến Cha lớn hơn giá trị này.",
                 )
                 if not is_multi_flappy or use_mother_candle:
                     max_child_body_points = st.number_input(
-                        "Thân Con tối đa (price points)",
+                        "Thân nến Con tối đa (giá)",
                         value=float(params.get("max_child_body_points", 2.0)),
                         min_value=0.0, max_value=100000.0, step=0.1,
                         format="%.1f", key=f"{sk}_max_child_body_points",
-                        help="Body của các Nến Con cuối trong pattern có Mẹ.",
+                        help="Thân nến của các nến Con cuối trong pattern có Mẹ.",
                     )
                     cross_window_candles = st.number_input(
-                        "Vòng đời sau điểm chạm cắt EMA 8/13 (nến)",
+                        "Giới hạn giao cắt EMA 8/13 (nến)",
                         value=int(params.get("cross_window_candles", 12)),
                         min_value=0, max_value=500, step=1,
                         key=f"{sk}_cross_window_candles",
                     )
-                st.caption(f"SL buffer cố định: {sl_buffer_pips:g} pips")
+                if not is_multi_flappy or use_mother_candle:
+                    st.caption(f"Khoảng đệm SL cố định: {sl_buffer_pips:g} pip")
                 if not is_multi_flappy or use_mother_candle:
                     min_child_candles = st.number_input(
-                        "Nến Con tối thiểu",
+                        "Số nến Con tối thiểu",
                         value=int(params.get("min_child_candles", 2)),
                         min_value=2, max_value=20, step=1,
                         key=f"{sk}_min_child_candles",
                     )
                     max_child_candles = st.number_input(
-                        "Nến Con tối đa",
+                        "Số nến Con tối đa",
                         value=int(params.get("max_child_candles", 5)),
                         min_value=2, max_value=20, step=1,
                         key=f"{sk}_max_child_candles",
@@ -1108,46 +1111,46 @@ def show_create_bot():
                         st.error("Nến Con tối đa phải >= tối thiểu.")
                         max_child_candles = min_child_candles
                     mother_coverage_enabled = st.checkbox(
-                        "Kiểm tra Mẹ bao thân Nến Con",
+                        "Nến Mẹ bao phủ thân nến Con",
                         value=bool(params.get("mother_coverage_enabled", True)),
                         key=f"{sk}_mother_coverage_enabled",
                         help="Bật: yêu cầu biên Mẹ bao trùm thân các Nến Con.",
                     )
                 if is_multi_flappy:
-                    st.markdown("**Pattern không có Nến Mẹ**")
                     if not use_mother_candle:
+                        st.markdown("**Pattern không có Nến Mẹ**")
                         no_mother_child_candles = st.number_input(
-                            "Số Nến Con",
+                            "Số nến Con",
                             value=int(params.get("no_mother_child_candles", 2)),
                             min_value=1, max_value=20, step=1,
                             key=f"{sk}_no_mother_child_candles",
                         )
                         no_mother_child_body_ratio = st.number_input(
-                            "Tỷ lệ body Cha / body Con",
+                            "Tỷ lệ thân nến Cha / thân nến Con",
                             value=float(params.get("no_mother_child_body_ratio", 1.5)),
                             min_value=0.01, max_value=100.0, step=0.1,
                             key=f"{sk}_no_mother_child_body_ratio",
                         )
                         no_mother_child_body_max_points = st.number_input(
-                            "Body Con tối đa",
+                            "Thân nến Con tối đa (giá)",
                             value=float(params.get("no_mother_child_body_max_points", 1.5)),
                             min_value=0.0, max_value=100000.0, step=0.1,
                             key=f"{sk}_no_mother_child_body_max_points",
                         )
                         no_mother_father_wick_max_pct = st.number_input(
-                            "Râu Cha tối đa (%)",
+                            "Râu nến Cha tối đa (%)",
                             value=float(params.get("no_mother_father_wick_max_pct", 40.0)),
                             min_value=0.0, max_value=100.0, step=1.0,
                             key=f"{sk}_no_mother_father_wick_max_pct",
                         )
                         no_mother_cross_window_candles = st.number_input(
-                            "Cross EMA tối đa (nến)",
+                            "Giới hạn giao cắt EMA 8/13 (nến)",
                             value=int(params.get("no_mother_cross_window_candles", 15)),
                             min_value=0, max_value=500, step=1,
                             key=f"{sk}_no_mother_cross_window_candles",
                         )
                         no_mother_sl_buffer_pips = st.number_input(
-                            "SL buffer (pip)",
+                            "Khoảng đệm SL (pip)",
                             value=float(params.get("no_mother_sl_buffer_pips", 5.0)),
                             min_value=0.0, max_value=200.0, step=0.5,
                             key=f"{sk}_no_mother_sl_buffer_pips",

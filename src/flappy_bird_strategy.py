@@ -507,6 +507,7 @@ def diagnose_flappy_bird(
             "label": "Nến Mẹ cùng chiều với chiến lược",
             "passed": mother_is_directional if use_mother_candle else True,
             "actual": (
+                "Không áp dụng" if not use_mother_candle else
                 "Bullish" if mother["close"] > mother["open"]
                 else "Bearish" if mother["close"] < mother["open"]
                 else "Doji"
