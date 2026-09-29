@@ -1,0 +1,50 @@
+id: swing_ema_zigzag
+name: Swing ZigZag + 3 EMA
+version: "1.0"
+description: |
+  Confirmed ZigZag swing structure with Higher High/Higher Low or
+  Lower High/Lower Low, aligned EMA13/21/55 and stop-order entry.
+author: admin
+created: "2026-09-29"
+enabled: true
+
+entry:
+  type: pattern
+  timeframe: M1
+  pattern: swing_ema_zigzag
+  ema_periods:
+    - 13
+    - 21
+    - 55
+  zigzag:
+    depth: 3
+    deviation_points: 3
+    back_step: 3
+  min_structure_candles: 10
+  max_structure_candles: 20
+  ema_cross_window_candles: 15
+
+exit:
+  tp:
+    type: price_based
+  sl:
+    type: price_based
+  ema_exit:
+    enabled: true
+    period: 21
+
+parameters:
+  rr_ratio: 2.0
+  # Offset the stop-entry from High2/Low2; kept separate from the SL buffer.
+  entry_buffer_pips: 2.0
+  sl_buffer_pips: 5.0
+  pending_expiry_candles: 7
+  max_pending_orders_per_symbol: 0
+  lot_size: 0.01
+  magic: 212500
+
+symbols:
+  - XAUUSDm
+  - XAUUSD
+  - BTCUSD
+  - ETHUSD

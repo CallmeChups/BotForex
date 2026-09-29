@@ -11,6 +11,7 @@ from typing import Optional
 
 STRATEGIES_DIR = "strategies"
 FLAPPY_STRATEGY_IDS = frozenset({"flappy_bird", "multi_flappy_bird"})
+SWING_STRATEGY_IDS = frozenset({"swing_ema_zigzag"})
 
 
 def is_flappy_strategy(strategy_id: str) -> bool:
@@ -21,6 +22,11 @@ def is_flappy_strategy(strategy_id: str) -> bool:
 def is_multi_flappy_strategy(strategy_id: str) -> bool:
     """Return whether a strategy uses the higher-timeframe Multi engine."""
     return strategy_id == "multi_flappy_bird"
+
+
+def is_swing_strategy(strategy_id: str) -> bool:
+    """Return whether a strategy uses the swing EMA zigzag engine."""
+    return strategy_id in SWING_STRATEGY_IDS
 
 
 def get_strategies_dir() -> str:
@@ -237,6 +243,56 @@ def get_strategy_parameters(strategy_id: str) -> dict:
         if any(value < 2 for value in values) or not values[0] < values[1] < values[2]:
             raise ValueError(f"Multi Flappy {name} EMA periods must satisfy 2 <= short < medium < long")
 
+    swing_ema_periods = {
+        'fast': int(legacy_ema[0]),
+        'medium': int(legacy_ema[1]),
+        'slow': int(legacy_ema[2]),
+    }
+    zigzag = entry.get('zigzag', {})
+    zigzag_depth = int(zigzag.get('depth', 3))
+    zigzag_deviation_points = float(zigzag.get('deviation_points', 3))
+    zigzag_back_step = int(zigzag.get('back_step', 3))
+    min_structure_candles = int(entry.get('min_structure_candles', 10))
+    max_structure_candles = int(entry.get('max_structure_candles', 20))
+    ema_cross_window_candles = int(entry.get('ema_cross_window_candles', 15))
+    ema_exit_enabled = bool(exit_config.get('ema_exit', {}).get('enabled', True))
+    ema_exit_period = int(exit_config.get('ema_exit', {}).get('period', 21))
+    pending_expiry_candles = int(params.get('pending_expiry_candles', 7))
+    max_pending_orders_per_symbol = int(params.get('max_pending_orders_per_symbol', 0))
+    sl_buffer_pips = float(params.get('sl_buffer_pips', 5.0))
+    entry_buffer_pips = float(params.get('entry_buffer_pips', 2.0))
+
+    if is_swing_strategy(strategy_id):
+        swing_values = [
+            swing_ema_periods['fast'],
+            swing_ema_periods['medium'],
+            swing_ema_periods['slow'],
+        ]
+        if any(value < 2 for value in swing_values) or not swing_values[0] < swing_values[1] < swing_values[2]:
+            raise ValueError("Swing EMA periods must satisfy 2 <= fast < medium < slow")
+        if zigzag_depth <= 0:
+            raise ValueError("Swing zigzag depth must be positive")
+        if zigzag_deviation_points < 0:
+            raise ValueError("Swing zigzag deviation_points cannot be negative")
+        if zigzag_back_step < 0:
+            raise ValueError("Swing zigzag back_step cannot be negative")
+        if min_structure_candles <= 0:
+            raise ValueError("Swing min_structure_candles must be positive")
+        if max_structure_candles < min_structure_candles:
+            raise ValueError("Swing max_structure_candles must be >= min_structure_candles")
+        if ema_cross_window_candles < 0:
+            raise ValueError("Swing ema_cross_window_candles cannot be negative")
+        if ema_exit_period <= 0:
+            raise ValueError("Swing ema_exit period must be positive")
+        if pending_expiry_candles <= 0:
+            raise ValueError("Swing pending_expiry_candles must be positive")
+        if max_pending_orders_per_symbol < 0:
+            raise ValueError("Swing max_pending_orders_per_symbol cannot be negative")
+        if sl_buffer_pips < 0:
+            raise ValueError("Swing sl_buffer_pips cannot be negative")
+        if entry_buffer_pips < 0:
+            raise ValueError("Swing entry_buffer_pips cannot be negative")
+
     return {
         'timeframe': entry.get('timeframe', 'M5'),
         'entry_type': entry.get('type', 'time'),
@@ -245,6 +301,7 @@ def get_strategy_parameters(strategy_id: str) -> dict:
         'pattern': entry.get('pattern', ''),
         'ema_period': entry.get('ema_period', 21),
         'ema_periods': legacy_ema,
+        'swing_ema_periods': swing_ema_periods,
         'ema_consensus': ema_consensus,
         'ema_fallback': ema_fallback,
         'ema_consensus_enabled': bool(entry.get('ema_consensus_enabled', True)),
@@ -269,12 +326,23 @@ def get_strategy_parameters(strategy_id: str) -> dict:
         'entry_mode': params.get('entry_mode', 'close'),
         'entry_percent': params.get('entry_percent', 0.0),
         'entry_body_percent': params.get('entry_body_percent', 5.0),
-        'sl_buffer_pips': params.get('sl_buffer_pips', 5.0),
+        'sl_buffer_pips': sl_buffer_pips,
+        'entry_buffer_pips': entry_buffer_pips,
         'min_father_body_points': params.get('min_father_body_points', 2.0),
         'min_child_candles': params.get('min_child_candles', 2),
         'max_child_candles': params.get('max_child_candles', 5),
         'max_child_body_points': params.get('max_child_body_points', 2.0),
         'cross_window_candles': params.get('cross_window_candles', 12),
+        'zigzag_depth': zigzag_depth,
+        'zigzag_deviation_points': zigzag_deviation_points,
+        'zigzag_back_step': zigzag_back_step,
+        'min_structure_candles': min_structure_candles,
+        'max_structure_candles': max_structure_candles,
+        'ema_cross_window_candles': ema_cross_window_candles,
+        'ema_exit_enabled': ema_exit_enabled,
+        'ema_exit_period': ema_exit_period,
+        'pending_expiry_candles': pending_expiry_candles,
+        'max_pending_orders_per_symbol': max_pending_orders_per_symbol,
         'mother_coverage_enabled': params.get('mother_coverage_enabled', True),
         'use_mother_candle': bool(params.get('use_mother_candle', True)),
         'no_mother_child_candles': int(params.get('no_mother_child_candles', 2)),

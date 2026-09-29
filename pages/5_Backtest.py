@@ -31,7 +31,7 @@ from src.flappy_bird_strategy import diagnose_flappy_bird
 from src.utils import get_pip_value, report_page_error
 from src.strategy_manager import (
     list_strategies, get_strategy_parameters, is_flappy_strategy,
-    is_multi_flappy_strategy,
+    is_multi_flappy_strategy, is_swing_strategy,
 )
 from src.backtest_history import (
     save_backtest_result,
@@ -199,6 +199,24 @@ def main():
     is_feg_stop_order = (selected_strategy == 'feg_stop_order')
     is_flappy_bird = is_flappy_strategy(selected_strategy)
     is_multi_flappy = is_multi_flappy_strategy(selected_strategy)
+    is_swing_ema = is_swing_strategy(selected_strategy)
+    swing_ema_periods = dict(params.get(
+        "swing_ema_periods", {"fast": 13, "medium": 21, "slow": 55}
+    ))
+    swing_zigzag_depth = int(params.get("zigzag_depth", 3))
+    swing_zigzag_deviation_points = float(params.get("zigzag_deviation_points", 3.0))
+    swing_zigzag_back_step = int(params.get("zigzag_back_step", 3))
+    swing_min_structure_candles = int(params.get("min_structure_candles", 10))
+    swing_max_structure_candles = int(params.get("max_structure_candles", 20))
+    swing_ema_cross_window_candles = int(params.get("ema_cross_window_candles", 15))
+    swing_ema_exit_enabled = bool(params.get("ema_exit_enabled", True))
+    swing_ema_exit_period = int(params.get("ema_exit_period", 21))
+    swing_entry_buffer_pips = float(params.get("entry_buffer_pips", 2.0))
+    swing_sl_buffer_pips = float(params.get("sl_buffer_pips", 5.0))
+    swing_pending_expiry_candles = int(params.get("pending_expiry_candles", 7))
+    swing_max_pending_orders_per_symbol = int(
+        params.get("max_pending_orders_per_symbol", 0)
+    )
     consensus = params.get("ema_consensus", {"short": 13, "medium": 21, "long": 55})
     fallback = params.get("ema_fallback", consensus)
     higher_consensus = params.get("higher_ema_consensus", consensus)
@@ -307,9 +325,9 @@ def main():
                 h2_exceed_pips = c2_gap_pips = ema_margin_pips = 0.0
                 ema_filter_enabled = True
                 buy_ema_side = sell_ema_side = "above_ema"
-            elif is_flappy_bird:
+            elif is_flappy_bird or is_swing_ema:
                 _use_mc = True
-                st.caption("7 nến cố định")
+                st.caption("Không dùng time exit" if is_swing_ema else "7 nến cố định")
             else:
                 _use_mc = st.checkbox("Giới hạn số nến", value=True)
         # Row 2: inputs that depend on row-1 toggles
@@ -371,7 +389,7 @@ def main():
                     higher_ema_fallback_long = cols[2].number_input("Dài hạn", min_value=4, max_value=500, value=int(higher_fallback["long"]), key="backtest_higher_fallback_long_multi", disabled=not higher_timeframe_filter_enabled)
                 flappy_entry_body_percent = st.number_input("Entry offset (% thân Cha)", value=float(params.get("entry_body_percent", 5.0)), min_value=0.0, max_value=100.0, step=0.5, format="%.1f", key="backtest_entry_body_percent_multi")
                 ema_period = 21
-            elif is_flappy_bird:
+            if is_flappy_bird or is_swing_ema:
                 st.empty()
                 max_candles = 0
             else:
@@ -480,7 +498,12 @@ def main():
         if not is_multi_flappy:
             flappy_consensus_short = flappy_consensus_medium = flappy_consensus_long = None
             flappy_fallback_short = flappy_fallback_medium = flappy_fallback_long = None
-            flappy_entry_body_percent = None
+            configured_entry_body_percent = params.get("entry_body_percent", 5.0)
+            flappy_entry_body_percent = (
+                5.0
+                if configured_entry_body_percent is None
+                else float(configured_entry_body_percent)
+            )
             flappy_consensus_enabled = flappy_fallback_enabled = None
             current_timeframe_filter_enabled = True
             higher_timeframe_filter_enabled = False
@@ -489,7 +512,85 @@ def main():
             higher_ema_consensus_enabled = higher_ema_fallback_enabled = True
         if is_pattern and not is_multi_flappy:
             _section_header("📈", "ENTRY", "#10b981")
-            if is_flappy_bird:
+            if is_swing_ema:
+                st.markdown("**EMA đồng thuận**")
+                ema_cols = st.columns(3)
+                for column, slot, label in zip(
+                    ema_cols, ("fast", "medium", "slow"), ("Ngắn hạn", "Trung hạn", "Dài hạn")
+                ):
+                    swing_ema_periods[slot] = column.number_input(
+                        label,
+                        min_value=2,
+                        max_value=500,
+                        value=int(swing_ema_periods[slot]),
+                        key=f"backtest_swing_ema_{slot}",
+                    )
+                if not (
+                    swing_ema_periods["fast"] < swing_ema_periods["medium"]
+                    < swing_ema_periods["slow"]
+                ):
+                    st.error("EMA cần thỏa thứ tự: ngắn hạn < trung hạn < dài hạn.")
+                    timeframe_relation_valid = False
+                st.markdown("**ZigZag và bộ lọc cấu trúc**")
+                swing_cols = st.columns(3)
+                swing_zigzag_depth = swing_cols[0].number_input(
+                    "Độ sâu (Depth)",
+                    min_value=1,
+                    max_value=100,
+                    value=swing_zigzag_depth,
+                    key="backtest_swing_zigzag_depth",
+                )
+                swing_zigzag_deviation_points = swing_cols[1].number_input(
+                    "Độ lệch (Deviation, point)",
+                    min_value=0.0,
+                    max_value=100000.0,
+                    value=swing_zigzag_deviation_points,
+                    step=0.5,
+                    key="backtest_swing_zigzag_deviation",
+                )
+                swing_zigzag_back_step = swing_cols[2].number_input(
+                    "Khoảng lùi (Back Step)",
+                    min_value=0,
+                    max_value=100,
+                    value=swing_zigzag_back_step,
+                    key="backtest_swing_zigzag_back_step",
+                )
+                swing_cols = st.columns(3)
+                swing_min_structure_candles = swing_cols[0].number_input(
+                    "Cấu trúc tối thiểu (nến)",
+                    min_value=1,
+                    max_value=1000,
+                    value=swing_min_structure_candles,
+                    key="backtest_swing_min_structure",
+                )
+                swing_max_structure_candles = swing_cols[1].number_input(
+                    "Cấu trúc tối đa (nến)",
+                    min_value=swing_min_structure_candles,
+                    max_value=2000,
+                    value=max(swing_max_structure_candles, swing_min_structure_candles),
+                    key="backtest_swing_max_structure",
+                )
+                swing_ema_cross_window_candles = swing_cols[2].number_input(
+                    "Tuổi giao cắt EMA (nến)",
+                    min_value=0,
+                    max_value=1000,
+                    value=swing_ema_cross_window_candles,
+                    key="backtest_swing_cross_window",
+                )
+                ema_period = swing_ema_periods["medium"]
+                h2_exceed_pips = c2_gap_pips = ema_margin_pips = 0.0
+                ema_filter_enabled = True
+                buy_ema_side = sell_ema_side = "above_ema"
+                entry_mode = "swing_stop"
+                entry_percent = 0.0
+                limit_order_candles = swing_pending_expiry_candles
+                c2_buy_upper_wick_max_pct = None
+                c2_buy_lower_wick_max_pct = None
+                c2_sell_upper_wick_max_pct = None
+                c2_sell_lower_wick_max_pct = None
+                c2_buy_upper_wick_cmp = c2_buy_lower_wick_cmp = "lt"
+                c2_sell_upper_wick_cmp = c2_sell_lower_wick_cmp = "lt"
+            elif is_flappy_bird:
                 # Flappy uses EMA13/21/55 and its own pattern checks; these
                 # generic FEG controls are intentionally hidden.
                 ema_period = 21
@@ -720,6 +821,9 @@ def main():
                         "SELL EMA13 < EMA21 < EMA55 | "
                         f"Entry = Close Cha ± {flappy_entry_body_percent:.1f}% thân Cha | SL/TP đối xứng"
                     )
+                elif is_swing_ema:
+                    entry_mode = "swing_stop"
+                    st.caption("Entry bằng Stop Order tại pivot đã cộng/trừ buffer.")
                 elif not is_feg_stop_order:
                     _em_opts = ["close", "range_percent"]
                     entry_mode = st.radio("Entry Mode", options=_em_opts,
@@ -730,7 +834,10 @@ def main():
                     entry_mode = "close"
                     st.caption("Entry Mode: Market (Stop Order)")
             with er2_4:
-                if not is_feg_stop_order:
+                if is_swing_ema:
+                    entry_percent = 0.0
+                    limit_order_candles = swing_pending_expiry_candles
+                elif not is_feg_stop_order:
                     if is_flappy_bird:
                         entry_percent = float(params.get('entry_body_percent', 5.0))
                         limit_order_candles = st.number_input(
@@ -759,7 +866,7 @@ def main():
                                                           help="Số nến tối đa để chờ stop order fill")
             # Flappy Bird already defines its directional wick rules in the
             # strategy implementation, so this generic filter is not editable.
-            if not is_flappy_bird:
+            if not is_flappy_bird and not is_swing_ema:
                 # Full-width Wick Filter (outside e_left/e_right to avoid narrow columns)
                 st.divider()
                 st.caption("**Wick Filter** — để trống = tắt  |  < râu nhỏ hơn body × n%  |  > râu lớn hơn body × n%")
@@ -847,6 +954,7 @@ def main():
         no_mother_father_wick_max_pct = 40.0
         no_mother_cross_window_candles = 15
         no_mother_sl_buffer_pips = 5.0
+        allow_concurrent_trades = False
         if is_multi_flappy:
             st.markdown("**Cấu hình pattern**")
             use_mother_candle = st.checkbox(
@@ -856,7 +964,51 @@ def main():
             )
             if use_mother_candle:
                 st.markdown("**Pattern có Nến Mẹ**")
-        if is_flappy_bird:
+            allow_concurrent_trades = st.checkbox(
+                "Cho phép nhiều lệnh đồng thời",
+                value=False,
+                key="backtest_allow_concurrent_trades",
+                help=(
+                    "Khi bật, backtest vẫn quét tín hiệu mới trong lúc lệnh khác "
+                    "đang chạy. Mặc định tắt để giữ cơ chế 1 lệnh tại một thời điểm."
+                ),
+            )
+        if is_swing_ema:
+            buffer_k = 0.0
+            re_entry_after_sl = False
+            swing_entry_buffer_pips = st.number_input(
+                "Buffer Entry (pip)",
+                value=float(params.get("entry_buffer_pips", 2.0)),
+                min_value=0.0,
+                max_value=200.0,
+                step=0.5,
+                key="backtest_swing_entry_buffer",
+                help="BUY cộng buffer vào đỉnh 2; SELL trừ buffer khỏi đáy 2.",
+            )
+            swing_sl_buffer_pips = st.number_input(
+                "Buffer Stop Loss (pip)",
+                value=float(params.get("sl_buffer_pips", 5.0)),
+                min_value=0.0,
+                max_value=200.0,
+                step=0.5,
+                key="backtest_swing_sl_buffer",
+            )
+            swing_pending_expiry_candles = st.number_input(
+                "Hủy Stop Order sau (nến)",
+                value=int(params.get("pending_expiry_candles", 7)),
+                min_value=1,
+                max_value=500,
+                key="backtest_swing_pending_expiry",
+            )
+            swing_max_pending_orders_per_symbol = st.number_input(
+                "Số pending tối đa",
+                value=int(params.get("max_pending_orders_per_symbol", 0)),
+                min_value=0,
+                max_value=100,
+                key="backtest_swing_max_pending",
+                help="0 = không giới hạn.",
+            )
+        elif is_flappy_bird:
             buffer_k = 0.0
             re_entry_after_sl = False
             min_father_body_points = st.number_input(
@@ -1000,7 +1152,26 @@ def main():
 
         # ── ZONE 4: EXIT ──────────────────────────────────────────────────
         _section_header("🚪", "EXIT", "#ef4444")
-        if is_flappy_bird:
+        if is_swing_ema:
+            tp_type = "price_based"
+            sl_type = "price_based"
+            be_enabled = False
+            be_r = 1.0
+            swing_ema_exit_enabled = st.checkbox(
+                "Thoát khi nến đóng qua EMA",
+                value=bool(params.get("ema_exit_enabled", True)),
+                key="backtest_swing_ema_exit_enabled",
+            )
+            swing_ema_exit_period = st.number_input(
+                "EMA thoát lệnh",
+                value=int(params.get("ema_exit_period", 21)),
+                min_value=2,
+                max_value=500,
+                key="backtest_swing_ema_exit_period",
+                disabled=not swing_ema_exit_enabled,
+            )
+            st.caption("TP/SL theo giá · Không dùng Break-Even")
+        elif is_flappy_bird:
             tp_type = "price_based"
             sl_type = "price_based"
             be_enabled = False
@@ -1185,6 +1356,7 @@ def main():
                         no_mother_cross_window_candles
                     ),
                     flappy_no_mother_sl_buffer_pips=float(no_mother_sl_buffer_pips),
+                    flappy_allow_concurrent_trades=bool(allow_concurrent_trades),
                     higher_timeframe_df=higher_df,
                     higher_timeframe_filter_enabled=bool(
                         is_multi_flappy and higher_timeframe_filter_enabled
@@ -1198,6 +1370,21 @@ def main():
                     higher_ema_consensus_enabled=bool(higher_ema_consensus_enabled),
                     higher_ema_fallback_enabled=bool(higher_ema_fallback_enabled),
                     current_timeframe_filter_enabled=bool(current_timeframe_filter_enabled),
+                    swing_ema_periods=swing_ema_periods,
+                    swing_zigzag_depth=int(swing_zigzag_depth),
+                    swing_zigzag_deviation_points=float(swing_zigzag_deviation_points),
+                    swing_zigzag_back_step=int(swing_zigzag_back_step),
+                    swing_min_structure_candles=int(swing_min_structure_candles),
+                    swing_max_structure_candles=int(swing_max_structure_candles),
+                    swing_ema_cross_window_candles=int(swing_ema_cross_window_candles),
+                    swing_ema_exit_enabled=bool(swing_ema_exit_enabled),
+                    swing_ema_exit_period=int(swing_ema_exit_period),
+                    swing_entry_buffer_pips=float(swing_entry_buffer_pips),
+                    swing_sl_buffer_pips=float(swing_sl_buffer_pips),
+                    swing_pending_expiry_candles=int(swing_pending_expiry_candles),
+                    swing_max_pending_orders_per_symbol=int(
+                        swing_max_pending_orders_per_symbol
+                    ),
                     progress_callback=update_backtest_progress,
                 )
             progress_bar.progress(1.0, text="Backtest hoàn tất")
@@ -1208,6 +1395,7 @@ def main():
 
             # Build config dict for export/history
             backtest_config = {
+                'strategy_id': selected_strategy,
                 'timeframe': timeframe,
                 'start_date': str(start_date),
                 'end_date': str(end_date),
@@ -1218,6 +1406,22 @@ def main():
                 'entry_percent': entry_percent,
                 'entry_body_percent': flappy_entry_body_percent,
                 'rr_ratio': rr_ratio,
+                'swing_ema_periods': dict(swing_ema_periods),
+                'swing_zigzag_depth': int(swing_zigzag_depth),
+                'swing_zigzag_deviation_points': float(swing_zigzag_deviation_points),
+                'swing_zigzag_back_step': int(swing_zigzag_back_step),
+                'swing_min_structure_candles': int(swing_min_structure_candles),
+                'swing_max_structure_candles': int(swing_max_structure_candles),
+                'swing_ema_cross_window_candles': int(swing_ema_cross_window_candles),
+                'swing_ema_exit_enabled': bool(swing_ema_exit_enabled),
+                'swing_ema_exit_period': int(swing_ema_exit_period),
+                'swing_entry_buffer_pips': float(swing_entry_buffer_pips),
+                'swing_sl_buffer_pips': float(swing_sl_buffer_pips),
+                'swing_pending_expiry_candles': int(swing_pending_expiry_candles),
+                'swing_max_pending_orders_per_symbol': int(
+                    swing_max_pending_orders_per_symbol
+                ),
+                'flappy_allow_concurrent_trades': bool(allow_concurrent_trades),
                 'max_candles': max_candles,
                 'buffer_k': buffer_k,
                 'lot_mode': lot_mode,
@@ -1278,6 +1482,7 @@ def main():
             st.session_state['backtest_results'] = results
             st.session_state['backtest_symbol'] = symbol
             st.session_state['backtest_strategy'] = selected_strategy_name
+            st.session_state['backtest_strategy_id'] = selected_strategy
             st.session_state['backtest_lot_mode'] = lot_mode
             st.session_state['backtest_timeframe'] = timeframe
             st.session_state['backtest_tp_type'] = tp_type
@@ -1307,7 +1512,8 @@ def main():
             st.session_state.get('backtest_timeframe', 'M5'),
             st.session_state.get('backtest_tp_type', 'price_based'),
             st.session_state.get('backtest_sl_type', 'close_based'),
-            st.session_state.get('backtest_config', {})
+            st.session_state.get('backtest_config', {}),
+            st.session_state.get('backtest_strategy_id'),
         )
 
     # Show history section
@@ -1318,7 +1524,17 @@ def main():
         st.error(f"Lỗi hiển thị history: {type(e).__name__}: {e}")
 
 
-def display_results(results: dict, symbol: str, strategy_name: str = "", lot_mode: str = "fixed", timeframe: str = "M5", tp_type: str = "price_based", sl_type: str = "close_based", config: dict = None):
+def display_results(
+    results: dict,
+    symbol: str,
+    strategy_name: str = "",
+    lot_mode: str = "fixed",
+    timeframe: str = "M5",
+    tp_type: str = "price_based",
+    sl_type: str = "close_based",
+    config: dict = None,
+    strategy_id: str | None = None,
+):
     """Display backtest results"""
     config = config or {}
 
@@ -1454,12 +1670,19 @@ def display_results(results: dict, symbol: str, strategy_name: str = "", lot_mod
                 trades,
                 ohlc_data,
                 symbol,
+                strategy=strategy_id or (config or {}).get("strategy_id"),
                 consensus_enabled=config.get("flappy_consensus_enabled"),
                 fallback_enabled=config.get("flappy_fallback_enabled"),
                 higher_timeframe_data=results.get("higher_timeframe_data"),
                 higher_timeframe_filter_enabled=config.get("higher_timeframe_filter_enabled"),
                 higher_consensus_enabled=config.get("higher_ema_consensus_enabled"),
                 higher_fallback_enabled=config.get("higher_ema_fallback_enabled"),
+                swing_ema_periods=config.get("swing_ema_periods"),
+                swing_zigzag_depth=config.get("swing_zigzag_depth", 3),
+                swing_zigzag_deviation_points=config.get(
+                    "swing_zigzag_deviation_points", 3.0
+                ),
+                swing_zigzag_back_step=config.get("swing_zigzag_back_step", 3),
             )
 
 
@@ -1551,12 +1774,17 @@ def show_interactive_chart(
     trades: list,
     ohlc_data: pd.DataFrame,
     symbol: str,
+    strategy: str | None = None,
     consensus_enabled: bool | None = None,
     fallback_enabled: bool | None = None,
     higher_timeframe_data: pd.DataFrame | None = None,
     higher_timeframe_filter_enabled: bool | None = None,
     higher_consensus_enabled: bool | None = None,
     higher_fallback_enabled: bool | None = None,
+    swing_ema_periods: dict[str, int] | None = None,
+    swing_zigzag_depth: int = 3,
+    swing_zigzag_deviation_points: float = 3.0,
+    swing_zigzag_back_step: int = 3,
 ):
     """Show interactive candlestick chart with trade markers"""
 
@@ -1596,7 +1824,29 @@ def show_interactive_chart(
         key="specific_trade_timeframe",
     )
     use_higher_timeframe_chart = selected_timeframe == "Khung lớn"
-    chart_source = higher_timeframe_data if use_higher_timeframe_chart else ohlc_data
+    chart_source = (
+        higher_timeframe_data.copy()
+        if use_higher_timeframe_chart
+        else ohlc_data.copy()
+    )
+    chart_source = chart_source.reset_index(drop=True)
+    is_swing_chart = strategy == "swing_ema_zigzag" and not use_higher_timeframe_chart
+    swing_ema_values: dict[str, list[float]] = {}
+    swing_pivots = []
+    show_swing_ema = {slot: True for slot in ("fast", "medium", "slow")}
+    show_swing_zigzag = True
+    show_swing_pivots = True
+    if is_swing_chart:
+        from src.swing_ema_strategy import build_swing_chart_overlays
+
+        swing_ema_values, swing_pivots = build_swing_chart_overlays(
+            chart_source,
+            symbol_point_size=get_pip_value(symbol),
+            ema_periods=swing_ema_periods or {"fast": 13, "medium": 21, "slow": 55},
+            zigzag_depth=int(swing_zigzag_depth),
+            zigzag_deviation_points=float(swing_zigzag_deviation_points),
+            zigzag_back_step=int(swing_zigzag_back_step),
+        )
 
     # Show only the EMA group matching the selected trade and chart timeframe.
     canonical_flappy_ema_cols = [
@@ -1607,7 +1857,36 @@ def show_interactive_chart(
         "ema_fallback_medium",
         "ema_fallback_long",
     ]
-    if use_higher_timeframe_chart:
+    ema_cols = []
+    if is_swing_chart:
+        with st.expander("Swing EMA + ZigZag", expanded=False):
+            st.caption(
+                "EMA: xanh ngọc / vàng cam / tím. ZigZag: đường xám; "
+                "đỉnh vàng, đáy hồng. Bỏ chọn lớp không cần xem."
+            )
+            swing_ema_cols = st.columns(3)
+            for column, slot, label in zip(
+                swing_ema_cols,
+                ("fast", "medium", "slow"),
+                ("EMA ngắn", "EMA trung", "EMA dài"),
+            ):
+                show_swing_ema[slot] = column.checkbox(
+                    label,
+                    value=True,
+                    key=f"ind_swing_ema_{slot}",
+                )
+            swing_overlay_cols = st.columns(2)
+            show_swing_zigzag = swing_overlay_cols[0].checkbox(
+                "Đường ZigZag",
+                value=True,
+                key="ind_swing_zigzag_line",
+            )
+            show_swing_pivots = swing_overlay_cols[1].checkbox(
+                "Dấu Đỉnh/Đáy",
+                value=True,
+                key="ind_swing_zigzag_pivots",
+            )
+    elif use_higher_timeframe_chart:
         higher_prefix = f"ema_higher_{selected_mode}_"
         ema_cols = [
             f"{higher_prefix}{slot}"
@@ -1633,7 +1912,7 @@ def show_interactive_chart(
             ) is not False
         ]
     show_ema = {}
-    if ema_cols:
+    if ema_cols and not is_swing_chart:
         with st.expander("Indicators", expanded=False):
             st.caption(
                 f"Đang hiển thị: {mode_label} · "
@@ -1676,7 +1955,6 @@ def show_interactive_chart(
     trade_dt = datetime.strptime(trade_datetime_str, "%Y-%m-%d %H:%M")
 
     # Filter the selected timeframe around the trade.
-    chart_source = chart_source.copy()
     chart_source["time_naive"] = (
         chart_source["time"].dt.tz_localize(None)
         if chart_source["time"].dt.tz is not None
@@ -1734,21 +2012,104 @@ def show_interactive_chart(
         "ema50": "#3498DB",
         "ema200": "#E74C3C",
     }
-    for col_name, enabled in show_ema.items():
-        if enabled and col_name in chart_data.columns:
-            color = ema_colors.get(col_name, "#888888")
-            slot = col_name.rsplit("_", 1)[-1]
+    if is_swing_chart:
+        swing_colors = {
+            "fast": "#06B6D4",
+            "medium": "#F59E0B",
+            "slow": "#8B5CF6",
+        }
+        swing_labels = {
+            "fast": "ngắn",
+            "medium": "trung",
+            "slow": "dài",
+        }
+        for slot, enabled in show_swing_ema.items():
+            if enabled:
+                period = int(
+                    (swing_ema_periods or {"fast": 13, "medium": 21, "slow": 55})[
+                        slot
+                    ]
+                )
+                fig.add_trace(go.Scatter(
+                    x=chart_data["time"],
+                    y=[
+                        swing_ema_values[slot][int(index)]
+                        for index in chart_data.index
+                    ],
+                    mode="lines",
+                    line=dict(color=swing_colors[slot], width=1.35),
+                    name=f"EMA {period} ({swing_labels[slot]})",
+                    hovertemplate=(
+                        f"EMA {period}<br>%{{x}}<br>%{{y:.5f}}<extra></extra>"
+                    ),
+                ))
+
+        visible_pivots = [
+            pivot for pivot in swing_pivots
+            if (
+                start_idx <= pivot["index"] < end_idx
+                and pivot["confirmed_index"] < end_idx
+            )
+        ]
+        if show_swing_zigzag and visible_pivots:
             fig.add_trace(go.Scatter(
-                x=chart_data['time'],
-                y=chart_data[col_name],
-                mode='lines',
-                line=dict(
-                    color=color,
-                    width=2.0 if use_higher_timeframe_chart else 1.5,
-                ),
-                name=f"{mode_label} EMA {slot}",
-                legendgroup=col_name
+                x=[chart_source.iloc[pivot["index"]]["time"] for pivot in visible_pivots],
+                y=[pivot["price"] for pivot in visible_pivots],
+                mode="lines",
+                line=dict(color="#64748B", width=1.2),
+                name="ZigZag",
+                hoverinfo="skip",
             ))
+        if show_swing_pivots and visible_pivots:
+            fig.add_trace(go.Scatter(
+                x=[chart_source.iloc[pivot["index"]]["time"] for pivot in visible_pivots],
+                y=[pivot["price"] for pivot in visible_pivots],
+                mode="markers",
+                marker=dict(
+                    symbol=[
+                        "triangle-down" if pivot["kind"] == "high" else "triangle-up"
+                        for pivot in visible_pivots
+                    ],
+                    size=9,
+                    color=[
+                        "#FDE047" if pivot["kind"] == "high" else "#EC4899"
+                        for pivot in visible_pivots
+                    ],
+                    line=dict(color="#0F172A", width=0.7),
+                ),
+                text=[
+                    "Đỉnh" if pivot["kind"] == "high" else "Đáy"
+                    for pivot in visible_pivots
+                ],
+                customdata=[
+                    [
+                        pivot["price"],
+                        chart_source.iloc[pivot["confirmed_index"]]["time"],
+                    ]
+                    for pivot in visible_pivots
+                ],
+                hovertemplate=(
+                    "%{text}<br>Giá: %{customdata[0]:.5f}"
+                    "<br>Xác nhận lúc: %{customdata[1]}<extra></extra>"
+                ),
+                name="Swing pivots",
+            ))
+    else:
+        for col_name, enabled in show_ema.items():
+            if enabled and col_name in chart_data.columns:
+                color = ema_colors.get(col_name, "#888888")
+                slot = col_name.rsplit("_", 1)[-1]
+                fig.add_trace(go.Scatter(
+                    x=chart_data['time'],
+                    y=chart_data[col_name],
+                    mode='lines',
+                    line=dict(
+                        color=color,
+                        width=2.0 if use_higher_timeframe_chart else 1.5,
+                    ),
+                    name=f"{mode_label} EMA {slot}",
+                    legendgroup=col_name
+                ))
 
     # Get time range for horizontal lines.
     x_min = chart_data['time'].iloc[0]

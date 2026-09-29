@@ -301,6 +301,10 @@ Strategy BUY/SELL LIMIT trên M5, được triển khai riêng trong `src/flappy
 - SELL dùng SELL LIMIT: `close Cha + 5% × thân Cha`; SL là
   `max(high Cha, high mọi nến con) + 5 pips`; TP là `2R` hướng xuống.
 - Pending chờ tối đa 7 nến. Khi cùng một nến chạm cả SL và TP, SL được ưu tiên trong backtest/test.
+- Backtest mặc định mô phỏng 1 lệnh tại một thời điểm. Với Multi Flappy Bird,
+  checkbox `Cho phép nhiều lệnh đồng thời` bật chế độ quét độc lập để giữ các
+  tín hiệu mới và mô phỏng các vị thế chồng lấp; mặc định tắt để bảo toàn kết
+  quả cũ.
 - `min_father_body_points`, `sl_buffer_pips`, `entry_body_percent`, `rr_ratio` và `limit_order_candles` nằm trong YAML; giới hạn trên Body Cha là hardcode `6.0`; `magic` mặc định là `212400`. Backtest và Create Bot đều cho phép override `entry_body_percent` (Entry lệch khỏi Close Cha theo phần trăm thân Cha), `rr_ratio`, ngưỡng tối thiểu Body Cha và số nến pending từ UI.
 - SL Flappy BUY = `min(Low Cha, Low Con liền kề) - sl_buffer_pips`; SL Flappy SELL = `max(High Cha, High Con liền kề) + sl_buffer_pips`. Chỉ Nến Con liền kề cuối cùng được dùng cho SL.
 - EXIT TIME Flappy hiện tạm vô hiệu hóa (`max_candles=0`); vị thế chỉ thoát bởi SL/TP. Pending expiry vẫn độc lập và tiếp tục dùng `limit_order_candles`.

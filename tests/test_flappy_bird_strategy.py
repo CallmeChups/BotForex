@@ -465,3 +465,69 @@ def test_multi_flappy_bird_single_mode_still_reports_per_trade_finalize_message(
     assert len(finalize_updates) == 1
     assert finalize_updates[0]["trades"] == len(result["trades"])
     assert "hợp nhất" not in finalize_updates[0]["message"]
+
+
+def test_multi_flappy_bird_concurrent_trades_are_opt_in(monkeypatch):
+    import src.backtest as backtest_module
+
+    rows = [
+        {
+            "time": pd.Timestamp("2026-02-01", tz="Asia/Ho_Chi_Minh"),
+            "open": 100.0,
+            "high": 100.5,
+            "low": 99.5,
+            "close": 100.0,
+        }
+        for _ in range(55)
+    ]
+    rows.extend([
+        {"time": pd.Timestamp("2026-02-02", tz="Asia/Ho_Chi_Minh"), "open": 100, "high": 102, "low": 100, "close": 101},
+        {"time": pd.Timestamp("2026-02-02 00:01", tz="Asia/Ho_Chi_Minh"), "open": 101, "high": 103, "low": 99.5, "close": 102},
+        {"time": pd.Timestamp("2026-02-02 00:02", tz="Asia/Ho_Chi_Minh"), "open": 102, "high": 106, "low": 102, "close": 103},
+        {"time": pd.Timestamp("2026-02-02 00:03", tz="Asia/Ho_Chi_Minh"), "open": 103, "high": 106, "low": 103, "close": 104},
+    ])
+
+    def fake_analyze(_symbol, _mother, _children, father, *_args, **_kwargs):
+        if father["close"] not in (101, 102):
+            return None
+        entry_price = 100.0 if father["close"] == 101 else 102.5
+        return {
+            "direction": "BUY",
+            "entry_price": entry_price,
+            "stop_loss": 95.0,
+            "take_profit": 105.0,
+            "sl_pips": 50.0,
+            "mother": None,
+            "children": [],
+            "father": father,
+            "ema13": 13.0,
+            "ema21": 21.0,
+            "ema55": 55.0,
+            "fallback_ema13": 13.0,
+            "fallback_ema21": 21.0,
+            "fallback_ema55": 55.0,
+            "debug": {"metrics": {"ema_mode": "consensus"}},
+            "higher_timeframe_debug": None,
+            "higher_timeframe": None,
+        }
+
+    monkeypatch.setattr(backtest_module, "analyze_flappy_bird", fake_analyze)
+    kwargs = dict(
+        entry_type="pattern",
+        strategy="multi_flappy_bird",
+        flappy_consensus_enabled=True,
+        flappy_fallback_enabled=False,
+        flappy_use_mother_candle=False,
+        flappy_no_mother_cross_window_candles=0,
+        limit_order_candles=2,
+        max_candles=5,
+    )
+    legacy = run_backtest(pd.DataFrame(rows), "XAUUSD", **kwargs)
+    concurrent = run_backtest(
+        pd.DataFrame(rows), "XAUUSD",
+        flappy_allow_concurrent_trades=True,
+        **kwargs,
+    )
+
+    assert legacy["total_trades"] == 1
+    assert concurrent["total_trades"] == 2

@@ -364,6 +364,7 @@ def run_backtest(
     flappy_no_mother_father_wick_max_pct: float = 40.0,
     flappy_no_mother_cross_window_candles: int = 15,
     flappy_no_mother_sl_buffer_pips: float = 5.0,
+    flappy_allow_concurrent_trades: bool = False,
     progress_callback: Callable[[dict], None] | None = None,
     higher_timeframe_df=None,
     higher_timeframe_filter_enabled: bool = False,
@@ -376,6 +377,19 @@ def run_backtest(
     higher_ema_consensus_enabled: bool = True,
     higher_ema_fallback_enabled: bool = True,
     current_timeframe_filter_enabled: bool = True,
+    swing_ema_periods: dict[str, int] | None = None,
+    swing_zigzag_depth: int = 3,
+    swing_zigzag_deviation_points: float = 3.0,
+    swing_zigzag_back_step: int = 3,
+    swing_min_structure_candles: int = 10,
+    swing_max_structure_candles: int = 20,
+    swing_ema_cross_window_candles: int = 15,
+    swing_ema_exit_enabled: bool = True,
+    swing_ema_exit_period: int = 21,
+    swing_entry_buffer_pips: float = 2.0,
+    swing_sl_buffer_pips: float = 5.0,
+    swing_pending_expiry_candles: int = 7,
+    swing_max_pending_orders_per_symbol: int = 0,
 ) -> dict:
     """
     Run backtest on historical data
@@ -463,6 +477,7 @@ def run_backtest(
                 no_mother_father_wick_max_pct=flappy_no_mother_father_wick_max_pct,
                 no_mother_cross_window_candles=flappy_no_mother_cross_window_candles,
                 no_mother_sl_buffer_pips=flappy_no_mother_sl_buffer_pips,
+                allow_concurrent_trades=flappy_allow_concurrent_trades,
             )
             # Consensus and fallback are scanned together in one shared
             # candle loop inside _run_flappy_bird_backtest (each mode keeps
@@ -507,6 +522,36 @@ def run_backtest(
                 c2_sell_upper_wick_max_pct=c2_sell_upper_wick_max_pct, c2_sell_lower_wick_max_pct=c2_sell_lower_wick_max_pct,
                 c2_buy_upper_wick_cmp=c2_buy_upper_wick_cmp, c2_buy_lower_wick_cmp=c2_buy_lower_wick_cmp,
                 c2_sell_upper_wick_cmp=c2_sell_upper_wick_cmp, c2_sell_lower_wick_cmp=c2_sell_lower_wick_cmp,
+            )
+        elif strategy == "swing_ema_zigzag":
+            result = _run_swing_ema_zigzag_backtest(
+                df=df,
+                symbol=symbol,
+                rr_ratio=rr_ratio,
+                lot_mode=lot_mode,
+                fixed_lot=fixed_lot,
+                risk_percent=risk_percent,
+                risk_amount=risk_amount,
+                risk_mode=risk_mode,
+                starting_equity=starting_equity,
+                tp_type=tp_type,
+                sl_type=sl_type,
+                entry_start_time=entry_start_time,
+                entry_end_time=entry_end_time,
+                ema_periods=swing_ema_periods or {"fast": 13, "medium": 21, "slow": 55},
+                zigzag_depth=swing_zigzag_depth,
+                zigzag_deviation_points=swing_zigzag_deviation_points,
+                zigzag_back_step=swing_zigzag_back_step,
+                min_structure_candles=swing_min_structure_candles,
+                max_structure_candles=swing_max_structure_candles,
+                ema_cross_window_candles=swing_ema_cross_window_candles,
+                ema_exit_enabled=swing_ema_exit_enabled,
+                ema_exit_period=swing_ema_exit_period,
+                entry_buffer_pips=swing_entry_buffer_pips,
+                sl_buffer_pips=swing_sl_buffer_pips,
+                pending_expiry_candles=swing_pending_expiry_candles,
+                max_pending_orders_per_symbol=swing_max_pending_orders_per_symbol,
+                progress_callback=progress_callback,
             )
         else:
             result = _run_feg_backtest(
@@ -1046,7 +1091,7 @@ def _run_flappy_bird_backtest(
     use_mother_candle=True, no_mother_child_candles=2,
     no_mother_child_body_ratio=1.5, no_mother_child_body_max_points=1.5,
     no_mother_father_wick_max_pct=40.0, no_mother_cross_window_candles=15,
-    no_mother_sl_buffer_pips=5.0,
+    no_mother_sl_buffer_pips=5.0, allow_concurrent_trades=False,
 ):
     """Backtest Flappy Bird BUY/SELL LIMIT signals for every enabled EMA mode.
 
@@ -1201,12 +1246,7 @@ def _run_flappy_bird_backtest(
         for mode in modes
     }
 
-    def advance_mode(mode: str) -> None:
-        """Run one scan/pending/exit step for `mode` at its own cursor,
-        mirroring the original single-mode loop body (same pattern search,
-        fill and exit simulation) so behavior is unchanged per mode."""
-        st = state[mode]
-        i = st["i"]
+    def find_signal(mode: str, i: int):
         signal = None
         signal_child_count = 0
         ema13 = ema13_values[i]
@@ -1229,18 +1269,16 @@ def _run_flappy_bird_backtest(
             children = [candle_at(idx) for idx in range(child_start, i)]
             father = candle_at(i)
             for direction in ("BUY", "SELL"):
+                cross_window = (
+                    no_mother_cross_window_candles
+                    if not use_mother_candle else cross_window_candles
+                )
                 if (
-                    (
-                        no_mother_cross_window_candles
-                        if not use_mother_candle else cross_window_candles
-                    ) > 0
+                    cross_window > 0
                     and (
                         cross_directions[i] != direction
                         or cross_ages[i] is None
-                        or cross_ages[i] > (
-                            no_mother_cross_window_candles
-                            if not use_mother_candle else cross_window_candles
-                        )
+                        or cross_ages[i] > cross_window
                     )
                 ):
                     continue
@@ -1269,12 +1307,19 @@ def _run_flappy_bird_backtest(
                     no_mother_sl_buffer_pips=no_mother_sl_buffer_pips,
                 )
                 if signal:
-                    signal_child_count = child_count
                     signal["_mother_idx"] = mother_idx
                     signal["_father_idx"] = i
-                    break
-            if signal:
-                break
+                    signal_child_count = child_count
+                    return signal, signal_child_count
+        return None, 0
+
+    def advance_mode(mode: str) -> None:
+        """Run one scan/pending/exit step for `mode` at its own cursor,
+        mirroring the original single-mode loop body (same pattern search,
+        fill and exit simulation) so behavior is unchanged per mode."""
+        st = state[mode]
+        i = st["i"]
+        signal, signal_child_count = find_signal(mode, i)
         if not signal:
             st["i"] = i + 1
             return
@@ -1398,31 +1443,154 @@ def _run_flappy_bird_backtest(
         else:
             st["i"] = pending_end
 
+    def run_concurrent_mode(mode: str) -> None:
+        """Scan every candle independently so overlapping trades are retained."""
+        st = state[mode]
+        for i in range(start, len(df)):
+            signal, signal_child_count = find_signal(mode, i)
+            if not signal:
+                continue
+
+            fill_pos = None
+            pending_end = min(len(df), i + 1 + limit_order_candles)
+            for pos in range(i + 1, pending_end):
+                if signal["direction"] == "BUY" and lows[pos] > signal["entry_price"]:
+                    continue
+                if signal["direction"] == "SELL" and highs[pos] < signal["entry_price"]:
+                    continue
+                fill_pos = pos
+                break
+            if fill_pos is None:
+                continue
+
+            exit_type = exit_price = exit_pos = None
+            if signal["direction"] == "BUY" and lows[fill_pos] <= signal["stop_loss"]:
+                exit_type, exit_price, exit_pos = "SL", signal["stop_loss"], fill_pos
+            elif signal["direction"] == "BUY" and highs[fill_pos] >= signal["take_profit"]:
+                exit_type, exit_price, exit_pos = "TP", signal["take_profit"], fill_pos
+            elif signal["direction"] == "SELL" and highs[fill_pos] >= signal["stop_loss"]:
+                exit_type, exit_price, exit_pos = "SL", signal["stop_loss"], fill_pos
+            elif signal["direction"] == "SELL" and lows[fill_pos] <= signal["take_profit"]:
+                exit_type, exit_price, exit_pos = "TP", signal["take_profit"], fill_pos
+            else:
+                exit_end = (
+                    len(df)
+                    if max_candles <= 0
+                    else min(len(df), fill_pos + 1 + max_candles)
+                )
+                for later_pos in range(fill_pos + 1, exit_end):
+                    if signal["direction"] == "BUY" and lows[later_pos] <= signal["stop_loss"]:
+                        exit_type, exit_price, exit_pos = "SL", signal["stop_loss"], later_pos
+                        break
+                    if signal["direction"] == "BUY" and highs[later_pos] >= signal["take_profit"]:
+                        exit_type, exit_price, exit_pos = "TP", signal["take_profit"], later_pos
+                        break
+                    if signal["direction"] == "SELL" and highs[later_pos] >= signal["stop_loss"]:
+                        exit_type, exit_price, exit_pos = "SL", signal["stop_loss"], later_pos
+                        break
+                    if signal["direction"] == "SELL" and lows[later_pos] <= signal["take_profit"]:
+                        exit_type, exit_price, exit_pos = "TP", signal["take_profit"], later_pos
+                        break
+                if not exit_type and max_candles > 0:
+                    exit_pos = min(len(df) - 1, fill_pos + max_candles)
+                    exit_type, exit_price = "TIME", closes[exit_pos]
+
+            if not exit_type:
+                continue
+            if lot_mode == "flex":
+                lot = calculate_flex_lot_size(
+                    st["current_equity"], risk_percent, signal["sl_pips"], symbol,
+                    risk_amount=risk_amount if risk_mode == "fixed_amount" else 0.0,
+                )
+            else:
+                lot = fixed_lot
+            trade, pnl_pips, pnl_usd = _make_trade(
+                times[fill_pos], signal["direction"], signal, lot, exit_type,
+                exit_price, times[exit_pos], exit_pos - fill_pos + 1,
+                symbol, exit_pos=exit_pos,
+            )
+            trade["_mother"] = (
+                {**signal["mother"], "time": times[signal["_mother_idx"]]}
+                if signal.get("mother") is not None and signal.get("_mother_idx") is not None
+                else None
+            )
+            trade["_children"] = [
+                {
+                    **child,
+                    "time": times[
+                        (
+                            signal["_mother_idx"] + child_offset + 1
+                            if signal.get("_mother_idx") is not None
+                            else signal["_father_idx"] - len(signal["children"]) + child_offset
+                        )
+                    ],
+                }
+                for child_offset, child in enumerate(signal["children"])
+            ]
+            trade["_father"] = {**signal["father"], "time": times[signal["_father_idx"]]}
+            trade["_ema13"] = signal["ema13"]
+            trade["_ema21"] = signal["ema21"]
+            trade["_ema55"] = signal["ema55"]
+            trade["_ema_fallback_short"] = signal["fallback_ema13"]
+            trade["_ema_fallback_medium"] = signal["fallback_ema21"]
+            trade["_ema_fallback_long"] = signal["fallback_ema55"]
+            trade["_ema_mode"] = signal["debug"]["metrics"].get("ema_mode")
+            trade["_higher_timeframe_debug"] = signal.get("higher_timeframe_debug")
+            trade["_higher_timeframe"] = signal.get("higher_timeframe")
+            trade["_flappy_ema_periods"] = {
+                "consensus": [consensus_short, consensus_medium, consensus_long],
+                "fallback": [fallback_short, fallback_medium, fallback_long],
+            }
+            trade["_child_count"] = signal_child_count
+            trade["_min_father_body_points"] = min_father_body_points
+            trade["_use_mother_candle"] = use_mother_candle
+            trade["_no_mother_child_candles"] = no_mother_child_candles
+            trade["_no_mother_child_body_ratio"] = no_mother_child_body_ratio
+            trade["_no_mother_child_body_max_points"] = no_mother_child_body_max_points
+            trade["_no_mother_father_wick_max_pct"] = no_mother_father_wick_max_pct
+            trade["_no_mother_cross_window_candles"] = no_mother_cross_window_candles
+            trade["_no_mother_sl_buffer_pips"] = no_mother_sl_buffer_pips
+            trade["_max_child_body_points"] = max_child_body_points
+            trade["_min_child_candles"] = min_child_candles
+            trade["_max_child_candles"] = max_child_candles
+            trade["_mother_coverage_enabled"] = mother_coverage_enabled
+            trade["_debug"] = signal["debug"]
+            trade["_signal_mother_idx"] = signal["_mother_idx"]
+            trade["_signal_father_idx"] = signal["_father_idx"]
+            st["current_equity"] += pnl_usd
+            st["trades"].append(trade)
+            st["equity_curve_pips"].append(st["equity_curve_pips"][-1] + pnl_pips)
+            st["equity_curve_usd"].append(st["current_equity"])
+
     # Drive every enabled mode through the shared candle/EMA/HTF arrays in one
     # loop: at each step, only the mode whose own cursor is furthest behind
     # advances, so consensus/fallback still scan/fill/exit independently
     # (identical to two separate full passes) without re-scanning the
     # dataframe once per mode.
-    while any(state[mode]["i"] < len(df) for mode in modes):
-        target = min(
-            (mode for mode in modes if state[mode]["i"] < len(df)),
-            key=lambda mode: (state[mode]["i"], modes.index(mode)),
-        )
-        advance_mode(target)
-        progressed = max(0, min(state[mode]["i"] for mode in modes) - start)
-        should_report = (
-            progressed == 0
-            or progressed - last_reported >= max(1, total_candles // 100)
-            or progressed >= total_candles
-        )
-        if should_report and progressed != last_reported:
-            _report_progress(
-                progress_callback, phase="scan", current=progressed,
-                total=total_candles,
-                trades=sum(len(state[mode]["trades"]) for mode in modes),
-                message=f"Đang quét nến {start + progressed + 1}/{len(df)}..."
+    if allow_concurrent_trades:
+        for mode in modes:
+            run_concurrent_mode(mode)
+    else:
+        while any(state[mode]["i"] < len(df) for mode in modes):
+            target = min(
+                (mode for mode in modes if state[mode]["i"] < len(df)),
+                key=lambda mode: (state[mode]["i"], modes.index(mode)),
             )
-            last_reported = progressed
+            advance_mode(target)
+            progressed = max(0, min(state[mode]["i"] for mode in modes) - start)
+            should_report = (
+                progressed == 0
+                or progressed - last_reported >= max(1, total_candles // 100)
+                or progressed >= total_candles
+            )
+            if should_report and progressed != last_reported:
+                _report_progress(
+                    progress_callback, phase="scan", current=progressed,
+                    total=total_candles,
+                    trades=sum(len(state[mode]["trades"]) for mode in modes),
+                    message=f"Đang quét nến {start + progressed + 1}/{len(df)}..."
+                )
+                last_reported = progressed
 
     # Merge trades from every mode. Ties on (date, time) keep the same
     # consensus-before-fallback order the previous two-pass merge produced.
@@ -1704,6 +1872,244 @@ def _run_feg_stop_order_backtest(
     stats["final_equity"] = current_equity
     stats["starting_equity"] = starting_equity
     stats["ohlc_data"] = df
+    return stats
+
+
+def _run_swing_ema_zigzag_backtest(
+    df,
+    symbol,
+    rr_ratio,
+    lot_mode,
+    fixed_lot,
+    risk_percent,
+    risk_amount,
+    risk_mode,
+    starting_equity,
+    tp_type,
+    sl_type,
+    entry_start_time,
+    entry_end_time,
+    ema_periods,
+    zigzag_depth,
+    zigzag_deviation_points,
+    zigzag_back_step,
+    min_structure_candles,
+    max_structure_candles,
+    ema_cross_window_candles,
+    ema_exit_enabled,
+    ema_exit_period,
+    entry_buffer_pips,
+    sl_buffer_pips,
+    pending_expiry_candles,
+    max_pending_orders_per_symbol,
+    progress_callback=None,
+):
+    """Simulate Swing EMA stop orders using only candles available at each bar."""
+    from src.swing_ema_strategy import (
+        build_swing_ema_entry_signal,
+        calculate_ema_series,
+        evaluate_ema_exit,
+        is_pending_signal_expired,
+    )
+
+    if rr_ratio <= 0:
+        raise ValueError("rr_ratio must be positive")
+    if min(zigzag_depth, ema_exit_period, pending_expiry_candles) <= 0:
+        raise ValueError("Swing depth, EMA exit period, and pending expiry must be positive")
+    if min(zigzag_deviation_points, entry_buffer_pips, sl_buffer_pips) < 0:
+        raise ValueError("Swing deviation and buffers cannot be negative")
+    if min_structure_candles <= 0 or max_structure_candles < min_structure_candles:
+        raise ValueError("Swing structure candle range is invalid")
+    if ema_cross_window_candles < 0 or max_pending_orders_per_symbol < 0:
+        raise ValueError("Swing cross window and pending limit cannot be negative")
+    if any(int(period) <= 0 for period in ema_periods.values()):
+        raise ValueError("Swing EMA periods must be positive")
+
+    df = df.reset_index(drop=True).copy()
+    pip_value = get_pip_value(symbol)
+    entry_buffer_price = entry_buffer_pips * pip_value
+    sl_buffer_price = sl_buffer_pips * pip_value
+    lookback = max(
+        120,
+        max(ema_periods.values()) * 4,
+        max_structure_candles + zigzag_depth * 6 + 30,
+        ema_exit_period * 4,
+    )
+    trades = []
+    pending_orders = []
+    active_trades = []
+    equity_curve_pips = [0.0]
+    equity_curve_usd = [starting_equity]
+    current_equity = starting_equity
+    last_progress = 0
+
+    for bar_index in range(1, len(df)):
+        row = df.iloc[bar_index]
+        candle = {
+            "open": float(row["open"]),
+            "high": float(row["high"]),
+            "low": float(row["low"]),
+            "close": float(row["close"]),
+        }
+        current_time = row["time"]
+        still_pending = []
+
+        for order in pending_orders:
+            signal = order["signal"]
+            if is_pending_signal_expired(signal, bar_index):
+                continue
+            direction = signal["direction"]
+            filled = (
+                candle["high"] >= signal["entry_price"]
+                if direction == "BUY"
+                else candle["low"] <= signal["entry_price"]
+            )
+            if filled:
+                entry_price = (
+                    max(signal["entry_price"], candle["open"])
+                    if direction == "BUY"
+                    else min(signal["entry_price"], candle["open"])
+                )
+                active_trades.append({
+                    "direction": direction,
+                    "entry": entry_price,
+                    "sl": signal["stop_loss"],
+                    "tp": signal["take_profit"],
+                    "entry_pos": bar_index,
+                    "entry_time": current_time,
+                    "signal": signal,
+                    "lot": order["lot"],
+                })
+            else:
+                still_pending.append(order)
+        pending_orders = still_pending
+
+        ema_exit_value = None
+        if ema_exit_enabled and bar_index + 1 >= ema_exit_period:
+            close_window = df["close"].iloc[max(0, bar_index + 1 - lookback):bar_index + 1]
+            ema_exit_value = calculate_ema_series(close_window, ema_exit_period)[-1]
+
+        still_active = []
+        for trade_state in active_trades:
+            exit_type, exit_price = check_exit(
+                trade_state["direction"],
+                candle,
+                trade_state["tp"],
+                trade_state["sl"],
+                tp_type,
+                sl_type,
+            )
+            if exit_type is None and ema_exit_value is not None:
+                ema_exit = evaluate_ema_exit(
+                    trade_state["direction"], candle, ema_exit_value, use_close=True
+                )
+                if ema_exit["exit"]:
+                    exit_type = "EMA"
+                    exit_price = float(candle["close"])
+
+            if exit_type is None:
+                still_active.append(trade_state)
+                continue
+
+            levels = {
+                "entry_price": trade_state["entry"],
+                "stop_loss": trade_state["sl"],
+                "take_profit": trade_state["tp"],
+                "sl_pips": abs(trade_state["entry"] - trade_state["sl"]) / pip_value,
+            }
+            trade, pnl_pips, pnl_usd = _make_trade(
+                trade_state["entry_time"],
+                trade_state["direction"],
+                levels,
+                trade_state["lot"],
+                exit_type,
+                float(exit_price),
+                current_time,
+                bar_index - trade_state["entry_pos"],
+                symbol,
+                exit_pos=bar_index,
+            )
+            trade["_signal"] = trade_state["signal"]
+            trade["_entry_pos"] = trade_state["entry_pos"]
+            current_equity += pnl_usd
+            trades.append(trade)
+            equity_curve_pips.append(equity_curve_pips[-1] + pnl_pips)
+            equity_curve_usd.append(current_equity)
+        active_trades = still_active
+
+        if (
+            bar_index >= lookback - 1
+            and _in_time_window(current_time, entry_start_time, entry_end_time)
+            and (
+                max_pending_orders_per_symbol == 0
+                or len(pending_orders) < max_pending_orders_per_symbol
+            )
+        ):
+            window_start = max(0, bar_index + 1 - lookback)
+            signal = build_swing_ema_entry_signal(
+                data=df.iloc[window_start:bar_index + 1],
+                symbol_point_size=pip_value,
+                ema_periods=ema_periods,
+                zigzag_depth=zigzag_depth,
+                zigzag_deviation_points=zigzag_deviation_points,
+                zigzag_back_step=zigzag_back_step,
+                min_structure_candles=min_structure_candles,
+                max_structure_candles=max_structure_candles,
+                ema_cross_window_candles=ema_cross_window_candles,
+                rr_ratio=rr_ratio,
+                pending_expiry_candles=pending_expiry_candles,
+                sl_buffer_price=sl_buffer_price,
+                entry_buffer_price=entry_buffer_price,
+            )
+            if signal is not None:
+                signal["created_bar_index"] = bar_index
+                signal["expires_at_bar"] = bar_index + pending_expiry_candles
+                duplicate = any(
+                    order["signal"]["direction"] == signal["direction"]
+                    and all(
+                        abs(
+                            float(order["signal"][key]) - float(signal[key])
+                        ) < 1e-8
+                        for key in ("entry_price", "stop_loss", "take_profit")
+                    )
+                    for order in pending_orders
+                )
+                if not duplicate:
+                    stop_distance = abs(signal["entry_price"] - signal["stop_loss"])
+                    lot = _compute_lot_size(
+                        lot_mode,
+                        current_equity,
+                        risk_mode,
+                        risk_percent,
+                        risk_amount,
+                        stop_distance / pip_value,
+                        symbol,
+                        fixed_lot,
+                    )
+                    pending_orders.append({"signal": signal, "lot": lot})
+
+        if progress_callback and (
+            bar_index - last_progress >= 500 or bar_index == len(df) - 1
+        ):
+            _report_progress(
+                progress_callback,
+                phase="scan",
+                current=bar_index + 1,
+                total=len(df),
+                trades=len(trades),
+                message=f"Đang mô phỏng Swing EMA ZigZag: {bar_index + 1:,}/{len(df):,} nến",
+            )
+            last_progress = bar_index
+
+    stats = calculate_stats(trades, lot_mode)
+    stats["equity_curve"] = equity_curve_pips
+    stats["equity_curve_usd"] = equity_curve_usd
+    stats["trades"] = trades
+    stats["lot_mode"] = lot_mode
+    stats["final_equity"] = current_equity
+    stats["starting_equity"] = starting_equity
+    stats["ohlc_data"] = df
+    stats["pending_orders_at_end"] = len(pending_orders)
     return stats
 
 

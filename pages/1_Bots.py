@@ -33,7 +33,7 @@ from src.bot_manager import (
 )
 from src.strategy_manager import (
     list_strategies, get_strategy_parameters, is_flappy_strategy,
-    is_multi_flappy_strategy,
+    is_multi_flappy_strategy, is_swing_strategy,
 )
 from src.utils import get_pip_value, report_page_error
 
@@ -471,6 +471,24 @@ def show_create_bot():
     is_feg_stop_order = selected_strategy == 'feg_stop_order'
     is_flappy_bird = is_flappy_strategy(selected_strategy)
     is_multi_flappy = is_multi_flappy_strategy(selected_strategy)
+    is_swing_ema = is_swing_strategy(selected_strategy)
+    swing_ema_periods = dict(params.get(
+        "swing_ema_periods", {"fast": 13, "medium": 21, "slow": 55}
+    ))
+    swing_zigzag_depth = int(params.get("zigzag_depth", 3))
+    swing_zigzag_deviation_points = float(params.get("zigzag_deviation_points", 3.0))
+    swing_zigzag_back_step = int(params.get("zigzag_back_step", 3))
+    swing_min_structure_candles = int(params.get("min_structure_candles", 10))
+    swing_max_structure_candles = int(params.get("max_structure_candles", 20))
+    swing_ema_cross_window_candles = int(params.get("ema_cross_window_candles", 15))
+    swing_ema_exit_enabled = bool(params.get("ema_exit_enabled", True))
+    swing_ema_exit_period = int(params.get("ema_exit_period", 21))
+    swing_entry_buffer_pips = float(params.get("entry_buffer_pips", 2.0))
+    swing_sl_buffer_pips = float(params.get("sl_buffer_pips", 5.0))
+    swing_pending_expiry_candles = int(params.get("pending_expiry_candles", 7))
+    swing_max_pending_orders_per_symbol = int(
+        params.get("max_pending_orders_per_symbol", 0)
+    )
     sk = selected_strategy  # key prefix — forces widget reinit when strategy changes
 
     # Load from Backtest History
@@ -527,6 +545,67 @@ def show_create_bot():
                         _map[f"{sk}_risk_mode"] = _cfg.get('risk_mode', 'percent')
                         _map[f"{sk}_risk_pct"] = float(_cfg.get('risk_percent', 0.5))
                         _map[f"{sk}_risk_amt"] = float(_cfg.get('risk_amount', 5.0))
+                    if is_swing_ema:
+                        _swing_emas = _cfg.get("swing_ema_periods", swing_ema_periods)
+                        _map.update({
+                            f"{sk}_swing_ema_fast": int(_swing_emas["fast"]),
+                            f"{sk}_swing_ema_medium": int(_swing_emas["medium"]),
+                            f"{sk}_swing_ema_slow": int(_swing_emas["slow"]),
+                            f"{sk}_swing_zigzag_depth": int(
+                                _cfg.get("swing_zigzag_depth", swing_zigzag_depth)
+                            ),
+                            f"{sk}_swing_zigzag_deviation": float(
+                                _cfg.get(
+                                    "swing_zigzag_deviation_points",
+                                    swing_zigzag_deviation_points,
+                                )
+                            ),
+                            f"{sk}_swing_zigzag_back_step": int(
+                                _cfg.get("swing_zigzag_back_step", swing_zigzag_back_step)
+                            ),
+                            f"{sk}_swing_min_structure": int(
+                                _cfg.get(
+                                    "swing_min_structure_candles",
+                                    swing_min_structure_candles,
+                                )
+                            ),
+                            f"{sk}_swing_max_structure": int(
+                                _cfg.get(
+                                    "swing_max_structure_candles",
+                                    swing_max_structure_candles,
+                                )
+                            ),
+                            f"{sk}_swing_ema_cross_window": int(
+                                _cfg.get(
+                                    "swing_ema_cross_window_candles",
+                                    swing_ema_cross_window_candles,
+                                )
+                            ),
+                            f"{sk}_swing_ema_exit_enabled": bool(
+                                _cfg.get("swing_ema_exit_enabled", swing_ema_exit_enabled)
+                            ),
+                            f"{sk}_swing_ema_exit_period": int(
+                                _cfg.get("swing_ema_exit_period", swing_ema_exit_period)
+                            ),
+                            f"{sk}_swing_entry_buffer": float(
+                                _cfg.get("swing_entry_buffer_pips", swing_entry_buffer_pips)
+                            ),
+                            f"{sk}_swing_sl_buffer": float(
+                                _cfg.get("swing_sl_buffer_pips", swing_sl_buffer_pips)
+                            ),
+                            f"{sk}_swing_pending_expiry": int(
+                                _cfg.get(
+                                    "swing_pending_expiry_candles",
+                                    swing_pending_expiry_candles,
+                                )
+                            ),
+                            f"{sk}_swing_max_pending": int(
+                                _cfg.get(
+                                    "swing_max_pending_orders_per_symbol",
+                                    swing_max_pending_orders_per_symbol,
+                                )
+                            ),
+                        })
                     for k, v in _map.items():
                         st.session_state[k] = v
                     st.success(f"Đã load config từ {_rid}")
@@ -562,7 +641,7 @@ def show_create_bot():
                 key=f"{sk}_rr",
             )
         with gr1c4:
-            _use_mc = True if is_flappy_bird else st.checkbox(
+            _use_mc = True if is_flappy_bird or is_swing_ema else st.checkbox(
                 "Giới hạn số nến", value=st.session_state.get(f"{sk}_use_mc", True), key=f"{sk}_use_mc"
             )
         with gr1c5:
@@ -596,7 +675,7 @@ def show_create_bot():
             else:
                 symbol = st.text_input("Symbol*", value=os.getenv("SYMBOL", "XAUUSDm"), key=f"{sk}_symbol", label_visibility="collapsed")
         with gr2c2:
-            if is_flappy_bird:
+            if is_flappy_bird or is_swing_ema:
                 st.empty()
                 max_candles = 0
             else:
@@ -624,7 +703,7 @@ def show_create_bot():
                 st.empty()
 
         # ── ZONE 2: ENTRY ─────────────────────────────────────────────────
-        if is_pattern and not is_flappy_bird:
+        if is_pattern and not is_flappy_bird and not is_swing_ema:
             _section_header("📈", "ENTRY", "#10b981")
             _ema_side_opts = ["above_ema", "below_ema"]
             # Row 1: FEG Margins + EMA Direction (5 cols)
@@ -751,6 +830,104 @@ def show_create_bot():
                     "% body", value="" if _raw_nw_sl is None else str(_raw_nw_sl),
                     key=f"{sk}_c2_sell_lower_wick_max_pct_str", placeholder="VD: 30",
                     help="SELL: (close−low) so với body × n%."))
+        elif is_swing_ema:
+            _section_header("📈", "SWING + 3 EMA", "#10b981")
+            st.caption("Các thông số ZigZag, cấu trúc đỉnh/đáy và bộ lọc 3 EMA cho chiến lược Swing.")
+            cols = st.columns(3)
+            swing_ema_periods["fast"] = cols[0].number_input(
+                "EMA ngắn hạn",
+                min_value=2, max_value=500, value=int(swing_ema_periods["fast"]),
+                key=f"{sk}_swing_ema_fast",
+            )
+            swing_ema_periods["medium"] = cols[1].number_input(
+                "EMA trung hạn",
+                min_value=3, max_value=500, value=int(swing_ema_periods["medium"]),
+                key=f"{sk}_swing_ema_medium",
+            )
+            swing_ema_periods["slow"] = cols[2].number_input(
+                "EMA dài hạn",
+                min_value=4, max_value=500, value=int(swing_ema_periods["slow"]),
+                key=f"{sk}_swing_ema_slow",
+            )
+            if not (
+                swing_ema_periods["fast"] < swing_ema_periods["medium"]
+                < swing_ema_periods["slow"]
+            ):
+                st.error("EMA cần thỏa thứ tự: ngắn hạn < trung hạn < dài hạn.")
+                timeframe_relation_valid = False
+
+            cols = st.columns(3)
+            swing_zigzag_depth = cols[0].number_input(
+                "ZigZag — Độ sâu (Depth)",
+                min_value=1, max_value=100, value=swing_zigzag_depth,
+                key=f"{sk}_swing_zigzag_depth",
+            )
+            swing_zigzag_deviation_points = cols[1].number_input(
+                "ZigZag — Độ lệch (Deviation, points)",
+                min_value=0.0, max_value=10000.0, value=swing_zigzag_deviation_points,
+                key=f"{sk}_swing_zigzag_deviation",
+            )
+            swing_zigzag_back_step = cols[2].number_input(
+                "ZigZag — Khoảng lùi (Back Step)",
+                min_value=1, max_value=100, value=swing_zigzag_back_step,
+                key=f"{sk}_swing_zigzag_back_step",
+            )
+
+            cols = st.columns(3)
+            swing_min_structure_candles = cols[0].number_input(
+                "Tuổi cấu trúc tối thiểu (nến)",
+                min_value=1, max_value=500, value=swing_min_structure_candles,
+                key=f"{sk}_swing_min_structure",
+            )
+            swing_max_structure_candles = cols[1].number_input(
+                "Tuổi cấu trúc tối đa (nến)",
+                min_value=1, max_value=1000, value=swing_max_structure_candles,
+                key=f"{sk}_swing_max_structure",
+            )
+            swing_ema_cross_window_candles = cols[2].number_input(
+                "Giới hạn từ giao cắt EMA (nến)",
+                min_value=1, max_value=1000, value=swing_ema_cross_window_candles,
+                key=f"{sk}_swing_ema_cross_window",
+            )
+            if swing_max_structure_candles < swing_min_structure_candles:
+                st.error("Tuổi cấu trúc tối đa phải >= tối thiểu.")
+                timeframe_relation_valid = False
+
+            swing_ema_exit_enabled = st.checkbox(
+                "Thoát lệnh khi đóng nến qua EMA trung hạn",
+                value=swing_ema_exit_enabled,
+                key=f"{sk}_swing_ema_exit_enabled",
+            )
+            swing_ema_exit_period = st.number_input(
+                "EMA thoát lệnh",
+                min_value=2, max_value=500, value=swing_ema_exit_period,
+                key=f"{sk}_swing_ema_exit_period",
+                disabled=not swing_ema_exit_enabled,
+            )
+
+            ema_period = int(swing_ema_periods["medium"])
+            h2_exceed_pips = c2_gap_pips = ema_margin_pips = 0.0
+            ema_filter_enabled = True
+            buy_ema_side = sell_ema_side = "above_ema"
+            entry_start_time = time(0, 0)
+            entry_end_time = time(23, 59)
+            entry_mode = "close"
+            entry_percent = 0.0
+            limit_order_candles = swing_pending_expiry_candles
+            cross_window_candles = None
+            flappy_consensus_short = flappy_consensus_medium = flappy_consensus_long = None
+            flappy_fallback_short = flappy_fallback_medium = flappy_fallback_long = None
+            flappy_consensus_enabled = flappy_fallback_enabled = None
+            current_timeframe_filter_enabled = None
+            higher_timeframe = None
+            higher_timeframe_filter_enabled = None
+            higher_ema_consensus_short = higher_ema_consensus_medium = higher_ema_consensus_long = None
+            higher_ema_fallback_short = higher_ema_fallback_medium = higher_ema_fallback_long = None
+            higher_ema_consensus_enabled = higher_ema_fallback_enabled = None
+            c2_buy_upper_wick_max_pct = c2_buy_lower_wick_max_pct = None
+            c2_sell_upper_wick_max_pct = c2_sell_lower_wick_max_pct = None
+            c2_buy_upper_wick_cmp = c2_buy_lower_wick_cmp = "lt"
+            c2_sell_upper_wick_cmp = c2_sell_lower_wick_cmp = "lt"
         elif is_multi_flappy:
             ema_period = 21
             current_col, higher_col = st.columns(2)
@@ -1043,7 +1220,52 @@ def show_create_bot():
         # ── ZONE 3+4: ORDER SETTINGS & RISK ──────────────────────────────
         _section_header("📊", "ORDER SETTINGS & RISK", "#f59e0b")
         _or_col1, _or_col2, _or_col3 = st.columns(3)
-        if is_flappy_bird:
+        if is_swing_ema:
+            buffer_k = 0.0
+            re_entry_after_sl = False
+            use_mother_candle = None
+            no_mother_child_candles = None
+            no_mother_child_body_ratio = None
+            no_mother_child_body_max_points = None
+            no_mother_father_wick_max_pct = None
+            no_mother_cross_window_candles = None
+            no_mother_sl_buffer_pips = None
+            min_child_candles = None
+            max_child_candles = None
+            max_child_body_points = None
+            cross_window_candles = None
+            mother_coverage_enabled = None
+            with _or_col1:
+                swing_entry_buffer_pips = st.number_input(
+                    "Khoảng đệm Entry (pip)",
+                    min_value=0.0, max_value=200.0, step=0.5,
+                    value=swing_entry_buffer_pips,
+                    key=f"{sk}_swing_entry_buffer",
+                    help="BUY: cộng vào Đỉnh 2; SELL: trừ khỏi Đáy 2.",
+                )
+            with _or_col2:
+                swing_sl_buffer_pips = st.number_input(
+                    "Khoảng đệm Stop Loss (pip)",
+                    min_value=0.0, max_value=200.0, step=0.5,
+                    value=swing_sl_buffer_pips,
+                    key=f"{sk}_swing_sl_buffer",
+                )
+            with _or_col3:
+                swing_pending_expiry_candles = st.number_input(
+                    "Hủy Stop Order sau (nến)",
+                    min_value=1, max_value=500,
+                    value=swing_pending_expiry_candles,
+                    key=f"{sk}_swing_pending_expiry",
+                )
+                swing_max_pending_orders_per_symbol = st.number_input(
+                    "Số Stop Order tối đa",
+                    min_value=0, max_value=100,
+                    value=swing_max_pending_orders_per_symbol,
+                    key=f"{sk}_swing_max_pending",
+                    help="0 = không giới hạn.",
+                )
+            limit_order_candles = int(swing_pending_expiry_candles)
+        elif is_flappy_bird:
             buffer_k = 0.0
             re_entry_after_sl = False
             use_mother_candle = True
@@ -1344,6 +1566,52 @@ def show_create_bot():
                     c2_buy_lower_wick_cmp=c2_buy_lower_wick_cmp,
                     c2_sell_upper_wick_cmp=c2_sell_upper_wick_cmp,
                     c2_sell_lower_wick_cmp=c2_sell_lower_wick_cmp,
+                    ema_short_period=(
+                        int(swing_ema_periods["fast"]) if is_swing_ema else None
+                    ),
+                    ema_medium_period=(
+                        int(swing_ema_periods["medium"]) if is_swing_ema else None
+                    ),
+                    ema_long_period=(
+                        int(swing_ema_periods["slow"]) if is_swing_ema else None
+                    ),
+                    zigzag_depth=(
+                        int(swing_zigzag_depth) if is_swing_ema else None
+                    ),
+                    zigzag_deviation_points=(
+                        float(swing_zigzag_deviation_points) if is_swing_ema else None
+                    ),
+                    zigzag_back_step=(
+                        int(swing_zigzag_back_step) if is_swing_ema else None
+                    ),
+                    min_structure_candles=(
+                        int(swing_min_structure_candles) if is_swing_ema else None
+                    ),
+                    max_structure_candles=(
+                        int(swing_max_structure_candles) if is_swing_ema else None
+                    ),
+                    ema_cross_window_candles=(
+                        int(swing_ema_cross_window_candles) if is_swing_ema else None
+                    ),
+                    ema_exit_enabled=(
+                        bool(swing_ema_exit_enabled) if is_swing_ema else None
+                    ),
+                    ema_exit_period=(
+                        int(swing_ema_exit_period) if is_swing_ema else None
+                    ),
+                    pending_expiry_candles=(
+                        int(swing_pending_expiry_candles) if is_swing_ema else None
+                    ),
+                    max_pending_orders_per_symbol=(
+                        int(swing_max_pending_orders_per_symbol)
+                        if is_swing_ema else None
+                    ),
+                    sl_buffer_pips=(
+                        float(swing_sl_buffer_pips) if is_swing_ema else None
+                    ),
+                    entry_buffer_pips=(
+                        float(swing_entry_buffer_pips) if is_swing_ema else None
+                    ),
                 )
 
                 if success:

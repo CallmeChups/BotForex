@@ -25,7 +25,7 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(_REPO_ROOT, ".env"), override=True)
 
 from src.utils import _in_time_window
-from src.strategy_manager import is_flappy_strategy
+from src.strategy_manager import is_flappy_strategy, is_swing_strategy
 from src.flappy_bird_strategy import (
     EMA_WARMUP_WINDOW,
     calculate_flappy_ema_series,
@@ -124,6 +124,36 @@ def get_args():
             )
     parser.add_argument("--higher_ema_consensus_enabled", type=int, default=None)
     parser.add_argument("--higher_ema_fallback_enabled", type=int, default=None)
+    parser.add_argument("--ema_short_period", type=int, default=None,
+                        help="Swing EMA fast period override")
+    parser.add_argument("--ema_medium_period", type=int, default=None,
+                        help="Swing EMA medium period override")
+    parser.add_argument("--ema_long_period", type=int, default=None,
+                        help="Swing EMA slow period override")
+    parser.add_argument("--zigzag_depth", type=int, default=None,
+                        help="Swing zigzag depth override")
+    parser.add_argument("--zigzag_deviation_points", type=float, default=None,
+                        help="Swing zigzag deviation in point-size units")
+    parser.add_argument("--zigzag_back_step", type=int, default=None,
+                        help="Swing zigzag back-step override")
+    parser.add_argument("--min_structure_candles", type=int, default=None,
+                        help="Minimum candles spanned by latest swing structure")
+    parser.add_argument("--max_structure_candles", type=int, default=None,
+                        help="Maximum candles spanned by latest swing structure")
+    parser.add_argument("--ema_cross_window_candles", type=int, default=None,
+                        help="Maximum candles since fast/medium EMA cross")
+    parser.add_argument("--ema_exit_enabled", type=int, default=None,
+                        help="Swing EMA exit filter: 1=enabled, 0=disabled")
+    parser.add_argument("--ema_exit_period", type=int, default=None,
+                        help="Swing EMA exit period override")
+    parser.add_argument("--pending_expiry_candles", type=int, default=None,
+                        help="Swing pending order expiry in candles")
+    parser.add_argument("--entry_buffer_pips", type=float, default=None,
+                        help="Swing stop-entry offset from pivot in pips")
+    parser.add_argument("--max_pending_orders_per_symbol", type=int, default=None,
+                        help="Swing pending-order cap; 0 means unlimited")
+    parser.add_argument("--sl_buffer_pips", type=float, default=None,
+                        help="Swing stop-loss buffer beyond activation reference")
     parser.add_argument("--tp_type", type=str, default=None,
                         help="TP exit type: 'price_based' or 'close_based' (default: from strategy)")
     parser.add_argument("--sl_type", type=str, default=None,
@@ -392,6 +422,9 @@ def run_bot(args):
         elif args.strategy == 'feg_reverse':
             run_feg_reverse_bot(args, strategy, params, credentials,
                                 entry_start_time=entry_start, entry_end_time=entry_end)
+        elif is_swing_strategy(args.strategy):
+            run_swing_ema_zigzag_bot(args, strategy, params, credentials,
+                                     entry_start_time=entry_start, entry_end_time=entry_end)
         elif is_flappy_strategy(args.strategy):
             run_feg_bot(args, strategy, params, credentials,
                         entry_start_time=entry_start, entry_end_time=entry_end)
@@ -705,6 +738,78 @@ def feg_reverse_entry_decision(
     )
 
 
+def _latest_structure_span(structured_pivots: list[dict]) -> int | None:
+    """Return the candle span of the latest 2 highs + 2 lows used for structure."""
+    from src.swing_ema_strategy import latest_structure_span
+
+    return latest_structure_span(structured_pivots)
+
+
+def _has_duplicate_swing_pending(mt5, pending_orders: list, signal: dict,
+                                 symbol: str, magic: int) -> bool:
+    """Prevent duplicate swing stop orders for the same exact setup."""
+    def matches(candidate: dict) -> bool:
+        existing = candidate.get("signal", candidate)
+        return (
+            existing.get("direction") == signal.get("direction")
+            and abs(float(existing.get("entry_price", 0.0)) - float(signal.get("entry_price", 0.0))) < 1e-8
+            and abs(float(existing.get("stop_loss", 0.0)) - float(signal.get("stop_loss", 0.0))) < 1e-8
+            and abs(float(existing.get("take_profit", 0.0)) - float(signal.get("take_profit", 0.0))) < 1e-8
+        )
+
+    if any(matches(order) for order in pending_orders):
+        return True
+
+    broker_orders = mt5.orders_get(symbol=symbol) or []
+    for order in broker_orders:
+        if getattr(order, "magic", None) != magic:
+            continue
+        if (
+            getattr(order, "symbol", None) == symbol
+            and _order_direction(mt5, order) == signal.get("direction")
+            and abs(float(getattr(order, "price_open", 0.0)) - float(signal["entry_price"])) < 1e-8
+            and abs(float(getattr(order, "sl", 0.0)) - float(signal["stop_loss"])) < 1e-8
+            and abs(float(getattr(order, "tp", 0.0)) - float(signal["take_profit"])) < 1e-8
+        ):
+            return True
+    return False
+
+
+def swing_ema_zigzag_entry_decision(
+    df,
+    symbol: str,
+    ema_periods: dict[str, int],
+    zigzag_depth: int,
+    zigzag_deviation_points: float,
+    zigzag_back_step: int,
+    min_structure_candles: int,
+    max_structure_candles: int,
+    ema_cross_window_candles: int,
+    rr_ratio: float,
+    pending_expiry_candles: int,
+    sl_buffer_price: float,
+    entry_buffer_price: float = 0.0,
+):
+    """Build a swing EMA zigzag stop-order signal from recent closed candles."""
+    from src.swing_ema_strategy import build_swing_ema_entry_signal
+
+    return build_swing_ema_entry_signal(
+        data=df,
+        symbol_point_size=get_pip_value(symbol),
+        ema_periods=ema_periods,
+        zigzag_depth=zigzag_depth,
+        zigzag_deviation_points=zigzag_deviation_points,
+        zigzag_back_step=zigzag_back_step,
+        min_structure_candles=min_structure_candles,
+        max_structure_candles=max_structure_candles,
+        ema_cross_window_candles=ema_cross_window_candles,
+        rr_ratio=rr_ratio,
+        pending_expiry_candles=pending_expiry_candles,
+        sl_buffer_price=sl_buffer_price,
+        entry_buffer_price=entry_buffer_price,
+    )
+
+
 def get_recent_candles(mt5, symbol: str, timeframe_str: str, count: int = 120):
     """Lấy `count` nến đã đóng gần nhất dưới dạng DataFrame (cũ -> mới)."""
     import pandas as pd
@@ -910,10 +1015,14 @@ def _order_direction(mt5, order) -> str | None:
     order_type = getattr(order, "type", None)
     buy_types = {
         getattr(mt5, "ORDER_TYPE_BUY_LIMIT", object()),
+        getattr(mt5, "ORDER_TYPE_BUY_STOP", object()),
+        getattr(mt5, "ORDER_TYPE_BUY_STOP_LIMIT", object()),
         getattr(mt5, "ORDER_TYPE_BUY", object()),
     }
     sell_types = {
         getattr(mt5, "ORDER_TYPE_SELL_LIMIT", object()),
+        getattr(mt5, "ORDER_TYPE_SELL_STOP", object()),
+        getattr(mt5, "ORDER_TYPE_SELL_STOP_LIMIT", object()),
         getattr(mt5, "ORDER_TYPE_SELL", object()),
     }
     if order_type in buy_types:
@@ -923,16 +1032,24 @@ def _order_direction(mt5, order) -> str | None:
     return None
 
 
-def _find_filled_position(mt5, pending_order, symbol: str, magic: int):
+def _find_filled_position(
+    mt5,
+    pending_order,
+    symbol: str,
+    magic: int,
+    direction: str | None = None,
+    pending_ticket: int | None = None,
+):
     """Find the position created by a pending order, even when tickets differ."""
-    direction = _order_direction(mt5, pending_order)
+    direction = direction or _order_direction(mt5, pending_order)
     positions = mt5.positions_get(symbol=symbol) or []
     candidates = [
         position for position in positions
         if _is_flappy_order(position, symbol, magic)
         and (direction is None or _order_direction(mt5, position) == direction)
     ]
-    pending_ticket = getattr(pending_order, "ticket", None)
+    if pending_ticket is None:
+        pending_ticket = getattr(pending_order, "ticket", None)
     linked = [
         position for position in candidates
         if pending_ticket in {
@@ -1025,6 +1142,404 @@ def _has_duplicate_pending(mt5, pending_orders: list, signal: dict,
         ):
             return True
     return False
+
+
+def run_swing_ema_zigzag_bot(
+    args, strategy, params, credentials,
+    entry_start_time: _time = _time(0, 0),
+    entry_end_time: _time = _time(23, 59),
+):
+    """Live loop for confirmed swing EMA zigzag stop-order entries."""
+    from src.orders import cancel_pending_order, close_position, place_stop_order
+    from src.bot_history_manager import create_session, close_session, record_trade as _record_trade
+    from src.swing_ema_strategy import calculate_ema_series, evaluate_ema_exit, is_pending_signal_expired
+    from src.utils import check_exit
+
+    timeframe = args.timeframe or params.get("timeframe", "M1")
+    ema_periods = {
+        "fast": args.ema_short_period or params.get("swing_ema_periods", {}).get("fast", 13),
+        "medium": args.ema_medium_period or params.get("swing_ema_periods", {}).get("medium", 21),
+        "slow": args.ema_long_period or params.get("swing_ema_periods", {}).get("slow", 55),
+    }
+    zigzag_depth = args.zigzag_depth or params.get("zigzag_depth", 3)
+    zigzag_deviation_points = (
+        args.zigzag_deviation_points
+        if args.zigzag_deviation_points is not None
+        else params.get("zigzag_deviation_points", 3.0)
+    )
+    zigzag_back_step = (
+        args.zigzag_back_step
+        if args.zigzag_back_step is not None
+        else params.get("zigzag_back_step", 3)
+    )
+    min_structure_candles = (
+        args.min_structure_candles
+        if args.min_structure_candles is not None
+        else params.get("min_structure_candles", 10)
+    )
+    max_structure_candles = (
+        args.max_structure_candles
+        if args.max_structure_candles is not None
+        else params.get("max_structure_candles", 20)
+    )
+    ema_cross_window_candles = (
+        args.ema_cross_window_candles
+        if args.ema_cross_window_candles is not None
+        else params.get("ema_cross_window_candles", 15)
+    )
+    ema_exit_enabled = (
+        bool(args.ema_exit_enabled)
+        if args.ema_exit_enabled is not None
+        else bool(params.get("ema_exit_enabled", True))
+    )
+    ema_exit_period = (
+        args.ema_exit_period
+        if args.ema_exit_period is not None
+        else params.get("ema_exit_period", 21)
+    )
+    pending_expiry_candles = (
+        args.pending_expiry_candles
+        if args.pending_expiry_candles is not None
+        else params.get("pending_expiry_candles", 7)
+    )
+    max_pending_orders_per_symbol = (
+        args.max_pending_orders_per_symbol
+        if args.max_pending_orders_per_symbol is not None
+        else params.get("max_pending_orders_per_symbol", 0)
+    )
+    sl_buffer_pips = (
+        args.sl_buffer_pips
+        if args.sl_buffer_pips is not None
+        else params.get("sl_buffer_pips", 5.0)
+    )
+    entry_buffer_pips = (
+        args.entry_buffer_pips
+        if args.entry_buffer_pips is not None
+        else params.get("entry_buffer_pips", 2.0)
+    )
+    if entry_buffer_pips < 0:
+        raise ValueError("Swing entry_buffer_pips cannot be negative")
+    tp_type = args.tp_type or params.get("tp_type", "price_based")
+    sl_type = args.sl_type or params.get("sl_type", "price_based")
+    rr_ratio = args.rr_ratio or params.get("rr_ratio", 2.0)
+    lot_size = args.lot_size or params.get("lot_size", 0.01)
+    lot_mode = args.lot_mode or "fixed"
+    risk_mode = args.risk_mode or "percent"
+    risk_percent = args.risk_percent
+    risk_amount = args.risk_amount
+    magic = int(params.get("magic") or 212500)
+    signal_lookback = max(
+        120,
+        int(ema_periods["slow"]) * 4,
+        int(ema_exit_period) * 4,
+        int(max_structure_candles) + int(zigzag_depth) * 6 + 30,
+    )
+    sl_buffer_price = sl_buffer_pips * get_pip_value(args.symbol)
+    entry_buffer_price = entry_buffer_pips * get_pip_value(args.symbol)
+
+    mt5_tmp, err_tmp = get_mt5_connection(credentials)
+    if not err_tmp:
+        sym_info = mt5_tmp.symbol_info(args.symbol)
+        if sym_info and lot_mode == "fixed" and lot_size < sym_info.volume_min:
+            log(f"lot_size {lot_size} < symbol min {sym_info.volume_min} — using {sym_info.volume_min}", "WARN")
+            lot_size = sym_info.volume_min
+        mt5_tmp.shutdown()
+
+    log(
+        "Swing EMA ZigZag params: "
+        f"EMA={ema_periods['fast']}/{ema_periods['medium']}/{ema_periods['slow']}, "
+        f"zigzag={zigzag_depth}/{zigzag_deviation_points}/{zigzag_back_step}, "
+        f"structure={min_structure_candles}-{max_structure_candles}, "
+        f"cross_window={ema_cross_window_candles}, expiry={pending_expiry_candles}, "
+        f"max_pending={max_pending_orders_per_symbol}, ema_exit={'ON' if ema_exit_enabled else 'OFF'}({ema_exit_period}), "
+        f"entry_buffer={entry_buffer_pips}p, sl_buffer={sl_buffer_pips}p, rr={rr_ratio}"
+    )
+    send_telegram(
+        f"Swing EMA ZigZag Bot Started\nSymbol: {args.symbol}\nUser: {args.user}\n"
+        f"Test: {'Yes' if args.test else 'No'}"
+    )
+
+    _now_str = datetime.now(TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
+    _session_id = create_session(
+        strategy=args.strategy,
+        symbol=args.symbol,
+        mode="test" if args.test else "live",
+        user=args.user,
+        log_path=args.log_file or "",
+    )
+    _register_in_running_bots(
+        pid=os.getpid(),
+        symbol=args.symbol,
+        strategy=args.strategy,
+        user=args.user,
+        test=bool(args.test),
+        log_path=args.log_file or "",
+        started_at=_now_str,
+    )
+
+    pending_orders = []
+    active_trades = []
+    last_candle_time = None
+    live_bar_index = -1
+    _mt5_ref = [None]
+
+    try:
+        while True:
+            mt5, error = _ensure_mt5_connected(_mt5_ref, credentials)
+            if error:
+                log(f"MT5 connection failed: {error}", "ERROR")
+                send_telegram(f"MT5 Error: {error}", is_error=True)
+                time.sleep(args.interval)
+                continue
+
+            df = get_recent_candles(mt5, args.symbol, timeframe, signal_lookback)
+            if df is None or len(df) < max(ema_periods["slow"] + 5, (zigzag_depth * 2) + 5):
+                time.sleep(args.interval)
+                continue
+
+            last = df.iloc[-1]
+            candle_time = datetime.fromtimestamp(int(last["time"]), tz=TIMEZONE)
+            is_new_candle = (last_candle_time is None) or (candle_time > last_candle_time)
+
+            if is_new_candle:
+                live_bar_index += 1
+                current_bar_index = live_bar_index
+                candle = {
+                    "open": float(last["open"]),
+                    "high": float(last["high"]),
+                    "low": float(last["low"]),
+                    "close": float(last["close"]),
+                }
+                ema_exit_value = None
+                if ema_exit_enabled:
+                    ema_exit_series = calculate_ema_series(df["close"], int(ema_exit_period))
+                    if ema_exit_series:
+                        ema_exit_value = float(ema_exit_series[-1])
+
+                still_pending = []
+                for order in pending_orders:
+                    oid = order["order_id"]
+                    mt5_ticket = order.get("mt5_ticket")
+                    signal = order["signal"]
+                    direction = signal["direction"]
+                    filled = (
+                        candle["high"] >= signal["entry_price"]
+                        if direction == "BUY"
+                        else candle["low"] <= signal["entry_price"]
+                    )
+
+                    if args.test or mt5_ticket is None:
+                        if is_pending_signal_expired(signal, current_bar_index):
+                            log(f"[{oid}] [TEST] Swing stop expired")
+                        elif filled:
+                            fill_price = (
+                                max(signal["entry_price"], candle["open"])
+                                if direction == "BUY"
+                                else min(signal["entry_price"], candle["open"])
+                            )
+                            log(f"[{oid}] [TEST] Swing stop filled @ {fill_price:.2f}")
+                            active_trades.append({
+                                "direction": direction,
+                                "entry": fill_price,
+                                "sl": signal["stop_loss"],
+                                "tp": signal["take_profit"],
+                                "ticket": None,
+                                "order_id": oid,
+                                "lot": order["trade_lot"],
+                            })
+                        else:
+                            still_pending.append(order)
+                        continue
+
+                    pending_on_mt5 = mt5.orders_get(ticket=mt5_ticket)
+                    if pending_on_mt5:
+                        if is_pending_signal_expired(signal, current_bar_index):
+                            ok_cancel, cancel_msg = cancel_pending_order(mt5_ticket, credentials=credentials)
+                            if not ok_cancel:
+                                log(f"[{oid}] Cancel FAILED: {cancel_msg}", "ERROR")
+                                still_pending.append(order)
+                            else:
+                                log(f"[{oid}] Swing stop expired and cancelled")
+                        else:
+                            still_pending.append(order)
+                        continue
+
+                    position = _find_filled_position(
+                        mt5,
+                        None,
+                        args.symbol,
+                        magic,
+                        direction=direction,
+                        pending_ticket=mt5_ticket,
+                    )
+                    if position:
+                        fill_price = float(position.price_open)
+                        position_ticket = getattr(position, "ticket", mt5_ticket)
+                        log(f"[{oid}] Swing stop filled @ {fill_price:.5f} (ticket={position_ticket})")
+                        active_trades.append({
+                            "direction": direction,
+                            "entry": fill_price,
+                            "sl": signal["stop_loss"],
+                            "tp": signal["take_profit"],
+                            "ticket": position_ticket,
+                            "order_id": oid,
+                            "lot": order["trade_lot"],
+                        })
+                    else:
+                        log(f"[{oid}] Pending order disappeared without open position", "WARN")
+
+                pending_orders = still_pending
+
+                still_active = []
+                for trade in active_trades:
+                    oid = trade["order_id"]
+                    position_open = True
+                    if not args.test and trade.get("ticket") is not None:
+                        position_open = bool(mt5.positions_get(ticket=trade["ticket"]) or [])
+
+                    exit_type, exit_price = check_exit(
+                        trade["direction"], candle, trade["tp"], trade["sl"],
+                        tp_type=tp_type, sl_type=sl_type,
+                    )
+                    verified = False
+                    if exit_type is None and ema_exit_enabled and ema_exit_value is not None:
+                        ema_exit = evaluate_ema_exit(trade["direction"], candle, ema_exit_value, use_close=True)
+                        if ema_exit["exit"]:
+                            exit_type = "EMA"
+                            exit_price = float(ema_exit["price"])
+
+                    if exit_type is None and not position_open:
+                        exit_type = "BROKER"
+                        exit_price = float(candle["close"])
+
+                    if exit_type is None:
+                        still_active.append(trade)
+                        continue
+
+                    if not args.test and position_open and trade.get("ticket") is not None:
+                        ok_close, close_msg = close_position(
+                            trade["ticket"], credentials=credentials, test=False
+                        )
+                        if not ok_close:
+                            log(f"[{oid}] Close FAILED: {close_msg}", "ERROR")
+                            still_active.append(trade)
+                            continue
+                        log(f"[{oid}] Swing exit close sent: {close_msg}")
+
+                    pnl_usd = None
+                    if not args.test:
+                        pnl_usd = _estimate_pnl_usd(
+                            mt5, args.symbol, trade["direction"], trade["entry"],
+                            float(exit_price), trade["lot"], get_pip_value(args.symbol),
+                        )
+                    _record_trade(
+                        _session_id, oid, trade["direction"], trade["entry"],
+                        float(exit_price), exit_type, pnl_usd, trade["lot"], verified=verified
+                    )
+                    log(f"[{oid}] Swing exit: {exit_type} @ {float(exit_price):.5f}")
+
+                active_trades = still_active
+
+                now_hcm = datetime.now(TIMEZONE)
+                in_window = _in_time_window(now_hcm, entry_start_time, entry_end_time)
+                pending_cap_reached = (
+                    max_pending_orders_per_symbol > 0
+                    and len(pending_orders) >= max_pending_orders_per_symbol
+                )
+                if in_window and not pending_cap_reached:
+                    signal = swing_ema_zigzag_entry_decision(
+                        df=df,
+                        symbol=args.symbol,
+                        ema_periods=ema_periods,
+                        zigzag_depth=int(zigzag_depth),
+                        zigzag_deviation_points=float(zigzag_deviation_points),
+                        zigzag_back_step=int(zigzag_back_step),
+                        min_structure_candles=int(min_structure_candles),
+                        max_structure_candles=int(max_structure_candles),
+                        ema_cross_window_candles=int(ema_cross_window_candles),
+                        rr_ratio=float(rr_ratio),
+                        pending_expiry_candles=int(pending_expiry_candles),
+                        sl_buffer_price=float(sl_buffer_price),
+                        entry_buffer_price=float(entry_buffer_price),
+                    )
+                    if signal and not _has_duplicate_swing_pending(
+                        mt5, pending_orders, signal, args.symbol, magic
+                    ):
+                        signal["created_bar_index"] = current_bar_index
+                        signal["expires_at_bar"] = (
+                            current_bar_index + int(pending_expiry_candles)
+                        )
+                        trade_lot = lot_size
+                        if lot_mode == "flex":
+                            trade_lot = _calc_flex_lot(
+                                mt5, args.symbol, risk_mode, risk_percent, risk_amount,
+                                signal["entry_price"], signal["stop_loss"],
+                            )
+                        import uuid as _uuid
+                        order_id = (
+                            f"ORD-{candle_time.strftime('%y%m%d-%H%M%S')}-"
+                            f"{args.symbol}-{_uuid.uuid4().hex[:4].upper()}"
+                        )
+                        ok_stop, msg_stop, mt5_ticket = place_stop_order(
+                            args.symbol, signal["direction"], trade_lot, signal["entry_price"],
+                            sl=signal["stop_loss"], tp=signal["take_profit"],
+                            credentials=credentials, test=bool(args.test),
+                            magic=magic, comment=f"SWING-{order_id[-4:]}",
+                        )
+                        if not ok_stop:
+                            log(f"[{order_id}] Failed to place swing stop: {msg_stop}", "ERROR")
+                        else:
+                            log(
+                                f"[{order_id}] Swing stop placed {signal['direction']} "
+                                f"entry={signal['entry_price']:.5f} sl={signal['stop_loss']:.5f} "
+                                f"tp={signal['take_profit']:.5f} expiry={signal['expiry_bars']} bars"
+                            )
+                            pending_orders.append({
+                                "signal": signal,
+                                "trade_lot": trade_lot,
+                                "order_id": order_id,
+                                "mt5_ticket": mt5_ticket,
+                            })
+
+                last_candle_time = candle_time
+                _write_bot_state(os.getpid(), args.symbol, args.strategy, len(active_trades), len(pending_orders))
+                if _check_pending_restart(os.getpid()) and not active_trades and not pending_orders:
+                    log("Pending restart flag detected and bot is idle — restarting with new code")
+                    _clear_pending_restart(os.getpid())
+                    _write_bot_state(os.getpid(), args.symbol, args.strategy, 0, 0)
+                    _unregister_from_running_bots(os.getpid())
+                    close_session(_session_id)
+                    raise _GracefulRestart()
+
+            time.sleep(args.interval)
+
+    except KeyboardInterrupt:
+        log("Swing EMA ZigZag Bot stopped by user")
+        _write_bot_state(os.getpid(), args.symbol, args.strategy, 0, 0)
+        _unregister_from_running_bots(os.getpid())
+        close_session(_session_id)
+        if not args.managed_by_ui:
+            send_telegram("Swing EMA ZigZag Bot Stopped (manual)")
+    except _GracefulRestart:
+        raise
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        log(f"Swing EMA ZigZag Bot error: {e}", "ERROR")
+        _write_bot_state(os.getpid(), args.symbol, args.strategy, 0, 0)
+        _unregister_from_running_bots(os.getpid())
+        close_session(_session_id)
+        send_telegram(
+            f"❌ Swing EMA ZigZag Bot crashed\nSymbol: {args.symbol}\nError: {e}\n\n<pre>{tb[-800:]}</pre>",
+            is_error=True,
+        )
+        raise
+    finally:
+        try:
+            import MetaTrader5 as _mt5_mod
+            _mt5_mod.shutdown()
+        except Exception:
+            pass
 
 
 def run_feg_bot(args, strategy, params, credentials,

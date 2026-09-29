@@ -1,3 +1,6 @@
+import pytest
+
+from src import strategy_manager
 from src.strategy_manager import get_strategy_parameters, is_flappy_strategy
 
 def test_feg_params():
@@ -25,3 +28,71 @@ def test_multi_flappy_bird_is_independent_flappy_strategy_clone():
     assert params["ema_consensus"] == {"short": 13, "medium": 21, "long": 55}
     assert params["ema_fallback"] == {"short": 13, "medium": 21, "long": 55}
     assert params["magic"] == 212401
+
+
+def test_swing_ema_zigzag_params_have_runtime_defaults():
+    params = get_strategy_parameters("swing_ema_zigzag")
+
+    assert params["entry_type"] == "pattern"
+    assert params["swing_ema_periods"] == {"fast": 13, "medium": 21, "slow": 55}
+    assert params["zigzag_depth"] == 3
+    assert params["zigzag_deviation_points"] == 3.0
+    assert params["zigzag_back_step"] == 3
+    assert params["min_structure_candles"] == 10
+    assert params["max_structure_candles"] == 20
+    assert params["ema_cross_window_candles"] == 15
+    assert params["ema_exit_enabled"] is True
+    assert params["ema_exit_period"] == 21
+    assert params["pending_expiry_candles"] == 7
+    assert params["max_pending_orders_per_symbol"] == 0
+    assert params["sl_buffer_pips"] == 5.0
+    assert params["entry_buffer_pips"] == 2.0
+    assert params["magic"] == 212500
+
+
+def test_swing_ema_zigzag_rejects_invalid_pending_limit(monkeypatch):
+    monkeypatch.setattr(
+        strategy_manager,
+        "get_strategy",
+        lambda _strategy_id: {
+            "id": "swing_ema_zigzag",
+            "entry": {
+                "type": "pattern",
+                "ema_periods": [13, 21, 55],
+                "zigzag": {"depth": 3, "deviation_points": 3, "back_step": 3},
+                "min_structure_candles": 10,
+                "max_structure_candles": 20,
+                "ema_cross_window_candles": 15,
+            },
+            "exit": {"ema_exit": {"enabled": True, "period": 21}},
+            "parameters": {"pending_expiry_candles": 7, "max_pending_orders_per_symbol": -1},
+            "symbols": ["XAUUSD"],
+        },
+    )
+
+    with pytest.raises(ValueError, match="max_pending_orders_per_symbol"):
+        get_strategy_parameters("swing_ema_zigzag")
+
+
+def test_swing_ema_zigzag_rejects_negative_entry_buffer(monkeypatch):
+    monkeypatch.setattr(
+        strategy_manager,
+        "get_strategy",
+        lambda _strategy_id: {
+            "id": "swing_ema_zigzag",
+            "entry": {
+                "type": "pattern",
+                "ema_periods": [13, 21, 55],
+                "zigzag": {"depth": 3, "deviation_points": 3, "back_step": 3},
+                "min_structure_candles": 10,
+                "max_structure_candles": 20,
+                "ema_cross_window_candles": 15,
+            },
+            "exit": {"ema_exit": {"enabled": True, "period": 21}},
+            "parameters": {"entry_buffer_pips": -1},
+            "symbols": ["XAUUSD"],
+        },
+    )
+
+    with pytest.raises(ValueError, match="entry_buffer_pips"):
+        get_strategy_parameters("swing_ema_zigzag")

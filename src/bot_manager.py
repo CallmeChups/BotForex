@@ -70,6 +70,7 @@ def _notify_bot_stopped(bot: dict) -> None:
         "feg_ema21": "FEG EMA21",
         "feg_stop_order": "FEG Stop Order",
         "feg_reverse": "FEG Reverse",
+        "swing_ema_zigzag": "Swing EMA ZigZag",
     }
     label = strategy_labels.get(bot.get("strategy"), bot.get("strategy", "Bot"))
     try:
@@ -184,6 +185,14 @@ def build_bot_command(
     no_mother_child_body_ratio=None, no_mother_child_body_max_points=None,
     no_mother_father_wick_max_pct=None, no_mother_cross_window_candles=None,
     no_mother_sl_buffer_pips=None,
+    ema_short_period=None, ema_medium_period=None, ema_long_period=None,
+    zigzag_depth=None, zigzag_deviation_points=None, zigzag_back_step=None,
+    min_structure_candles=None, max_structure_candles=None,
+    ema_cross_window_candles=None,
+    ema_exit_enabled=None, ema_exit_period=None,
+    pending_expiry_candles=None, max_pending_orders_per_symbol=None,
+    sl_buffer_pips=None,
+    entry_buffer_pips=None,
 ):
     """Build command list to run bot_runner (separated for testability)."""
     cmd = [
@@ -295,6 +304,26 @@ def build_bot_command(
     ):
         if value is not None:
             cmd.extend([f"--{name}", "1" if value else "0"])
+    for name, value in (
+        ("ema_short_period", ema_short_period),
+        ("ema_medium_period", ema_medium_period),
+        ("ema_long_period", ema_long_period),
+        ("zigzag_depth", zigzag_depth),
+        ("zigzag_deviation_points", zigzag_deviation_points),
+        ("zigzag_back_step", zigzag_back_step),
+        ("min_structure_candles", min_structure_candles),
+        ("max_structure_candles", max_structure_candles),
+        ("ema_cross_window_candles", ema_cross_window_candles),
+        ("ema_exit_period", ema_exit_period),
+        ("pending_expiry_candles", pending_expiry_candles),
+        ("max_pending_orders_per_symbol", max_pending_orders_per_symbol),
+        ("sl_buffer_pips", sl_buffer_pips),
+        ("entry_buffer_pips", entry_buffer_pips),
+    ):
+        if value is not None:
+            cmd.extend([f"--{name}", str(value)])
+    if ema_exit_enabled is not None:
+        cmd.extend(["--ema_exit_enabled", "1" if ema_exit_enabled else "0"])
     cmd.extend(["--be_enabled", "1" if be_enabled else "0"])
     cmd.extend(["--be_r", str(be_r)])
     cmd.extend(["--ema_filter_enabled", "1" if ema_filter_enabled else "0"])
@@ -385,6 +414,14 @@ def _start_bot_unlocked(
     no_mother_father_wick_max_pct: float = None,
     no_mother_cross_window_candles: int = None,
     no_mother_sl_buffer_pips: float = None,
+    ema_short_period: int = None, ema_medium_period: int = None,
+    ema_long_period: int = None, zigzag_depth: int = None,
+    zigzag_deviation_points: float = None, zigzag_back_step: int = None,
+    min_structure_candles: int = None, max_structure_candles: int = None,
+    ema_cross_window_candles: int = None, ema_exit_enabled: bool = None,
+    ema_exit_period: int = None, pending_expiry_candles: int = None,
+    max_pending_orders_per_symbol: int = None, sl_buffer_pips: float = None,
+    entry_buffer_pips: float = None,
 ) -> tuple:
     """
     Start a new bot process
@@ -440,6 +477,14 @@ def _start_bot_unlocked(
         no_mother_child_body_ratio, no_mother_child_body_max_points,
         no_mother_father_wick_max_pct, no_mother_cross_window_candles,
         no_mother_sl_buffer_pips,
+        ema_short_period, ema_medium_period, ema_long_period,
+        zigzag_depth, zigzag_deviation_points, zigzag_back_step,
+        min_structure_candles, max_structure_candles,
+        ema_cross_window_candles,
+        ema_exit_enabled, ema_exit_period,
+        pending_expiry_candles, max_pending_orders_per_symbol,
+        sl_buffer_pips,
+        entry_buffer_pips,
     )
 
     try:
@@ -525,6 +570,21 @@ def _start_bot_unlocked(
             'higher_ema_fallback_long': higher_ema_fallback_long,
             'higher_ema_consensus_enabled': higher_ema_consensus_enabled,
             'higher_ema_fallback_enabled': higher_ema_fallback_enabled,
+            'ema_short_period': ema_short_period,
+            'ema_medium_period': ema_medium_period,
+            'ema_long_period': ema_long_period,
+            'zigzag_depth': zigzag_depth,
+            'zigzag_deviation_points': zigzag_deviation_points,
+            'zigzag_back_step': zigzag_back_step,
+            'min_structure_candles': min_structure_candles,
+            'max_structure_candles': max_structure_candles,
+            'ema_cross_window_candles': ema_cross_window_candles,
+            'ema_exit_enabled': ema_exit_enabled,
+            'ema_exit_period': ema_exit_period,
+            'pending_expiry_candles': pending_expiry_candles,
+            'max_pending_orders_per_symbol': max_pending_orders_per_symbol,
+            'entry_buffer_pips': entry_buffer_pips,
+            'sl_buffer_pips': sl_buffer_pips,
             'be_enabled': be_enabled,
             'be_r': be_r,
             'ema_filter_enabled': ema_filter_enabled,
@@ -728,6 +788,20 @@ def switch_bot_mode(pid: int, live: bool) -> tuple:
         mother_coverage_enabled=bot.get('mother_coverage_enabled'),
         flappy_entry_body_percent=bot.get('flappy_entry_body_percent'),
         cross_window_candles=bot.get('cross_window_candles'),
+        ema_short_period=bot.get('ema_short_period'),
+        ema_medium_period=bot.get('ema_medium_period'),
+        ema_long_period=bot.get('ema_long_period'),
+        zigzag_depth=bot.get('zigzag_depth'),
+        zigzag_deviation_points=bot.get('zigzag_deviation_points'),
+        zigzag_back_step=bot.get('zigzag_back_step'),
+        min_structure_candles=bot.get('min_structure_candles'),
+        max_structure_candles=bot.get('max_structure_candles'),
+        ema_cross_window_candles=bot.get('ema_cross_window_candles'),
+        ema_exit_enabled=bot.get('ema_exit_enabled'),
+        ema_exit_period=bot.get('ema_exit_period'),
+        pending_expiry_candles=bot.get('pending_expiry_candles'),
+        max_pending_orders_per_symbol=bot.get('max_pending_orders_per_symbol'),
+        sl_buffer_pips=bot.get('sl_buffer_pips'),
     )
 
 
@@ -856,6 +930,20 @@ def restart_bot(pid: int) -> tuple:
         max_child_body_points=bot.get('max_child_body_points'),
         flappy_entry_body_percent=bot.get('flappy_entry_body_percent'),
         cross_window_candles=bot.get('cross_window_candles'),
+        ema_short_period=bot.get('ema_short_period'),
+        ema_medium_period=bot.get('ema_medium_period'),
+        ema_long_period=bot.get('ema_long_period'),
+        zigzag_depth=bot.get('zigzag_depth'),
+        zigzag_deviation_points=bot.get('zigzag_deviation_points'),
+        zigzag_back_step=bot.get('zigzag_back_step'),
+        min_structure_candles=bot.get('min_structure_candles'),
+        max_structure_candles=bot.get('max_structure_candles'),
+        ema_cross_window_candles=bot.get('ema_cross_window_candles'),
+        ema_exit_enabled=bot.get('ema_exit_enabled'),
+        ema_exit_period=bot.get('ema_exit_period'),
+        pending_expiry_candles=bot.get('pending_expiry_candles'),
+        max_pending_orders_per_symbol=bot.get('max_pending_orders_per_symbol'),
+        sl_buffer_pips=bot.get('sl_buffer_pips'),
     )
 
 

@@ -193,6 +193,11 @@ phần trăm nến đã quét, ETA, số trade đã tạo, thời gian đã ch�
 xử lý gần nhất. Engine dùng callback tùy chọn nên các script/test chạy trực tiếp
 không bị phụ thuộc vào Streamlit.
 
+Backtest Flappy Bird mặc định chỉ mô phỏng một lệnh tại một thời điểm. Nếu cần
+mô phỏng nhiều tín hiệu/vị thế chồng lấp, bật tùy chọn
+**Cho phép nhiều lệnh đồng thời** trên trang Backtest; tùy chọn này mặc định
+tắt để không thay đổi kết quả các backtest hiện tại.
+
 Trong phần setting Backtest, Flappy Bird chỉ hiển thị các lựa chọn có ý nghĩa
 với pattern này. Nhóm **Wick Filter**, các EMA/margin filter của FEG, Entry mode,
 Entry % và giới hạn nến Master Candle được ẩn; các giá trị cố định như entry,

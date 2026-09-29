@@ -59,6 +59,39 @@ def test_command_includes_multi_flappy_higher_timeframe_settings():
     assert cmd[cmd.index("--higher_ema_fallback_enabled") + 1] == "0"
 
 
+def test_command_includes_swing_ema_zigzag_runtime_flags():
+    cmd = build_bot_command(
+        "python", "bot_runner.py", "swing_ema_zigzag", "XAUUSD", "admin",
+        test=True, interval=60,
+        ema_short_period=13, ema_medium_period=21, ema_long_period=55,
+        zigzag_depth=4, zigzag_deviation_points=2.5, zigzag_back_step=2,
+        min_structure_candles=8, max_structure_candles=18,
+        ema_cross_window_candles=12,
+        ema_exit_enabled=True, ema_exit_period=21,
+        pending_expiry_candles=5, max_pending_orders_per_symbol=0,
+        sl_buffer_pips=4.0,
+        entry_buffer_pips=2.0,
+    )
+    for flag, value in (
+        ("--ema_short_period", "13"),
+        ("--ema_medium_period", "21"),
+        ("--ema_long_period", "55"),
+        ("--zigzag_depth", "4"),
+        ("--zigzag_deviation_points", "2.5"),
+        ("--zigzag_back_step", "2"),
+        ("--min_structure_candles", "8"),
+        ("--max_structure_candles", "18"),
+        ("--ema_cross_window_candles", "12"),
+        ("--ema_exit_enabled", "1"),
+        ("--ema_exit_period", "21"),
+        ("--pending_expiry_candles", "5"),
+        ("--max_pending_orders_per_symbol", "0"),
+        ("--sl_buffer_pips", "4.0"),
+        ("--entry_buffer_pips", "2.0"),
+    ):
+        assert cmd[cmd.index(flag) + 1] == value
+
+
 def test_windows_pid_check_requires_exact_pid(monkeypatch):
     monkeypatch.setattr(bot_manager.platform, "system", lambda: "Windows")
     monkeypatch.setattr(
