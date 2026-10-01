@@ -41,6 +41,13 @@ def test_swing_ema_zigzag_params_have_runtime_defaults():
     assert params["min_structure_candles"] == 10
     assert params["max_structure_candles"] == 20
     assert params["ema_cross_window_candles"] == 15
+    assert params["use_pivot2_for_buy"] is True
+    assert params["use_pivot2_for_sell"] is True
+    assert params["ema_consensus_enabled"] is True
+    assert params["ema_fallback_enabled"] is False
+    assert params["swing_fallback_ema_periods"] == {
+        "fast": 13, "medium": 21, "slow": 55
+    }
     assert params["ema_exit_enabled"] is True
     assert params["ema_exit_period"] == 21
     assert params["pending_expiry_candles"] == 7
@@ -48,6 +55,23 @@ def test_swing_ema_zigzag_params_have_runtime_defaults():
     assert params["sl_buffer_pips"] == 5.0
     assert params["entry_buffer_pips"] == 2.0
     assert params["magic"] == 212500
+
+
+def test_swing_fallback_defaults_off_when_config_omits_switch(monkeypatch):
+    monkeypatch.setattr(
+        strategy_manager,
+        "get_strategy",
+        lambda _strategy_id: {
+            "id": "swing_ema_zigzag",
+            "entry": {"type": "pattern", "ema_periods": [13, 21, 55]},
+            "exit": {"ema_exit": {}},
+            "parameters": {},
+        },
+    )
+
+    params = get_strategy_parameters("swing_ema_zigzag")
+
+    assert params["ema_fallback_enabled"] is False
 
 
 def test_swing_ema_zigzag_rejects_invalid_pending_limit(monkeypatch):

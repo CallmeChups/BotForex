@@ -16,6 +16,14 @@ entry:
     - 13
     - 21
     - 55
+  ema_consensus_enabled: true
+  ema_fallback_enabled: false
+  ema_fallback:
+    fast: 13
+    medium: 21
+    slow: 55
+  use_pivot2_for_buy: true
+  use_pivot2_for_sell: true
   zigzag:
     depth: 3
     deviation_points: 3

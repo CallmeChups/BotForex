@@ -119,19 +119,69 @@ cần đi thêm một khoảng mới kích hoạt lệnh:
   `parameters.entry_buffer_pips` trong
   [`strategies/swing_ema_zigzag.yaml`](../strategies/swing_ema_zigzag.yaml).
 
-Buffer này độc lập với `sl_buffer_pips` (mặc định `5.0` pip), vốn dùng để đặt
-Stop Loss ngoài biên nến phát sinh tín hiệu. TP theo R:R được tính từ giá vào
-lệnh đã cộng hoặc trừ buffer. Đây là quy tắc của strategy, không phải tham số
-của indicator `SwingStructureMaster`.
+Mốc entry có thể cấu hình riêng theo hướng:
+
+- BUY bật **Dùng Đỉnh 2**: cần cấu trúc Đáy 1 → Đỉnh 1 → Đáy 2 → Đỉnh 2 và
+  đặt Stop Order tại Đỉnh 2. Tắt: không cần Đỉnh 2, đặt tại Đỉnh 1, đồng thời
+  bỏ kiểm tra Đỉnh 2 so với EMA.
+- SELL bật **Dùng Đáy 2**: cần cấu trúc Đỉnh 1 → Đáy 1 → Đỉnh 2 → Đáy 2 và
+  đặt Stop Order tại Đáy 2. Tắt: không cần Đáy 2, đặt tại Đáy 1, đồng thời
+  bỏ kiểm tra Đáy 2 so với EMA.
+
+`sl_buffer_pips` mặc định là `5.0` pip, độc lập với buffer Entry. Khi Stop
+Order khớp, BUY đặt SL dưới đáy cây nến đã đóng ngay trước cây nến khớp; SELL
+đặt SL trên đỉnh của cây nến đã đóng đó. TP tính theo R:R từ giá khớp thực tế
+và SL. Đây là quy tắc của strategy, không phải tham số của indicator
+`SwingStructureMaster`.
+
+## Bộ lọc EMA của Swing
+
+Hai nhánh EMA có công tắc và periods riêng:
+
+- **EMA đồng thuận** (mặc định bật): BUY yêu cầu EMA ngắn > trung > dài, SELL
+  yêu cầu thứ tự ngược lại; giao cắt EMA ngắn/trung phải còn trong cửa sổ đã
+  cấu hình. Khi Pivot 2 của hướng đó bật, Pivot 2 cũng phải nằm đúng phía cả ba
+  EMA.
+- **EMA fallback Multi Flappy Bird** (mặc định tắt): BUY yêu cầu EMA fallback
+  ngắn > trung, EMA ngắn < dài và nến tín hiệu đã đóng cắt lên EMA dài. SELL
+  dùng các quan hệ đảo chiều và nến cắt xuống.
+- Nếu bật cả hai nhánh, chúng kết hợp theo OR: chỉ cần một nhánh đạt. Tắt cả
+  hai thì bỏ toàn bộ lọc EMA.
+
+Các switch và period EMA fallback được cấu hình riêng trên trang **Bots** và
+**Backtest**. Cấu hình mặc định trong
+[`strategies/swing_ema_zigzag.yaml`](../strategies/swing_ema_zigzag.yaml):
+Pivot 2 BUY/SELL bật, EMA đồng thuận bật, fallback tắt, EMA fallback
+13/21/55.
 
 ## Kiểm thử Strategy
 
-- Trang **Bots** và **Backtest** cho phép cấu hình EMA, Depth/Deviation/Back Step,
-  khoảng tuổi cấu trúc, giới hạn giao cắt EMA, buffer Entry/SL, thời hạn Stop
-  Order và giới hạn số lệnh chờ.
+- Trang **Bots** và **Backtest** cho phép cấu hình Pivot 2 BUY/SELL độc lập,
+  hai nhánh EMA và EMA fallback, Depth/Deviation/Back Step, khoảng tuổi cấu
+  trúc, giới hạn giao cắt EMA, buffer Entry/SL, thời hạn Stop Order và giới
+  hạn số lệnh chờ.
 - Backtest mô phỏng Stop Order từ nến sau nến tín hiệu, hủy lệnh hết hạn trước
-  khi xét khớp, bỏ tín hiệu nếu Entry đã bị chạm trong nến tạo tín hiệu hoặc SL
-  từ nến đó không để lại rủi ro dương, và xét thoát qua TP/SL hoặc EMA thoát lệnh.
+  khi xét khớp, và xét thoát qua TP/SL được tính tại nến khớp hoặc EMA thoát lệnh.
+- `setup_id` dựa trên cấu trúc pullback tạo setup: BUY dùng Đáy 1 → Đỉnh 1 →
+  Đáy 2; SELL dùng Đỉnh 1 → Đáy 1 → Đỉnh 2. Thời điểm pivot làm ID ổn định
+  khi cửa sổ dữ liệu trượt. Các pivot breakout mới cùng pullback vẫn thuộc
+  một setup, nên chỉ được đặt một Stop Order. Setup được đánh dấu đã dùng khi
+  đặt thành công và không được tái sử dụng sau khi lệnh hết hạn hoặc khớp.
+  Setup tiếp theo cần một cấu trúc pullback mới. Live bot lưu ID đã dùng trong
+  `data/swing_setup_state.json` và ghi dấu hash setup vào comment lệnh để giữ
+  quy tắc này sau khi khởi động lại. Lệnh Swing cũ chưa có dấu hash sẽ chặn
+  setup mới cho tới khi lệnh/vị thế cũ được xử lý.
+- Trong khi một Stop Order đang chờ hoặc trade cùng hướng đang mở, không tạo
+  thêm lệnh cùng hướng tại cùng Entry dù pivot pair tạo ra `setup_id` khác.
+  Điều này tránh nhiều pending khác setup nhưng khớp thành trade trùng Entry.
+- Pending Stop Order được gửi không có SL/TP. Khi runner phát hiện khớp, nó
+  tính SL/TP theo nến đã đóng ngay trước đó rồi cập nhật vị thế trên MT5. Do đó
+  vị thế có thể chưa có SL/TP phía broker trong thời gian từ lúc khớp đến lần
+  quét runner kế tiếp.
+- Với chế độ lot linh hoạt theo rủi ro, khối lượng được xác định lúc đặt pending
+  từ SL ước tính khi tạo tín hiệu. Nếu lệnh chờ nhiều nến rồi mới khớp, SL thực
+  tế có thể khác ước tính nên mức rủi ro tiền thực tế cũng có thể lệch phần trăm
+  cấu hình.
 - Trong **Trade Analysis → Interactive Chart**, Swing hiển thị EMA ngắn/trung/dài
   cùng ZigZag đã xác nhận. Mở **Swing EMA + ZigZag** để bật/tắt độc lập từng EMA,
   đường ZigZag và dấu pivot. EMA dùng màu xanh ngọc/vàng cam/tím; đường ZigZag

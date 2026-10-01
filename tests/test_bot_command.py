@@ -71,6 +71,11 @@ def test_command_includes_swing_ema_zigzag_runtime_flags():
         pending_expiry_candles=5, max_pending_orders_per_symbol=0,
         sl_buffer_pips=4.0,
         entry_buffer_pips=2.0,
+        use_pivot2_for_buy=False, use_pivot2_for_sell=True,
+        ema_consensus_enabled=False, ema_fallback_enabled=True,
+        fallback_ema_short_period=8,
+        fallback_ema_medium_period=13,
+        fallback_ema_long_period=34,
     )
     for flag, value in (
         ("--ema_short_period", "13"),
@@ -88,6 +93,13 @@ def test_command_includes_swing_ema_zigzag_runtime_flags():
         ("--max_pending_orders_per_symbol", "0"),
         ("--sl_buffer_pips", "4.0"),
         ("--entry_buffer_pips", "2.0"),
+        ("--use_pivot2_for_buy", "0"),
+        ("--use_pivot2_for_sell", "1"),
+        ("--ema_consensus_enabled", "0"),
+        ("--ema_fallback_enabled", "1"),
+        ("--fallback_ema_short_period", "8"),
+        ("--fallback_ema_medium_period", "13"),
+        ("--fallback_ema_long_period", "34"),
     ):
         assert cmd[cmd.index(flag) + 1] == value
 

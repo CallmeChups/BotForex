@@ -5,7 +5,8 @@ Purpose: Confirmed non-repainting swing pivot detection.
 
 from __future__ import annotations
 
-from typing import Literal, TypedDict
+from bisect import bisect_left
+from typing import Literal, Sequence, TypedDict
 
 
 PivotKind = Literal["high", "low"]
@@ -76,12 +77,27 @@ def _collect_candidate_pivots(highs: list[float], lows: list[float], depth: int)
     return candidates
 
 
+def precompute_confirmed_pivot_candidates(data, depth: int) -> list[Pivot]:
+    """Collect raw confirmed pivot candidates once for reuse across rolling windows."""
+    if depth <= 0:
+        raise ValueError("depth must be positive")
+    highs = _coerce_price_list(data, "high")
+    lows = _coerce_price_list(data, "low")
+    if len(highs) != len(lows):
+        raise ValueError("high and low series must have the same length")
+    if len(highs) < (depth * 2) + 1:
+        return []
+    return _collect_candidate_pivots(highs, lows, depth)
+
+
 def detect_confirmed_pivots(
     data,
     point_size: float,
     depth: int = 3,
     deviation_points: float = 3.0,
     back_step: int = 3,
+    candidate_pivots: Sequence[Pivot] | None = None,
+    index_offset: int = 0,
 ) -> list[Pivot]:
     """
     Detect confirmed non-repainting zigzag-style pivots.
@@ -97,16 +113,41 @@ def detect_confirmed_pivots(
         raise ValueError("deviation_points cannot be negative")
     if back_step < 0:
         raise ValueError("back_step cannot be negative")
+    if index_offset < 0:
+        raise ValueError("index_offset cannot be negative")
 
-    highs = _coerce_price_list(data, "high")
-    lows = _coerce_price_list(data, "low")
-    if len(highs) != len(lows):
-        raise ValueError("high and low series must have the same length")
-    if len(highs) < (depth * 2) + 1:
+    if candidate_pivots is None:
+        highs = _coerce_price_list(data, "high")
+        lows = _coerce_price_list(data, "low")
+        if len(highs) != len(lows):
+            raise ValueError("high and low series must have the same length")
+        window_length = len(highs)
+    else:
+        window_length = len(data)
+    if window_length < (depth * 2) + 1:
         return []
 
     deviation = deviation_points * point_size
-    candidates = _collect_candidate_pivots(highs, lows, depth)
+    if candidate_pivots is None:
+        candidates = _collect_candidate_pivots(highs, lows, depth)
+    else:
+        first_index = index_offset + depth
+        stop_index = index_offset + window_length - depth
+        candidate_index = lambda pivot: pivot["index"]
+        start_position = bisect_left(
+            candidate_pivots, first_index, key=candidate_index
+        )
+        stop_position = bisect_left(
+            candidate_pivots, stop_index, key=candidate_index
+        )
+        candidates = [
+            {
+                **candidate,
+                "index": candidate["index"] - index_offset,
+                "confirmed_index": candidate["confirmed_index"] - index_offset,
+            }
+            for candidate in candidate_pivots[start_position:stop_position]
+        ]
     pivots: list[Pivot] = []
 
     for candidate in candidates:

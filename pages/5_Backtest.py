@@ -26,6 +26,7 @@ from src.auth import (require_auth, get_user_mt5_credentials, has_mt5_credential
 username, name = require_auth()
 
 from src.backtest import run_backtest
+from src.backtest_prefill import swing_backtest_widget_values
 from src.ohlc_cache import ensure_range
 from src.flappy_bird_strategy import diagnose_flappy_bird
 from src.utils import get_pip_value, report_page_error
@@ -43,6 +44,11 @@ from src.backtest_history import (
 )
 
 TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
+INTERACTIVE_CHART_CONFIG = {
+    "scrollZoom": True,
+    "displaylogo": False,
+    "doubleClick": "reset+autosize",
+}
 
 
 def _pip_caption(pips: float, symbol: str) -> str:
@@ -174,6 +180,22 @@ def main():
         show_demo_results()
         return
 
+    pending_config = st.session_state.pop("pending_backtest_config", None)
+    if pending_config is not None:
+        st.session_state["backtest_prefill"] = pending_config
+        for widget_key, value in swing_backtest_widget_values(pending_config).items():
+            st.session_state[widget_key] = value
+        loaded_strategy = next(
+            (
+                strategy["name"]
+                for strategy in enabled_strategies
+                if strategy["id"] == pending_config.get("strategy_id")
+            ),
+            None,
+        )
+        if loaded_strategy is not None:
+            st.session_state["new_layout_strategy"] = loaded_strategy
+
     strategy_options = {s['name']: s['id'] for s in enabled_strategies}
     default_end = now.date()
     default_start = default_end - timedelta(days=30)
@@ -203,6 +225,13 @@ def main():
     swing_ema_periods = dict(params.get(
         "swing_ema_periods", {"fast": 13, "medium": 21, "slow": 55}
     ))
+    swing_fallback_ema_periods = dict(params.get(
+        "swing_fallback_ema_periods", {"fast": 13, "medium": 21, "slow": 55}
+    ))
+    swing_use_pivot2_for_buy = bool(params.get("use_pivot2_for_buy", True))
+    swing_use_pivot2_for_sell = bool(params.get("use_pivot2_for_sell", True))
+    swing_ema_consensus_enabled = bool(params.get("ema_consensus_enabled", True))
+    swing_ema_fallback_enabled = bool(params.get("ema_fallback_enabled", False))
     swing_zigzag_depth = int(params.get("zigzag_depth", 3))
     swing_zigzag_deviation_points = float(params.get("zigzag_deviation_points", 3.0))
     swing_zigzag_back_step = int(params.get("zigzag_back_step", 3))
@@ -531,6 +560,70 @@ def main():
                 ):
                     st.error("EMA cần thỏa thứ tự: ngắn hạn < trung hạn < dài hạn.")
                     timeframe_relation_valid = False
+                pivot_cols = st.columns(2)
+                swing_use_pivot2_for_buy = pivot_cols[0].checkbox(
+                    "BUY dùng Đỉnh 2",
+                    value=swing_use_pivot2_for_buy,
+                    key="backtest_swing_pivot2_buy",
+                    help=(
+                        "Tắt: không yêu cầu Đỉnh 2, đặt Stop Order tại Đỉnh 1 "
+                        "và bỏ kiểm tra Đỉnh 2 so với EMA."
+                    ),
+                )
+                swing_use_pivot2_for_sell = pivot_cols[1].checkbox(
+                    "SELL dùng Đáy 2",
+                    value=swing_use_pivot2_for_sell,
+                    key="backtest_swing_pivot2_sell",
+                    help=(
+                        "Tắt: không yêu cầu Đáy 2, đặt Stop Order tại Đáy 1 "
+                        "và bỏ kiểm tra Đáy 2 so với EMA."
+                    ),
+                )
+                swing_ema_consensus_enabled = st.checkbox(
+                    "Bật bộ lọc EMA đồng thuận",
+                    value=swing_ema_consensus_enabled,
+                    key="backtest_swing_ema_consensus_enabled",
+                    help=(
+                        "Gồm thứ tự EMA, giao cắt ngắn/trung và vị trí Pivot 2 "
+                        "so với 3 EMA."
+                    ),
+                )
+                swing_ema_fallback_enabled = st.checkbox(
+                    "Bật bộ lọc EMA fallback (Multi Flappy Bird)",
+                    value=swing_ema_fallback_enabled,
+                    key="backtest_swing_ema_fallback_enabled",
+                    help=(
+                        "Độc lập với EMA đồng thuận; nếu cả hai cùng bật, "
+                        "chỉ cần một nhánh đạt điều kiện."
+                    ),
+                )
+                st.caption(
+                    "Hai bộ lọc EMA chạy song song theo OR; tắt cả hai nghĩa là "
+                    "không lọc EMA."
+                )
+                fallback_cols = st.columns(3)
+                for column, slot, label in zip(
+                    fallback_cols,
+                    ("fast", "medium", "slow"),
+                    ("Fallback ngắn hạn", "Fallback trung hạn", "Fallback dài hạn"),
+                ):
+                    swing_fallback_ema_periods[slot] = column.number_input(
+                        label,
+                        min_value=2,
+                        max_value=500,
+                        value=int(swing_fallback_ema_periods[slot]),
+                        key=f"backtest_swing_fallback_ema_{slot}",
+                        disabled=not swing_ema_fallback_enabled,
+                    )
+                if swing_ema_fallback_enabled and not (
+                    swing_fallback_ema_periods["fast"]
+                    < swing_fallback_ema_periods["medium"]
+                    < swing_fallback_ema_periods["slow"]
+                ):
+                    st.error(
+                        "EMA fallback cần thỏa thứ tự: ngắn hạn < trung hạn < dài hạn."
+                    )
+                    timeframe_relation_valid = False
                 st.markdown("**ZigZag và bộ lọc cấu trúc**")
                 swing_cols = st.columns(3)
                 swing_zigzag_depth = swing_cols[0].number_input(
@@ -576,6 +669,7 @@ def main():
                     max_value=1000,
                     value=swing_ema_cross_window_candles,
                     key="backtest_swing_cross_window",
+                    disabled=not swing_ema_consensus_enabled,
                 )
                 ema_period = swing_ema_periods["medium"]
                 h2_exceed_pips = c2_gap_pips = ema_margin_pips = 0.0
@@ -1385,6 +1479,15 @@ def main():
                     swing_max_pending_orders_per_symbol=int(
                         swing_max_pending_orders_per_symbol
                     ),
+                    swing_use_pivot2_for_buy=bool(swing_use_pivot2_for_buy),
+                    swing_use_pivot2_for_sell=bool(swing_use_pivot2_for_sell),
+                    swing_ema_consensus_enabled=bool(
+                        swing_ema_consensus_enabled
+                    ),
+                    swing_ema_fallback_enabled=bool(
+                        swing_ema_fallback_enabled
+                    ),
+                    swing_fallback_ema_periods=swing_fallback_ema_periods,
                     progress_callback=update_backtest_progress,
                 )
             progress_bar.progress(1.0, text="Backtest hoàn tất")
@@ -1407,6 +1510,15 @@ def main():
                 'entry_body_percent': flappy_entry_body_percent,
                 'rr_ratio': rr_ratio,
                 'swing_ema_periods': dict(swing_ema_periods),
+                'swing_fallback_ema_periods': dict(swing_fallback_ema_periods),
+                'swing_use_pivot2_for_buy': bool(swing_use_pivot2_for_buy),
+                'swing_use_pivot2_for_sell': bool(swing_use_pivot2_for_sell),
+                'swing_ema_consensus_enabled': bool(
+                    swing_ema_consensus_enabled
+                ),
+                'swing_ema_fallback_enabled': bool(
+                    swing_ema_fallback_enabled
+                ),
                 'swing_zigzag_depth': int(swing_zigzag_depth),
                 'swing_zigzag_deviation_points': float(swing_zigzag_deviation_points),
                 'swing_zigzag_back_step': int(swing_zigzag_back_step),
@@ -2205,7 +2317,8 @@ def show_interactive_chart(
         xaxis_title="Time",
         yaxis_title="Price",
         xaxis_rangeslider_visible=False,
-        height=600,
+        autosize=True,
+        dragmode="pan",
         showlegend=True,
         legend=dict(
             yanchor="top",
@@ -2215,7 +2328,27 @@ def show_interactive_chart(
         )
     )
 
-    st.plotly_chart(fig, width='stretch', key="specific_trade_chart")
+    st.markdown(
+        """
+        <style>
+        .st-key-specific_trade_chart,
+        .st-key-all_trades_chart {
+            height: 78vh;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Kéo để dịch chuyển biểu đồ · cuộn con lăn để zoom · nhấp đúp để khôi phục."
+    )
+    st.plotly_chart(
+        fig,
+        width="stretch",
+        height="stretch",
+        key="specific_trade_chart",
+        config=INTERACTIVE_CHART_CONFIG,
+    )
 
     # Temporarily disabled because rendering this chart adds significant
     # latency to large backtests. Re-enable after chart rendering is optimized.
@@ -2460,13 +2593,16 @@ def show_interactive_chart(
             f"all:{selected_idx}:{selected_timeframe}:{all_timeframe}:"
             f"{chart_lookback_candles}:{chart_forward_candles}"
         ),
-        height=600,
+        autosize=True,
+        dragmode="pan",
         showlegend=True,
     )
     all_selection = st.plotly_chart(
         all_fig,
         width="stretch",
+        height="stretch",
         key="all_trades_chart",
+        config=INTERACTIVE_CHART_CONFIG,
         on_select="rerun",
         selection_mode=("points",),
     )
@@ -2810,7 +2946,7 @@ def show_history_section():
                 if st.button("Load Config", type="primary", key="btn_reuse_config"):
                     if record:
                         cfg = _migrate_config(record['config'])
-                        st.session_state['backtest_prefill'] = cfg
+                        st.session_state['pending_backtest_config'] = cfg
                         st.session_state['_flash_success'] = f"✅ Đã load config từ **{record_id}** — scroll lên để xem params đã được điền."
                         st.rerun()
             with col_dl:

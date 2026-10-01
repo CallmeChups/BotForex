@@ -193,6 +193,10 @@ def build_bot_command(
     pending_expiry_candles=None, max_pending_orders_per_symbol=None,
     sl_buffer_pips=None,
     entry_buffer_pips=None,
+    use_pivot2_for_buy=None, use_pivot2_for_sell=None,
+    ema_consensus_enabled=None, ema_fallback_enabled=None,
+    fallback_ema_short_period=None, fallback_ema_medium_period=None,
+    fallback_ema_long_period=None,
 ):
     """Build command list to run bot_runner (separated for testability)."""
     cmd = [
@@ -301,6 +305,10 @@ def build_bot_command(
         ("current_timeframe_filter_enabled", current_timeframe_filter_enabled),
         ("higher_ema_consensus_enabled", higher_ema_consensus_enabled),
         ("higher_ema_fallback_enabled", higher_ema_fallback_enabled),
+        ("use_pivot2_for_buy", use_pivot2_for_buy),
+        ("use_pivot2_for_sell", use_pivot2_for_sell),
+        ("ema_consensus_enabled", ema_consensus_enabled),
+        ("ema_fallback_enabled", ema_fallback_enabled),
     ):
         if value is not None:
             cmd.extend([f"--{name}", "1" if value else "0"])
@@ -319,6 +327,9 @@ def build_bot_command(
         ("max_pending_orders_per_symbol", max_pending_orders_per_symbol),
         ("sl_buffer_pips", sl_buffer_pips),
         ("entry_buffer_pips", entry_buffer_pips),
+        ("fallback_ema_short_period", fallback_ema_short_period),
+        ("fallback_ema_medium_period", fallback_ema_medium_period),
+        ("fallback_ema_long_period", fallback_ema_long_period),
     ):
         if value is not None:
             cmd.extend([f"--{name}", str(value)])
@@ -422,6 +433,11 @@ def _start_bot_unlocked(
     ema_exit_period: int = None, pending_expiry_candles: int = None,
     max_pending_orders_per_symbol: int = None, sl_buffer_pips: float = None,
     entry_buffer_pips: float = None,
+    use_pivot2_for_buy: bool = None, use_pivot2_for_sell: bool = None,
+    ema_consensus_enabled: bool = None, ema_fallback_enabled: bool = None,
+    fallback_ema_short_period: int = None,
+    fallback_ema_medium_period: int = None,
+    fallback_ema_long_period: int = None,
 ) -> tuple:
     """
     Start a new bot process
@@ -485,6 +501,13 @@ def _start_bot_unlocked(
         pending_expiry_candles, max_pending_orders_per_symbol,
         sl_buffer_pips,
         entry_buffer_pips,
+        use_pivot2_for_buy=use_pivot2_for_buy,
+        use_pivot2_for_sell=use_pivot2_for_sell,
+        ema_consensus_enabled=ema_consensus_enabled,
+        ema_fallback_enabled=ema_fallback_enabled,
+        fallback_ema_short_period=fallback_ema_short_period,
+        fallback_ema_medium_period=fallback_ema_medium_period,
+        fallback_ema_long_period=fallback_ema_long_period,
     )
 
     try:
@@ -585,6 +608,13 @@ def _start_bot_unlocked(
             'max_pending_orders_per_symbol': max_pending_orders_per_symbol,
             'entry_buffer_pips': entry_buffer_pips,
             'sl_buffer_pips': sl_buffer_pips,
+            'use_pivot2_for_buy': use_pivot2_for_buy,
+            'use_pivot2_for_sell': use_pivot2_for_sell,
+            'ema_consensus_enabled': ema_consensus_enabled,
+            'ema_fallback_enabled': ema_fallback_enabled,
+            'fallback_ema_short_period': fallback_ema_short_period,
+            'fallback_ema_medium_period': fallback_ema_medium_period,
+            'fallback_ema_long_period': fallback_ema_long_period,
             'be_enabled': be_enabled,
             'be_r': be_r,
             'ema_filter_enabled': ema_filter_enabled,
@@ -802,6 +832,13 @@ def switch_bot_mode(pid: int, live: bool) -> tuple:
         pending_expiry_candles=bot.get('pending_expiry_candles'),
         max_pending_orders_per_symbol=bot.get('max_pending_orders_per_symbol'),
         sl_buffer_pips=bot.get('sl_buffer_pips'),
+        use_pivot2_for_buy=bot.get('use_pivot2_for_buy'),
+        use_pivot2_for_sell=bot.get('use_pivot2_for_sell'),
+        ema_consensus_enabled=bot.get('ema_consensus_enabled'),
+        ema_fallback_enabled=bot.get('ema_fallback_enabled'),
+        fallback_ema_short_period=bot.get('fallback_ema_short_period'),
+        fallback_ema_medium_period=bot.get('fallback_ema_medium_period'),
+        fallback_ema_long_period=bot.get('fallback_ema_long_period'),
     )
 
 

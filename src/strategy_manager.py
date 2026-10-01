@@ -248,6 +248,13 @@ def get_strategy_parameters(strategy_id: str) -> dict:
         'medium': int(legacy_ema[1]),
         'slow': int(legacy_ema[2]),
     }
+    swing_fallback_config = entry.get('ema_fallback', {})
+    if not isinstance(swing_fallback_config, dict):
+        swing_fallback_config = {}
+    swing_fallback_ema_periods = {
+        slot: int(swing_fallback_config.get(slot, default))
+        for slot, default in swing_ema_periods.items()
+    }
     zigzag = entry.get('zigzag', {})
     zigzag_depth = int(zigzag.get('depth', 3))
     zigzag_deviation_points = float(zigzag.get('deviation_points', 3))
@@ -270,6 +277,18 @@ def get_strategy_parameters(strategy_id: str) -> dict:
         ]
         if any(value < 2 for value in swing_values) or not swing_values[0] < swing_values[1] < swing_values[2]:
             raise ValueError("Swing EMA periods must satisfy 2 <= fast < medium < slow")
+        fallback_values = [
+            swing_fallback_ema_periods['fast'],
+            swing_fallback_ema_periods['medium'],
+            swing_fallback_ema_periods['slow'],
+        ]
+        if (
+            any(value < 2 for value in fallback_values)
+            or not fallback_values[0] < fallback_values[1] < fallback_values[2]
+        ):
+            raise ValueError(
+                "Swing fallback EMA periods must satisfy 2 <= fast < medium < slow"
+            )
         if zigzag_depth <= 0:
             raise ValueError("Swing zigzag depth must be positive")
         if zigzag_deviation_points < 0:
@@ -302,10 +321,15 @@ def get_strategy_parameters(strategy_id: str) -> dict:
         'ema_period': entry.get('ema_period', 21),
         'ema_periods': legacy_ema,
         'swing_ema_periods': swing_ema_periods,
+        'swing_fallback_ema_periods': swing_fallback_ema_periods,
+        'use_pivot2_for_buy': bool(entry.get('use_pivot2_for_buy', True)),
+        'use_pivot2_for_sell': bool(entry.get('use_pivot2_for_sell', True)),
+        'ema_consensus_enabled': bool(entry.get('ema_consensus_enabled', True)),
         'ema_consensus': ema_consensus,
         'ema_fallback': ema_fallback,
-        'ema_consensus_enabled': bool(entry.get('ema_consensus_enabled', True)),
-        'ema_fallback_enabled': bool(entry.get('ema_fallback_enabled', True)),
+        'ema_fallback_enabled': bool(
+            entry.get('ema_fallback_enabled', not is_swing_strategy(strategy_id))
+        ),
         'current_timeframe_filter_enabled': bool(entry.get('current_timeframe_filter_enabled', True)),
         'higher_timeframe': entry.get('higher_timeframe', 'M5'),
         'higher_timeframe_filter_enabled': bool(entry.get('higher_timeframe_filter_enabled', False)),

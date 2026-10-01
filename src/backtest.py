@@ -390,6 +390,11 @@ def run_backtest(
     swing_sl_buffer_pips: float = 5.0,
     swing_pending_expiry_candles: int = 7,
     swing_max_pending_orders_per_symbol: int = 0,
+    swing_use_pivot2_for_buy: bool = True,
+    swing_use_pivot2_for_sell: bool = True,
+    swing_ema_consensus_enabled: bool = True,
+    swing_ema_fallback_enabled: bool = False,
+    swing_fallback_ema_periods: dict[str, int] | None = None,
 ) -> dict:
     """
     Run backtest on historical data
@@ -551,6 +556,13 @@ def run_backtest(
                 sl_buffer_pips=swing_sl_buffer_pips,
                 pending_expiry_candles=swing_pending_expiry_candles,
                 max_pending_orders_per_symbol=swing_max_pending_orders_per_symbol,
+                use_pivot2_for_buy=swing_use_pivot2_for_buy,
+                use_pivot2_for_sell=swing_use_pivot2_for_sell,
+                ema_consensus_enabled=swing_ema_consensus_enabled,
+                ema_fallback_enabled=swing_ema_fallback_enabled,
+                fallback_ema_periods=(
+                    swing_fallback_ema_periods or swing_ema_periods
+                ),
                 progress_callback=progress_callback,
             )
         else:
@@ -1902,15 +1914,22 @@ def _run_swing_ema_zigzag_backtest(
     sl_buffer_pips,
     pending_expiry_candles,
     max_pending_orders_per_symbol,
+    use_pivot2_for_buy=True,
+    use_pivot2_for_sell=True,
+    ema_consensus_enabled=True,
+    ema_fallback_enabled=False,
+    fallback_ema_periods=None,
     progress_callback=None,
 ):
     """Simulate Swing EMA stop orders using only candles available at each bar."""
     from src.swing_ema_strategy import (
         build_swing_ema_entry_signal,
-        calculate_ema_series,
+        calculate_swing_exit_levels,
         evaluate_ema_exit,
         is_pending_signal_expired,
     )
+    from src.zigzag_swing import precompute_confirmed_pivot_candidates
+    from src.flappy_bird_strategy import calculate_flappy_ema_series
 
     if rr_ratio <= 0:
         raise ValueError("rr_ratio must be positive")
@@ -1929,19 +1948,45 @@ def _run_swing_ema_zigzag_backtest(
     pip_value = get_pip_value(symbol)
     entry_buffer_price = entry_buffer_pips * pip_value
     sl_buffer_price = sl_buffer_pips * pip_value
+    fallback_lookback = (
+        max(int(period) for period in (fallback_ema_periods or ema_periods).values()) * 4
+        if ema_fallback_enabled
+        else 0
+    )
     lookback = max(
         120,
         max(ema_periods.values()) * 4,
+        fallback_lookback,
         max_structure_candles + zigzag_depth * 6 + 30,
         ema_exit_period * 4,
+    )
+    pivot_candidates = precompute_confirmed_pivot_candidates(df, zigzag_depth)
+    ema_exit_values = calculate_flappy_ema_series(
+        df["close"], ema_exit_period, lookback
     )
     trades = []
     pending_orders = []
     active_trades = []
+    used_setup_ids = set()
+    filled_setup_ids = set()
     equity_curve_pips = [0.0]
     equity_curve_usd = [starting_equity]
     current_equity = starting_equity
     last_progress = 0
+
+    def setup_identity(signal):
+        setup_id = signal.get("setup_id")
+        if setup_id is not None:
+            return setup_id
+        return (
+            signal["direction"],
+            float(signal["entry_price"]),
+            signal.get("pivot_high_price"),
+            signal.get("pivot_low_price"),
+        )
+
+    def entry_identity(signal):
+        return signal["direction"], round(float(signal["entry_price"]), 8)
 
     for bar_index in range(1, len(df)):
         row = df.iloc[bar_index]
@@ -1953,11 +1998,21 @@ def _run_swing_ema_zigzag_backtest(
         }
         current_time = row["time"]
         still_pending = []
-
+        pending_entry_ids = set()
+        filled_entry_ids = set()
         for order in pending_orders:
             signal = order["signal"]
             if is_pending_signal_expired(signal, bar_index):
                 continue
+            identity = setup_identity(signal)
+            entry_id = entry_identity(signal)
+            if (
+                identity in filled_setup_ids
+                or entry_id in pending_entry_ids
+                or entry_id in filled_entry_ids
+            ):
+                continue
+            pending_entry_ids.add(entry_id)
             direction = signal["direction"]
             filled = (
                 candle["high"] >= signal["entry_price"]
@@ -1965,16 +2020,31 @@ def _run_swing_ema_zigzag_backtest(
                 else candle["low"] <= signal["entry_price"]
             )
             if filled:
+                filled_setup_ids.add(identity)
+                filled_entry_ids.add(entry_id)
                 entry_price = (
                     max(signal["entry_price"], candle["open"])
                     if direction == "BUY"
                     else min(signal["entry_price"], candle["open"])
                 )
+                previous_row = df.iloc[bar_index - 1]
+                levels = calculate_swing_exit_levels(
+                    direction=direction,
+                    entry_price=entry_price,
+                    previous_candle={
+                        "high": float(previous_row["high"]),
+                        "low": float(previous_row["low"]),
+                    },
+                    buffer_price=sl_buffer_price,
+                    rr_ratio=rr_ratio,
+                )
+                used_setup_ids.add(identity)
+                signal.update(levels)
                 active_trades.append({
                     "direction": direction,
                     "entry": entry_price,
-                    "sl": signal["stop_loss"],
-                    "tp": signal["take_profit"],
+                    "sl": levels["stop_loss"],
+                    "tp": levels["take_profit"],
                     "entry_pos": bar_index,
                     "entry_time": current_time,
                     "signal": signal,
@@ -1984,10 +2054,9 @@ def _run_swing_ema_zigzag_backtest(
                 still_pending.append(order)
         pending_orders = still_pending
 
-        ema_exit_value = None
-        if ema_exit_enabled and bar_index + 1 >= ema_exit_period:
-            close_window = df["close"].iloc[max(0, bar_index + 1 - lookback):bar_index + 1]
-            ema_exit_value = calculate_ema_series(close_window, ema_exit_period)[-1]
+        ema_exit_value = (
+            ema_exit_values[bar_index] if ema_exit_enabled else None
+        )
 
         still_active = []
         for trade_state in active_trades:
@@ -2037,6 +2106,14 @@ def _run_swing_ema_zigzag_backtest(
             equity_curve_usd.append(current_equity)
         active_trades = still_active
 
+        active_entry_ids = {
+            entry_identity(trade_state["signal"])
+            for trade_state in active_trades
+        }
+        pending_entry_ids = {
+            entry_identity(order["signal"])
+            for order in pending_orders
+        }
         if (
             bar_index >= lookback - 1
             and _in_time_window(current_time, entry_start_time, entry_end_time)
@@ -2060,19 +2137,28 @@ def _run_swing_ema_zigzag_backtest(
                 pending_expiry_candles=pending_expiry_candles,
                 sl_buffer_price=sl_buffer_price,
                 entry_buffer_price=entry_buffer_price,
+                use_pivot2_for_buy=use_pivot2_for_buy,
+                use_pivot2_for_sell=use_pivot2_for_sell,
+                ema_consensus_enabled=ema_consensus_enabled,
+                ema_fallback_enabled=ema_fallback_enabled,
+                fallback_ema_periods=fallback_ema_periods or ema_periods,
+                pivot_candidates=pivot_candidates,
+                data_index_offset=window_start,
             )
             if signal is not None:
                 signal["created_bar_index"] = bar_index
                 signal["expires_at_bar"] = bar_index + pending_expiry_candles
-                duplicate = any(
-                    order["signal"]["direction"] == signal["direction"]
-                    and all(
-                        abs(
-                            float(order["signal"][key]) - float(signal[key])
-                        ) < 1e-8
-                        for key in ("entry_price", "stop_loss", "take_profit")
+                signal_identity = setup_identity(signal)
+                signal_entry_id = entry_identity(signal)
+                duplicate = (
+                    signal_identity in used_setup_ids
+                    or signal_identity in filled_setup_ids
+                    or signal_entry_id in active_entry_ids
+                    or signal_entry_id in pending_entry_ids
+                    or any(
+                        setup_identity(order["signal"]) == signal_identity
+                        for order in pending_orders
                     )
-                    for order in pending_orders
                 )
                 if not duplicate:
                     stop_distance = abs(signal["entry_price"] - signal["stop_loss"])
@@ -2087,6 +2173,7 @@ def _run_swing_ema_zigzag_backtest(
                         fixed_lot,
                     )
                     pending_orders.append({"signal": signal, "lot": lot})
+                    used_setup_ids.add(signal_identity)
 
         if progress_callback and (
             bar_index - last_progress >= 500 or bar_index == len(df) - 1

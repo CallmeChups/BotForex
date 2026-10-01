@@ -5,11 +5,15 @@ Purpose: Swing structure and EMA filters for stop-order signals.
 
 from __future__ import annotations
 
+import math
 from typing import Literal, Sequence, TypedDict
 
 import pandas as pd
 
-from src.zigzag_swing import Pivot, detect_confirmed_pivots
+from src.zigzag_swing import (
+    Pivot,
+    detect_confirmed_pivots,
+)
 
 
 Direction = Literal["BUY", "SELL"]
@@ -86,24 +90,108 @@ def annotate_structure(pivots: Sequence[Pivot]) -> list[StructuredPivot]:
     return structured
 
 
-def detect_structure_bias(pivots: Sequence[Pivot]) -> Direction | None:
-    """Return BUY for HH+HL, SELL for LH+LL, else None."""
-    structured = annotate_structure(pivots)
-    latest_high = next(
-        (pivot for pivot in reversed(structured) if pivot["kind"] == "high"),
+def _pullback_structure(
+    pivots: Sequence[Pivot],
+    direction: Direction,
+) -> list[Pivot] | None:
+    """Return the three pivots defining the latest directional pullback."""
+    if direction == "BUY":
+        same_side = [pivot for pivot in pivots if pivot["kind"] == "low"]
+        if len(same_side) < 2:
+            return None
+        first_low, second_low = same_side[-2:]
+        middle_high = next(
+            (
+                pivot
+                for pivot in reversed(pivots)
+                if pivot["kind"] == "high"
+                and first_low["index"] < pivot["index"] < second_low["index"]
+            ),
+            None,
+        )
+        if middle_high is None:
+            return None
+        return [first_low, middle_high, second_low]
+
+    same_side = [pivot for pivot in pivots if pivot["kind"] == "high"]
+    if len(same_side) < 2:
+        return None
+    first_high, second_high = same_side[-2:]
+    middle_low = next(
+        (
+            pivot
+            for pivot in reversed(pivots)
+            if pivot["kind"] == "low"
+            and first_high["index"] < pivot["index"] < second_high["index"]
+        ),
         None,
     )
-    latest_low = next(
-        (pivot for pivot in reversed(structured) if pivot["kind"] == "low"),
-        None,
+    if middle_low is None:
+        return None
+    return [first_high, middle_low, second_high]
+
+
+def detect_structure_bias(
+    pivots: Sequence[Pivot],
+    use_pivot2_for_buy: bool = True,
+    use_pivot2_for_sell: bool = True,
+) -> Direction | None:
+    """Return directional structure bias, optionally omitting Pivot 2."""
+    buy_structure = _pullback_structure(pivots, "BUY")
+    sell_structure = _pullback_structure(pivots, "SELL")
+    buy_second_high = (
+        next(
+            (
+                pivot
+                for pivot in reversed(pivots)
+                if buy_structure is not None
+                and pivot["kind"] == "high"
+                and pivot["index"] > buy_structure[2]["index"]
+            ),
+            None,
+        )
+        if use_pivot2_for_buy
+        else None
     )
-    latest_high_label = None if latest_high is None else latest_high.get("structure_label")
-    latest_low_label = None if latest_low is None else latest_low.get("structure_label")
-    if latest_high_label == "HH" and latest_low_label == "HL":
-        return "BUY"
-    if latest_high_label == "LH" and latest_low_label == "LL":
-        return "SELL"
-    return None
+    sell_second_low = (
+        next(
+            (
+                pivot
+                for pivot in reversed(pivots)
+                if sell_structure is not None
+                and pivot["kind"] == "low"
+                and pivot["index"] > sell_structure[2]["index"]
+            ),
+            None,
+        )
+        if use_pivot2_for_sell
+        else None
+    )
+    buy_valid = (
+        buy_structure is not None
+        and buy_structure[2]["price"] > buy_structure[0]["price"]
+        and (
+            not use_pivot2_for_buy
+            or (
+                buy_second_high is not None
+                and buy_second_high["price"] > buy_structure[1]["price"]
+            )
+        )
+    )
+    sell_valid = (
+        sell_structure is not None
+        and sell_structure[2]["price"] < sell_structure[0]["price"]
+        and (
+            not use_pivot2_for_sell
+            or (
+                sell_second_low is not None
+                and sell_second_low["price"] < sell_structure[1]["price"]
+            )
+        )
+    )
+    if buy_valid == sell_valid:
+        return None
+    return "BUY" if buy_valid else "SELL"
 
 
 def calculate_ema_series(close_values, period: int, adjust: bool = False) -> list[float]:
@@ -113,6 +201,19 @@ def calculate_ema_series(close_values, period: int, adjust: bool = False) -> lis
     values = _coerce_close_values(close_values)
     if not values:
         return []
+    if not adjust:
+        if not math.isfinite(values[0]):
+            series = pd.Series(values, dtype=float)
+            return series.ewm(span=period, adjust=adjust).mean().tolist()
+        alpha = 2.0 / (period + 1.0)
+        decay = 1.0 - alpha
+        result = [values[0]]
+        for value in values[1:]:
+            if not math.isfinite(value):
+                series = pd.Series(values, dtype=float)
+                return series.ewm(span=period, adjust=adjust).mean().tolist()
+            result.append(alpha * value + decay * result[-1])
+        return result
     series = pd.Series(values, dtype=float)
     return series.ewm(span=period, adjust=adjust).mean().tolist()
 
@@ -170,6 +271,47 @@ def passes_ema_consensus(direction: Direction, ema_values: dict[str, float]) -> 
     if direction == "BUY":
         return fast > medium > slow
     return fast < medium < slow
+
+
+def passes_swing_ema_fallback(
+    direction: Direction,
+    ema_values: dict[str, float],
+    signal_candle: dict[str, float],
+) -> bool:
+    """Apply Multi Flappy's fallback EMA order and signal-candle cross rule."""
+    fast = float(ema_values["fast"])
+    medium = float(ema_values["medium"])
+    slow = float(ema_values["slow"])
+    candle_open = float(signal_candle["open"])
+    candle_close = float(signal_candle["close"])
+    if direction == "BUY":
+        return fast > medium and fast < slow and candle_open < slow < candle_close
+    return fast < medium and fast > slow and candle_open > slow > candle_close
+
+
+def passes_swing_ema_filters(
+    direction: Direction,
+    consensus_values: dict[str, float],
+    fallback_values: dict[str, float],
+    signal_candle: dict[str, float] | None,
+    consensus_enabled: bool,
+    fallback_enabled: bool,
+    consensus_cross_valid: bool,
+) -> bool:
+    """Accept either enabled EMA route; no enabled routes means no EMA filtering."""
+    if not consensus_enabled and not fallback_enabled:
+        return True
+    consensus_passes = (
+        consensus_enabled
+        and passes_ema_consensus(direction, consensus_values)
+        and consensus_cross_valid
+    )
+    fallback_passes = (
+        fallback_enabled
+        and signal_candle is not None
+        and passes_swing_ema_fallback(direction, fallback_values, signal_candle)
+    )
+    return consensus_passes or fallback_passes
 
 
 def find_latest_ema_cross(
@@ -236,7 +378,7 @@ def build_stop_order_signal(
     activation_previous_high: float | None = None,
     entry_buffer_price: float = 0.0,
 ) -> dict:
-    """Build exact pivot stop levels and deferred activation-candle SL metadata."""
+    """Build a pivot stop entry and provisional signal-time SL/TP estimates."""
     if point_size <= 0:
         raise ValueError("point_size must be positive")
     if expiry_bars <= 0:
@@ -309,6 +451,38 @@ def build_stop_order_signal(
     }
 
 
+def calculate_swing_exit_levels(
+    direction: Direction,
+    entry_price: float,
+    previous_candle: dict,
+    buffer_price: float,
+    rr_ratio: float,
+) -> dict[str, float]:
+    """Calculate SL/TP from the last closed candle before a stop-order fill."""
+    if buffer_price < 0:
+        raise ValueError("buffer_price cannot be negative")
+    if rr_ratio <= 0:
+        raise ValueError("rr_ratio must be positive")
+
+    if direction == "BUY":
+        stop_loss = float(previous_candle["low"]) - buffer_price
+        risk = entry_price - stop_loss
+        take_profit = entry_price + risk * rr_ratio
+    else:
+        stop_loss = float(previous_candle["high"]) + buffer_price
+        risk = stop_loss - entry_price
+        take_profit = entry_price - risk * rr_ratio
+
+    if risk <= 0:
+        raise ValueError("previous closed candle stop must leave positive risk")
+
+    return {
+        "stop_loss": stop_loss,
+        "take_profit": take_profit,
+        "risk_price": risk,
+    }
+
+
 def is_pending_signal_expired(signal: dict, current_bar_index: int) -> bool:
     """Return True when current_bar_index passed the expiry bar."""
     expires_at_bar = signal.get("expires_at_bar")
@@ -350,37 +524,100 @@ def evaluate_swing_ema_signal(
     expiry_bars: int = 7,
     created_bar_index: int | None = None,
     entry_buffer_price: float = 0.0,
+    fallback_ema_periods: dict[str, int] | None = None,
+    ema_consensus_enabled: bool = True,
+    ema_fallback_enabled: bool = False,
+    use_pivot2_for_buy: bool = True,
+    use_pivot2_for_sell: bool = True,
+    signal_candle: dict[str, float] | None = None,
 ) -> dict | None:
     """Build a signal only when structure and EMA filters align."""
-    direction = detect_structure_bias(pivots)
+    direction = detect_structure_bias(
+        pivots,
+        use_pivot2_for_buy=use_pivot2_for_buy,
+        use_pivot2_for_sell=use_pivot2_for_sell,
+    )
     if direction is None:
         return None
 
     try:
-        ema_snapshot = calculate_ema_snapshot(close_values, ema_periods)
+        ema_snapshot = (
+            calculate_ema_snapshot(close_values, ema_periods)
+            if ema_consensus_enabled
+            else {}
+        )
     except ValueError:
         return None
-    if not passes_ema_consensus(direction, ema_snapshot):
+    cross = None
+    if ema_consensus_enabled:
+        cross = find_latest_ema_cross(
+            close_values,
+            fast_period=cross_fast_period,
+            slow_period=cross_slow_period,
+        )
+    consensus_cross_valid = (
+        cross is not None
+        and cross["direction"] == direction
+        and cross["bars_since_cross"] <= cross_window
+    )
+    fallback_snapshot = (
+        calculate_ema_snapshot(close_values, fallback_ema_periods or ema_periods)
+        if ema_fallback_enabled
+        else {}
+    )
+    pullback = _pullback_structure(pivots, direction)
+    if pullback is None:
+        return None
+    pivot1, middle_pivot, pivot2 = pullback
+    use_pivot2 = use_pivot2_for_buy if direction == "BUY" else use_pivot2_for_sell
+    entry_pivot = (
+        _latest_pivot(pivots, "high" if direction == "BUY" else "low")
+        if use_pivot2
+        else middle_pivot
+    )
+    if entry_pivot is None:
         return None
 
-    if not passes_ema_cross_window(
+    pivot_ema_snapshot = {}
+    consensus_pivot_valid = True
+    if use_pivot2 and ema_consensus_enabled:
+        pivot_close_values = _coerce_close_values(close_values)
+        pivot_index = entry_pivot["index"]
+        if pivot_index >= len(pivot_close_values):
+            consensus_pivot_valid = False
+        else:
+            for slot, period in (
+                ema_periods or {"fast": 13, "medium": 21, "slow": 55}
+            ).items():
+                series = calculate_ema_series(
+                    pivot_close_values[: pivot_index + 1],
+                    int(period),
+                )
+                pivot_ema_snapshot[slot] = series[-1]
+            pivot_price = entry_pivot["price"]
+            consensus_pivot_valid = (
+                all(pivot_price > value for value in pivot_ema_snapshot.values())
+                if direction == "BUY"
+                else all(pivot_price < value for value in pivot_ema_snapshot.values())
+            )
+
+    if not passes_swing_ema_filters(
         direction,
-        close_values,
-        fast_period=cross_fast_period,
-        slow_period=cross_slow_period,
-        window=cross_window,
+        ema_snapshot,
+        fallback_snapshot,
+        signal_candle,
+        ema_consensus_enabled,
+        ema_fallback_enabled,
+        consensus_cross_valid and consensus_pivot_valid,
     ):
         return None
 
-    swing_high = _latest_pivot(pivots, "high")
-    swing_low = _latest_pivot(pivots, "low")
-    if swing_high is None or swing_low is None:
-        return None
-
-    swing_high = _latest_pivot(pivots, "high")
-    swing_low = _latest_pivot(pivots, "low")
-    if swing_high is None or swing_low is None:
-        return None
+    swing_high = entry_pivot if direction == "BUY" else middle_pivot
+    swing_low = middle_pivot if direction == "BUY" else entry_pivot
+    if direction == "BUY":
+        swing_low = pivot2
+    else:
+        swing_high = pivot2
 
     signal = build_stop_order_signal(
         direction=direction,
@@ -393,27 +630,12 @@ def evaluate_swing_ema_signal(
         expiry_bars=expiry_bars,
         created_bar_index=created_bar_index,
     )
-    pivot_close_values = _coerce_close_values(close_values)
-    pivot_index = swing_high["index"] if direction == "BUY" else swing_low["index"]
-    if pivot_index >= len(pivot_close_values):
-        return None
-    pivot_ema_snapshot = {}
-    for slot, period in (ema_periods or {"fast": 13, "medium": 21, "slow": 55}).items():
-        series = calculate_ema_series(pivot_close_values[: pivot_index + 1], int(period))
-        pivot_ema_snapshot[slot] = series[-1]
-    pivot_price = swing_high["price"] if direction == "BUY" else swing_low["price"]
-    if direction == "BUY" and not all(pivot_price > value for value in pivot_ema_snapshot.values()):
-        return None
-    if direction == "SELL" and not all(pivot_price < value for value in pivot_ema_snapshot.values()):
-        return None
     signal["ema_snapshot"] = ema_snapshot
+    signal["fallback_ema_snapshot"] = fallback_snapshot
     signal["pivot_ema_snapshot"] = pivot_ema_snapshot
-    signal["ema_cross"] = find_latest_ema_cross(
-        close_values,
-        fast_period=cross_fast_period,
-        slow_period=cross_slow_period,
-    )
+    signal["ema_cross"] = cross or {}
     signal["structure"] = annotate_structure(pivots)
+    signal["pullback_structure"] = pullback
     return signal
 
 
@@ -431,6 +653,15 @@ def latest_structure_span(structured_pivots: Sequence[StructuredPivot]) -> int |
     return max(indices) - min(indices)
 
 
+def _bar_identity(data, index: int) -> str:
+    if "time" not in data:
+        return f"index:{index}"
+    value = data["time"].iloc[index]
+    if hasattr(value, "timestamp"):
+        return str(int(value.timestamp()))
+    return str(int(value))
+
+
 def build_swing_ema_entry_signal(
     data,
     symbol_point_size: float,
@@ -445,6 +676,13 @@ def build_swing_ema_entry_signal(
     pending_expiry_candles: int,
     sl_buffer_price: float,
     entry_buffer_price: float = 0.0,
+    pivot_candidates: Sequence[Pivot] | None = None,
+    data_index_offset: int = 0,
+    use_pivot2_for_buy: bool = True,
+    use_pivot2_for_sell: bool = True,
+    ema_consensus_enabled: bool = True,
+    ema_fallback_enabled: bool = False,
+    fallback_ema_periods: dict[str, int] | None = None,
 ) -> dict | None:
     """Create a buffered stop-entry signal from confirmed pivots and EMA filters."""
     if len(data) == 0:
@@ -455,8 +693,10 @@ def build_swing_ema_entry_signal(
         depth=zigzag_depth,
         deviation_points=zigzag_deviation_points,
         back_step=zigzag_back_step,
+        candidate_pivots=pivot_candidates,
+        index_offset=data_index_offset,
     )
-    if len(pivots) < 4:
+    if len(pivots) < 3:
         return None
 
     base_signal = evaluate_swing_ema_signal(
@@ -471,11 +711,48 @@ def build_swing_ema_entry_signal(
         expiry_bars=pending_expiry_candles,
         created_bar_index=len(data) - 1,
         entry_buffer_price=entry_buffer_price,
+        fallback_ema_periods=fallback_ema_periods,
+        ema_consensus_enabled=ema_consensus_enabled,
+        ema_fallback_enabled=ema_fallback_enabled,
+        use_pivot2_for_buy=use_pivot2_for_buy,
+        use_pivot2_for_sell=use_pivot2_for_sell,
+        signal_candle=(
+            {
+                "open": float(data["open"].iloc[-1]),
+                "close": float(data["close"].iloc[-1]),
+            }
+            if ema_fallback_enabled
+            else None
+        ),
     )
     if base_signal is None:
         return None
 
-    structure_span = latest_structure_span(base_signal["structure"])
+    pullback_structure = base_signal.get("pullback_structure")
+    if pullback_structure is None:
+        return None
+    structure_pivots = pullback_structure
+    use_pivot2 = (
+        use_pivot2_for_buy
+        if base_signal["direction"] == "BUY"
+        else use_pivot2_for_sell
+    )
+    entry_pivot = (
+        _latest_pivot(
+            base_signal["structure"],
+            "high" if base_signal["direction"] == "BUY" else "low",
+        )
+        if use_pivot2
+        else pullback_structure[1]
+    )
+    if entry_pivot is None:
+        return None
+    if use_pivot2:
+        structure_pivots = [*structure_pivots, entry_pivot]
+    structure_span = (
+        max(pivot["index"] for pivot in structure_pivots)
+        - min(pivot["index"] for pivot in structure_pivots)
+    )
     if (
         structure_span is None
         or structure_span < min_structure_candles
@@ -484,8 +761,16 @@ def build_swing_ema_entry_signal(
         return None
 
     pivot_map = {pivot["index"]: pivot for pivot in pivots}
-    swing_high = pivot_map.get(base_signal["swing_high_index"])
-    swing_low = pivot_map.get(base_signal["swing_low_index"])
+    swing_high = (
+        pivot_map.get(entry_pivot["index"])
+        if base_signal["direction"] == "BUY"
+        else pivot_map.get(pullback_structure[1]["index"])
+    )
+    swing_low = (
+        pivot_map.get(pullback_structure[2]["index"])
+        if base_signal["direction"] == "BUY"
+        else pivot_map.get(entry_pivot["index"])
+    )
     if swing_high is None or swing_low is None:
         return None
 
@@ -528,8 +813,17 @@ def build_swing_ema_entry_signal(
             "structure_span": structure_span,
             "pivot_high_price": float(swing_high["price"]),
             "pivot_low_price": float(swing_low["price"]),
+            "swing_high_index": int(swing_high["index"]),
+            "swing_low_index": int(swing_low["index"]),
+            "swing_high_time": _bar_identity(data, int(swing_high["index"])),
+            "swing_low_time": _bar_identity(data, int(swing_low["index"])),
         }
     )
+    structure_identity = ":".join(
+        f"{pivot['kind']}:{_bar_identity(data, int(pivot['index']))}"
+        for pivot in pullback_structure
+    )
+    signal["setup_id"] = f"{signal['direction']}:{structure_identity}"
     last_time = data["time"].iloc[-1] if "time" in data else None
     if last_time is not None:
         signal["signal_candle_time"] = (

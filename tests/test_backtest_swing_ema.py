@@ -5,10 +5,10 @@ from src import backtest
 from src.utils import get_pip_value
 
 
-def _candles(*, fill_bar=None, exit_bar=None, late_touch_bar=None):
+def _candles(*, fill_bar=None, exit_bar=None, late_touch_bar=None, count=125):
     rows = []
     timezone = ZoneInfo("Asia/Ho_Chi_Minh")
-    for index in range(125):
+    for index in range(count):
         price = 100.0
         candle = {
             "time": pd.Timestamp("2025-01-01", tz=timezone)
@@ -87,8 +87,57 @@ def test_swing_stop_fills_only_after_signal_and_keeps_entry_sl_buffers_independe
     trade = result["trades"][0]
     assert trade["_entry_pos"] == 120
     assert trade["entry"] == 100.0 + 2.0 * pip_value
-    assert trade["sl"] == 99.8 - 5.0 * pip_value
+    assert trade["sl"] == 99.95 - 5.0 * pip_value
     assert trade["exit_type"] == "TP"
+
+
+def test_swing_backtest_passes_pivot_and_parallel_ema_routes_to_signal_builder(
+    monkeypatch,
+):
+    df = _candles()
+    captured = {}
+    _patch_signal_builder(monkeypatch, df, capture=captured)
+
+    _run(
+        df,
+        swing_use_pivot2_for_buy=False,
+        swing_use_pivot2_for_sell=True,
+        swing_ema_consensus_enabled=False,
+        swing_ema_fallback_enabled=True,
+        swing_fallback_ema_periods={"fast": 8, "medium": 13, "slow": 21},
+    )
+
+    assert captured["use_pivot2_for_buy"] is False
+    assert captured["use_pivot2_for_sell"] is True
+    assert captured["ema_consensus_enabled"] is False
+    assert captured["ema_fallback_enabled"] is True
+    assert captured["fallback_ema_periods"] == {
+        "fast": 8, "medium": 13, "slow": 21
+    }
+
+
+def test_swing_backtest_lookback_includes_enabled_fallback_ema_periods(monkeypatch):
+    df = _candles(count=150)
+    signal_bar = 135
+    captured = {}
+
+    def build_signal(*, data, **kwargs):
+        if data.iloc[-1]["time"] == df.iloc[signal_bar]["time"]:
+            captured["bar_count"] = len(data)
+        return None
+
+    monkeypatch.setattr(
+        "src.swing_ema_strategy.build_swing_ema_entry_signal",
+        build_signal,
+    )
+
+    _run(
+        df,
+        swing_ema_fallback_enabled=True,
+        swing_fallback_ema_periods={"fast": 8, "medium": 13, "slow": 34},
+    )
+
+    assert captured["bar_count"] == 34 * 4
 
 
 def test_swing_pending_order_does_not_fill_after_expiry(monkeypatch):
@@ -98,6 +147,115 @@ def test_swing_pending_order_does_not_fill_after_expiry(monkeypatch):
     result = _run(df, swing_pending_expiry_candles=1)
 
     assert result["total_trades"] == 0
+    assert result["pending_orders_at_end"] == 0
+
+
+def test_expired_swing_setup_does_not_place_a_second_stop_order(monkeypatch):
+    df = _candles(late_touch_bar=122)
+
+    def build_signal(*, data, **kwargs):
+        if data.iloc[-1]["time"] < df.iloc[119]["time"]:
+            return None
+        return {
+            "direction": "BUY",
+            "entry_price": 100.2,
+            "stop_loss": 99.5,
+            "take_profit": 101.6,
+            "setup_id": "BUY:pivot-high-1:pivot-low-1",
+        }
+
+    monkeypatch.setattr(
+        "src.swing_ema_strategy.build_swing_ema_entry_signal",
+        build_signal,
+    )
+
+    result = _run(df, swing_pending_expiry_candles=1)
+
+    assert result["total_trades"] == 0
+    assert result["pending_orders_at_end"] == 0
+
+
+def test_swing_backtest_does_not_queue_same_setup_with_changed_entry_or_sl(monkeypatch):
+    df = _candles(fill_bar=121, exit_bar=122)
+    signal_times = {df.iloc[119]["time"], df.iloc[120]["time"]}
+    generated_signals = 0
+
+    def build_signal(*, data, **kwargs):
+        nonlocal generated_signals
+        if data.iloc[-1]["time"] not in signal_times:
+            return None
+        generated_signals += 1
+        return {
+            "direction": "BUY",
+            "entry_price": 100.2 + (generated_signals - 1) * 0.1,
+            "stop_loss": 99.5 - generated_signals * 0.01,
+            "take_profit": 101.6 - generated_signals * 0.02,
+            "setup_id": "BUY:pivot-high-1:pivot-low-1",
+        }
+
+    monkeypatch.setattr(
+        "src.swing_ema_strategy.build_swing_ema_entry_signal",
+        build_signal,
+    )
+
+    result = _run(df, swing_sl_buffer_pips=0.0)
+
+    assert generated_signals == 2
+    assert result["total_trades"] == 1
+    assert result["trades"][0]["sl"] == 99.95
+
+
+def test_swing_backtest_does_not_queue_same_entry_from_different_setup_ids(monkeypatch):
+    df = _candles(fill_bar=121, exit_bar=122)
+    signal_times = {df.iloc[119]["time"], df.iloc[120]["time"]}
+    generated_signals = 0
+
+    def build_signal(*, data, **kwargs):
+        nonlocal generated_signals
+        if data.iloc[-1]["time"] not in signal_times:
+            return None
+        generated_signals += 1
+        return {
+            "direction": "SELL",
+            "entry_price": 99.8,
+            "stop_loss": 100.5,
+            "take_profit": 98.4,
+            "setup_id": f"SELL:setup-{generated_signals}",
+        }
+
+    monkeypatch.setattr(
+        "src.swing_ema_strategy.build_swing_ema_entry_signal",
+        build_signal,
+    )
+
+    result = _run(df)
+
+    assert generated_signals == 2
+    assert result["total_trades"] == 1
+
+
+def test_swing_setup_is_not_reused_after_its_order_fills_and_trade_closes(monkeypatch):
+    df = _candles(fill_bar=120, exit_bar=121)
+
+    def build_signal(*, data, **kwargs):
+        if data.iloc[-1]["time"] < df.iloc[119]["time"]:
+            return None
+        return {
+            "direction": "BUY",
+            "entry_price": 100.2,
+            "stop_loss": 99.5,
+            "take_profit": 101.6,
+            "setup_id": "BUY:pivot-high-1:pivot-low-1",
+        }
+
+    monkeypatch.setattr(
+        "src.swing_ema_strategy.build_swing_ema_entry_signal",
+        build_signal,
+    )
+
+    result = _run(df)
+
+    assert result["total_trades"] == 1
     assert result["pending_orders_at_end"] == 0
 
 

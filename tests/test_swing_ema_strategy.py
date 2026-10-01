@@ -7,6 +7,8 @@ from src.swing_ema_strategy import (
     build_swing_chart_overlays,
     build_swing_ema_entry_signal,
     build_stop_order_signal,
+    calculate_ema_series,
+    calculate_swing_exit_levels,
     detect_structure_bias,
     evaluate_ema_exit,
     evaluate_swing_ema_signal,
@@ -25,11 +27,25 @@ BUY_PIVOTS = [
 ]
 
 SELL_PIVOTS = [
-    {"index": 2, "kind": "low", "price": 100.0, "confirmed_index": 5},
-    {"index": 5, "kind": "high", "price": 110.0, "confirmed_index": 8},
-    {"index": 8, "kind": "low", "price": 95.0, "confirmed_index": 11},
-    {"index": 11, "kind": "high", "price": 105.0, "confirmed_index": 14},
+    {"index": 2, "kind": "high", "price": 110.0, "confirmed_index": 5},
+    {"index": 5, "kind": "low", "price": 100.0, "confirmed_index": 8},
+    {"index": 8, "kind": "high", "price": 105.0, "confirmed_index": 11},
+    {"index": 11, "kind": "low", "price": 95.0, "confirmed_index": 14},
 ]
+
+
+def test_calculate_ema_series_uses_lightweight_path_for_adjust_false(monkeypatch):
+    values = [1.0, 2.5, -1.0, 3.0, 4.5]
+    expected = pd.Series(values, dtype=float).ewm(
+        span=3, adjust=False
+    ).mean().tolist()
+
+    def pandas_ewm_must_not_be_used(*args, **kwargs):
+        pytest.fail("adjust=False should not construct a pandas EWM")
+
+    monkeypatch.setattr(pd.Series, "ewm", pandas_ewm_must_not_be_used)
+
+    assert calculate_ema_series(values, period=3) == pytest.approx(expected)
 
 
 @pytest.mark.parametrize(
@@ -94,6 +110,281 @@ def test_annotate_structure_labels_higher_highs_and_higher_lows():
     assert detect_structure_bias(BUY_PIVOTS) == "BUY"
 
 
+def test_structure_bias_can_omit_second_high_for_buy():
+    buy_structure_without_high2 = BUY_PIVOTS[:3]
+
+    assert detect_structure_bias(
+        buy_structure_without_high2,
+        use_pivot2_for_buy=False,
+    ) == "BUY"
+    assert detect_structure_bias(buy_structure_without_high2) is None
+
+
+def test_structure_bias_can_omit_second_low_for_sell():
+    sell_structure_without_low2 = [
+        {"index": 2, "kind": "high", "price": 110.0, "confirmed_index": 5},
+        {"index": 5, "kind": "low", "price": 95.0, "confirmed_index": 8},
+        {"index": 8, "kind": "high", "price": 105.0, "confirmed_index": 11},
+    ]
+
+    assert detect_structure_bias(
+        sell_structure_without_low2,
+        use_pivot2_for_sell=False,
+    ) == "SELL"
+    assert detect_structure_bias(sell_structure_without_low2) is None
+
+
+def test_structure_bias_requires_ordered_second_pivot_for_enabled_routes():
+    buy_without_high2 = BUY_PIVOTS + [
+        {"index": 14, "kind": "low", "price": 106.0, "confirmed_index": 17},
+    ]
+    sell_without_low2 = [
+        {"index": 0, "kind": "high", "price": 120.0, "confirmed_index": 3},
+        {"index": 2, "kind": "low", "price": 100.0, "confirmed_index": 5},
+        {"index": 5, "kind": "high", "price": 110.0, "confirmed_index": 8},
+        {"index": 8, "kind": "low", "price": 95.0, "confirmed_index": 11},
+        {"index": 11, "kind": "high", "price": 105.0, "confirmed_index": 14},
+    ]
+
+    assert detect_structure_bias(buy_without_high2) is None
+    assert detect_structure_bias(sell_without_low2) is None
+
+
+def test_buy_without_high2_uses_high1_and_skips_pivot_ema_filter(monkeypatch):
+    pivots = BUY_PIVOTS[:3]
+    monkeypatch.setattr(
+        swing_strategy,
+        "detect_confirmed_pivots",
+        lambda *args, **kwargs: pivots,
+    )
+    monkeypatch.setattr(
+        swing_strategy,
+        "evaluate_swing_ema_signal",
+        lambda **kwargs: {
+            "direction": "BUY",
+            "structure": pivots,
+            "pullback_structure": pivots,
+            "swing_high_index": pivots[1]["index"],
+            "swing_low_index": pivots[2]["index"],
+            "ema_snapshot": {},
+            "fallback_ema_snapshot": {},
+            "pivot_ema_snapshot": {},
+            "ema_cross": {},
+        },
+    )
+    candles = pd.DataFrame({
+        "time": pd.date_range("2026-01-01", periods=15, freq="min"),
+        "open": [100.0] * 15,
+        "high": [101.0] * 15,
+        "low": [99.0] * 15,
+        "close": [100.0] * 15,
+    })
+
+    signal = build_swing_ema_entry_signal(
+        data=candles,
+        symbol_point_size=0.01,
+        ema_periods={"fast": 13, "medium": 21, "slow": 55},
+        zigzag_depth=3,
+        zigzag_deviation_points=3.0,
+        zigzag_back_step=3,
+        min_structure_candles=1,
+        max_structure_candles=20,
+        ema_cross_window_candles=15,
+        rr_ratio=2.0,
+        pending_expiry_candles=7,
+        sl_buffer_price=0.05,
+        entry_buffer_price=0.02,
+        use_pivot2_for_buy=False,
+    )
+
+    assert signal is not None
+    assert signal["entry_price"] == pytest.approx(110.02)
+    assert signal["pivot_ema_snapshot"] == {}
+
+
+def test_sell_without_low2_uses_low1_and_skips_pivot_ema_filter(monkeypatch):
+    pivots = [
+        {"index": 2, "kind": "high", "price": 120.0, "confirmed_index": 5},
+        {"index": 5, "kind": "low", "price": 100.0, "confirmed_index": 8},
+        {"index": 8, "kind": "high", "price": 110.0, "confirmed_index": 11},
+    ]
+    monkeypatch.setattr(
+        swing_strategy,
+        "detect_confirmed_pivots",
+        lambda *args, **kwargs: pivots,
+    )
+    monkeypatch.setattr(
+        swing_strategy,
+        "evaluate_swing_ema_signal",
+        lambda **kwargs: {
+            "direction": "SELL",
+            "structure": pivots,
+            "pullback_structure": pivots,
+            "ema_snapshot": {},
+            "fallback_ema_snapshot": {},
+            "pivot_ema_snapshot": {},
+            "ema_cross": {},
+        },
+    )
+    candles = pd.DataFrame({
+        "time": pd.date_range("2026-01-01", periods=15, freq="min"),
+        "open": [105.0] * 15,
+        "high": [106.0] * 15,
+        "low": [104.0] * 15,
+        "close": [105.0] * 15,
+    })
+
+    signal = build_swing_ema_entry_signal(
+        data=candles,
+        symbol_point_size=0.01,
+        ema_periods={"fast": 13, "medium": 21, "slow": 55},
+        zigzag_depth=3,
+        zigzag_deviation_points=3.0,
+        zigzag_back_step=3,
+        min_structure_candles=1,
+        max_structure_candles=20,
+        ema_cross_window_candles=15,
+        rr_ratio=2.0,
+        pending_expiry_candles=7,
+        sl_buffer_price=0.05,
+        entry_buffer_price=0.02,
+        use_pivot2_for_sell=False,
+    )
+
+    assert signal is not None
+    assert signal["entry_price"] == pytest.approx(99.98)
+    assert signal["pivot_ema_snapshot"] == {}
+
+
+@pytest.mark.parametrize(
+    ("direction", "fallback_values", "candle", "expected"),
+    [
+        ("BUY", {"fast": 13.0, "medium": 12.0, "slow": 15.0},
+         {"open": 14.0, "close": 16.0}, True),
+        ("BUY", {"fast": 13.0, "medium": 12.0, "slow": 15.0},
+         {"open": 14.0, "close": 14.5}, False),
+        ("SELL", {"fast": 12.0, "medium": 13.0, "slow": 10.0},
+         {"open": 11.0, "close": 9.0}, True),
+        ("SELL", {"fast": 12.0, "medium": 13.0, "slow": 10.0},
+         {"open": 11.0, "close": 10.5}, False),
+    ],
+)
+def test_swing_ema_fallback_matches_multi_flappy_candle_rule(
+    direction, fallback_values, candle, expected
+):
+    assert swing_strategy.passes_swing_ema_fallback(
+        direction,
+        fallback_values,
+        candle,
+    ) is expected
+
+
+def test_swing_ema_filters_allow_either_enabled_consensus_or_fallback():
+    consensus_values = {"fast": 12.0, "medium": 13.0, "slow": 11.0}
+    fallback_values = {"fast": 13.0, "medium": 12.0, "slow": 15.0}
+    candle = {"open": 14.0, "close": 16.0}
+
+    assert swing_strategy.passes_swing_ema_filters(
+        "BUY",
+        consensus_values,
+        fallback_values,
+        candle,
+        consensus_enabled=True,
+        fallback_enabled=True,
+        consensus_cross_valid=False,
+    )
+    assert not swing_strategy.passes_swing_ema_filters(
+        "BUY",
+        consensus_values,
+        fallback_values,
+        candle,
+        consensus_enabled=True,
+        fallback_enabled=False,
+        consensus_cross_valid=False,
+    )
+    assert swing_strategy.passes_swing_ema_filters(
+        "BUY",
+        consensus_values,
+        fallback_values,
+        candle,
+        consensus_enabled=False,
+        fallback_enabled=True,
+        consensus_cross_valid=False,
+    )
+    assert swing_strategy.passes_swing_ema_filters(
+        "BUY",
+        consensus_values,
+        fallback_values,
+        candle,
+        consensus_enabled=False,
+        fallback_enabled=False,
+        consensus_cross_valid=False,
+    )
+
+
+def test_fallback_only_does_not_apply_consensus_pivot_ema_filter(monkeypatch):
+    snapshots = iter(({"fast": 13.0, "medium": 12.0, "slow": 15.0},))
+    monkeypatch.setattr(
+        swing_strategy,
+        "calculate_ema_snapshot",
+        lambda *args, **kwargs: next(snapshots),
+    )
+    monkeypatch.setattr(
+        swing_strategy,
+        "calculate_ema_series",
+        lambda *args, **kwargs: [120.0] * len(args[0]),
+    )
+
+    signal = evaluate_swing_ema_signal(
+        pivots=BUY_PIVOTS,
+        close_values=[100.0] * 20,
+        point_size=0.01,
+        ema_periods={"fast": 13, "medium": 21, "slow": 55},
+        fallback_ema_periods={"fast": 8, "medium": 13, "slow": 34},
+        ema_consensus_enabled=False,
+        ema_fallback_enabled=True,
+        signal_candle={"open": 14.0, "close": 16.0},
+    )
+
+    assert signal is not None
+    assert signal["pivot_ema_snapshot"] == {}
+
+
+def test_fallback_can_pass_when_consensus_pivot_ema_check_fails(monkeypatch):
+    snapshots = iter((
+        {"fast": 12.0, "medium": 13.0, "slow": 11.0},
+        {"fast": 13.0, "medium": 12.0, "slow": 15.0},
+    ))
+    monkeypatch.setattr(
+        swing_strategy,
+        "calculate_ema_snapshot",
+        lambda *args, **kwargs: next(snapshots),
+    )
+    monkeypatch.setattr(
+        swing_strategy,
+        "calculate_ema_series",
+        lambda *args, **kwargs: [120.0] * len(args[0]),
+    )
+
+    signal = evaluate_swing_ema_signal(
+        pivots=BUY_PIVOTS,
+        close_values=[100.0] * 20,
+        point_size=0.01,
+        ema_periods={"fast": 13, "medium": 21, "slow": 55},
+        fallback_ema_periods={"fast": 8, "medium": 13, "slow": 34},
+        ema_consensus_enabled=True,
+        ema_fallback_enabled=True,
+        signal_candle={"open": 14.0, "close": 16.0},
+    )
+
+    assert signal is not None
+    assert signal["pivot_ema_snapshot"] == {
+        "fast": 120.0,
+        "medium": 120.0,
+        "slow": 120.0,
+    }
+
+
 def test_swing_chart_overlays_include_configured_emas_and_only_confirmed_pivots():
     data = pd.DataFrame({
         "high": [2.0, 4.0, 3.0, 5.0, 2.0, 4.0, 3.0],
@@ -119,11 +410,343 @@ def test_swing_chart_overlays_include_configured_emas_and_only_confirmed_pivots(
     assert all(pivot["confirmed_index"] < len(data) for pivot in pivots)
 
 
+def test_swing_setup_identity_is_stable_as_rolling_window_advances(monkeypatch):
+    pivots_by_call = iter((
+        [
+            {"index": 2, "kind": "low", "price": 95.0, "confirmed_index": 3},
+            {"index": 5, "kind": "high", "price": 105.0, "confirmed_index": 6},
+            {"index": 8, "kind": "low", "price": 98.0, "confirmed_index": 9},
+            {"index": 11, "kind": "high", "price": 110.0, "confirmed_index": 12},
+        ],
+        [
+            {"index": 1, "kind": "low", "price": 95.0, "confirmed_index": 2},
+            {"index": 4, "kind": "high", "price": 105.0, "confirmed_index": 5},
+            {"index": 7, "kind": "low", "price": 98.0, "confirmed_index": 8},
+            {"index": 10, "kind": "high", "price": 110.0, "confirmed_index": 11},
+        ],
+    ))
+    current_pivots = [None]
+
+    def detect_pivots(*args, **kwargs):
+        current_pivots[0] = next(pivots_by_call)
+        return current_pivots[0]
+
+    monkeypatch.setattr(swing_strategy, "detect_confirmed_pivots", detect_pivots)
+    monkeypatch.setattr(
+        swing_strategy,
+        "evaluate_swing_ema_signal",
+        lambda **kwargs: {
+            "direction": "BUY",
+            "structure": current_pivots[0],
+            "pullback_structure": current_pivots[0][-4:-1],
+            "swing_high_index": current_pivots[0][-1]["index"],
+            "swing_low_index": current_pivots[0][-2]["index"],
+            "ema_snapshot": {},
+            "pivot_ema_snapshot": {},
+            "ema_cross": {},
+        },
+    )
+    candles = pd.DataFrame({
+        "time": pd.date_range("2026-01-01", periods=21, freq="min"),
+        "high": [101.0] * 21,
+        "low": [99.0] * 21,
+        "close": [100.0] * 21,
+    })
+    common_args = {
+        "symbol_point_size": 0.01,
+        "ema_periods": {"fast": 13, "medium": 21, "slow": 55},
+        "zigzag_depth": 3,
+        "zigzag_deviation_points": 3.0,
+        "zigzag_back_step": 3,
+        "min_structure_candles": 1,
+        "max_structure_candles": 20,
+        "ema_cross_window_candles": 15,
+        "rr_ratio": 2.0,
+        "pending_expiry_candles": 7,
+        "sl_buffer_price": 0.05,
+        "entry_buffer_price": 0.02,
+    }
+
+    first = build_swing_ema_entry_signal(candles.iloc[:20], **common_args)
+    next_window = pd.concat(
+        [candles.iloc[1:20], candles.iloc[[20]]],
+        ignore_index=True,
+    )
+    second = build_swing_ema_entry_signal(next_window, **common_args)
+
+    assert first is not None and second is not None
+    assert first["setup_id"] == second["setup_id"]
+
+
+def test_swing_setup_identity_includes_both_pivot_pairs(monkeypatch):
+    pivot_sets = iter((
+        [
+            {"index": 2, "kind": "low", "price": 90.0, "confirmed_index": 3},
+            {"index": 5, "kind": "high", "price": 100.0, "confirmed_index": 6},
+            {"index": 8, "kind": "low", "price": 95.0, "confirmed_index": 9},
+            {"index": 11, "kind": "high", "price": 105.0, "confirmed_index": 12},
+            {"index": 14, "kind": "low", "price": 98.0, "confirmed_index": 15},
+            {"index": 17, "kind": "high", "price": 110.0, "confirmed_index": 18},
+        ],
+        [
+            {"index": 2, "kind": "low", "price": 90.0, "confirmed_index": 3},
+            {"index": 5, "kind": "high", "price": 100.0, "confirmed_index": 6},
+            {"index": 9, "kind": "low", "price": 95.0, "confirmed_index": 10},
+            {"index": 11, "kind": "high", "price": 105.0, "confirmed_index": 12},
+            {"index": 14, "kind": "low", "price": 98.0, "confirmed_index": 15},
+            {"index": 17, "kind": "high", "price": 110.0, "confirmed_index": 18},
+        ],
+    ))
+    current_pivots = [None]
+
+    def detect_pivots(*args, **kwargs):
+        current_pivots[0] = next(pivot_sets)
+        return current_pivots[0]
+
+    monkeypatch.setattr(swing_strategy, "detect_confirmed_pivots", detect_pivots)
+    monkeypatch.setattr(
+        swing_strategy,
+        "evaluate_swing_ema_signal",
+        lambda **kwargs: {
+            "direction": "BUY",
+            "structure": current_pivots[0],
+            "pullback_structure": current_pivots[0][2:5],
+            "swing_high_index": 17,
+            "swing_low_index": 14,
+            "ema_snapshot": {},
+            "pivot_ema_snapshot": {},
+            "ema_cross": {},
+        },
+    )
+    candles = pd.DataFrame({
+        "time": pd.date_range("2026-01-01", periods=21, freq="min"),
+        "high": [101.0] * 21,
+        "low": [99.0] * 21,
+        "close": [100.0] * 21,
+    })
+    common_args = {
+        "symbol_point_size": 0.01,
+        "ema_periods": {"fast": 13, "medium": 21, "slow": 55},
+        "zigzag_depth": 3,
+        "zigzag_deviation_points": 3.0,
+        "zigzag_back_step": 3,
+        "min_structure_candles": 1,
+        "max_structure_candles": 20,
+        "ema_cross_window_candles": 15,
+        "rr_ratio": 2.0,
+        "pending_expiry_candles": 7,
+        "sl_buffer_price": 0.05,
+        "entry_buffer_price": 0.02,
+    }
+
+    first = build_swing_ema_entry_signal(candles, **common_args)
+    second = build_swing_ema_entry_signal(candles, **common_args)
+
+    assert first is not None and second is not None
+    assert first["entry_price"] == second["entry_price"]
+    assert first["setup_id"] != second["setup_id"]
+
+
+def test_swing_setup_identity_is_shared_by_trigger_highs_from_same_pullback(
+    monkeypatch,
+):
+    pivot_sets = iter((
+        [
+            {"index": 2, "kind": "low", "price": 90.0, "confirmed_index": 3},
+            {"index": 5, "kind": "high", "price": 100.0, "confirmed_index": 6},
+            {"index": 8, "kind": "low", "price": 95.0, "confirmed_index": 9},
+            {"index": 11, "kind": "high", "price": 105.0, "confirmed_index": 12},
+            {"index": 14, "kind": "low", "price": 98.0, "confirmed_index": 15},
+            {"index": 17, "kind": "high", "price": 110.0, "confirmed_index": 18},
+        ],
+        [
+            {"index": 2, "kind": "low", "price": 90.0, "confirmed_index": 3},
+            {"index": 5, "kind": "high", "price": 100.0, "confirmed_index": 6},
+            {"index": 8, "kind": "low", "price": 95.0, "confirmed_index": 9},
+            {"index": 11, "kind": "high", "price": 105.0, "confirmed_index": 12},
+            {"index": 14, "kind": "low", "price": 98.0, "confirmed_index": 15},
+            {"index": 18, "kind": "high", "price": 111.0, "confirmed_index": 19},
+        ],
+    ))
+    current_pivots = [None]
+
+    def detect_pivots(*args, **kwargs):
+        current_pivots[0] = next(pivot_sets)
+        return current_pivots[0]
+
+    monkeypatch.setattr(swing_strategy, "detect_confirmed_pivots", detect_pivots)
+    monkeypatch.setattr(
+        swing_strategy,
+        "evaluate_swing_ema_signal",
+        lambda **kwargs: {
+            "direction": "BUY",
+            "structure": current_pivots[0],
+            "pullback_structure": current_pivots[0][2:5],
+            "swing_high_index": current_pivots[0][-1]["index"],
+            "swing_low_index": current_pivots[0][-2]["index"],
+            "ema_snapshot": {},
+            "pivot_ema_snapshot": {},
+            "ema_cross": {},
+        },
+    )
+    candles = pd.DataFrame({
+        "time": pd.date_range("2026-01-01", periods=21, freq="min"),
+        "high": [101.0] * 21,
+        "low": [99.0] * 21,
+        "close": [100.0] * 21,
+    })
+    common_args = {
+        "symbol_point_size": 0.01,
+        "ema_periods": {"fast": 13, "medium": 21, "slow": 55},
+        "zigzag_depth": 3,
+        "zigzag_deviation_points": 3.0,
+        "zigzag_back_step": 3,
+        "min_structure_candles": 1,
+        "max_structure_candles": 20,
+        "ema_cross_window_candles": 15,
+        "rr_ratio": 2.0,
+        "pending_expiry_candles": 7,
+        "sl_buffer_price": 0.05,
+        "entry_buffer_price": 0.02,
+    }
+
+    first = build_swing_ema_entry_signal(candles, **common_args)
+    second = build_swing_ema_entry_signal(candles, **common_args)
+
+    assert first is not None and second is not None
+    assert first["entry_price"] != second["entry_price"]
+    assert first["setup_id"] == second["setup_id"]
+
+
+def test_swing_setup_identity_is_shared_by_trigger_lows_from_same_pullback(
+    monkeypatch,
+):
+    pivot_sets = iter((
+        [
+            {"index": 2, "kind": "high", "price": 110.0, "confirmed_index": 3},
+            {"index": 5, "kind": "low", "price": 100.0, "confirmed_index": 6},
+            {"index": 8, "kind": "high", "price": 105.0, "confirmed_index": 9},
+            {"index": 11, "kind": "low", "price": 95.0, "confirmed_index": 12},
+            {"index": 14, "kind": "high", "price": 102.0, "confirmed_index": 15},
+            {"index": 17, "kind": "low", "price": 90.0, "confirmed_index": 18},
+        ],
+        [
+            {"index": 2, "kind": "high", "price": 110.0, "confirmed_index": 3},
+            {"index": 5, "kind": "low", "price": 100.0, "confirmed_index": 6},
+            {"index": 8, "kind": "high", "price": 105.0, "confirmed_index": 9},
+            {"index": 11, "kind": "low", "price": 95.0, "confirmed_index": 12},
+            {"index": 14, "kind": "high", "price": 102.0, "confirmed_index": 15},
+            {"index": 18, "kind": "low", "price": 89.0, "confirmed_index": 19},
+        ],
+    ))
+    current_pivots = [None]
+
+    def detect_pivots(*args, **kwargs):
+        current_pivots[0] = next(pivot_sets)
+        return current_pivots[0]
+
+    monkeypatch.setattr(swing_strategy, "detect_confirmed_pivots", detect_pivots)
+    monkeypatch.setattr(
+        swing_strategy,
+        "evaluate_swing_ema_signal",
+        lambda **kwargs: {
+            "direction": "SELL",
+            "structure": current_pivots[0],
+            "pullback_structure": current_pivots[0][2:5],
+            "swing_high_index": current_pivots[0][-2]["index"],
+            "swing_low_index": current_pivots[0][-1]["index"],
+            "ema_snapshot": {},
+            "pivot_ema_snapshot": {},
+            "ema_cross": {},
+        },
+    )
+    candles = pd.DataFrame({
+        "time": pd.date_range("2026-01-01", periods=21, freq="min"),
+        "high": [101.0] * 21,
+        "low": [99.0] * 21,
+        "close": [100.0] * 21,
+    })
+    common_args = {
+        "symbol_point_size": 0.01,
+        "ema_periods": {"fast": 13, "medium": 21, "slow": 55},
+        "zigzag_depth": 3,
+        "zigzag_deviation_points": 3.0,
+        "zigzag_back_step": 3,
+        "min_structure_candles": 1,
+        "max_structure_candles": 20,
+        "ema_cross_window_candles": 15,
+        "rr_ratio": 2.0,
+        "pending_expiry_candles": 7,
+        "sl_buffer_price": 0.05,
+        "entry_buffer_price": 0.02,
+    }
+
+    first = build_swing_ema_entry_signal(candles, **common_args)
+    second = build_swing_ema_entry_signal(candles, **common_args)
+
+    assert first is not None and second is not None
+    assert first["entry_price"] != second["entry_price"]
+    assert first["setup_id"] == second["setup_id"]
+
+
+def test_entry_builder_rejects_buy_structure_without_intervening_high(monkeypatch):
+    pivots = [
+        {"index": 2, "kind": "low", "price": 90.0, "confirmed_index": 3},
+        {"index": 5, "kind": "high", "price": 100.0, "confirmed_index": 6},
+        {"index": 8, "kind": "low", "price": 95.0, "confirmed_index": 9},
+        {"index": 11, "kind": "low", "price": 96.0, "confirmed_index": 12},
+        {"index": 14, "kind": "high", "price": 105.0, "confirmed_index": 15},
+        {"index": 17, "kind": "high", "price": 110.0, "confirmed_index": 18},
+    ]
+    monkeypatch.setattr(
+        swing_strategy,
+        "detect_confirmed_pivots",
+        lambda *args, **kwargs: pivots,
+    )
+    monkeypatch.setattr(
+        swing_strategy,
+        "evaluate_swing_ema_signal",
+        lambda **kwargs: {
+            "direction": "BUY",
+            "structure": pivots,
+            "swing_high_index": 17,
+            "swing_low_index": 11,
+            "ema_snapshot": {},
+            "pivot_ema_snapshot": {},
+            "ema_cross": {},
+        },
+    )
+    candles = pd.DataFrame({
+        "time": pd.date_range("2026-01-01", periods=21, freq="min"),
+        "high": [101.0] * 21,
+        "low": [99.0] * 21,
+        "close": [100.0] * 21,
+    })
+
+    signal = build_swing_ema_entry_signal(
+        data=candles,
+        symbol_point_size=0.01,
+        ema_periods={"fast": 13, "medium": 21, "slow": 55},
+        zigzag_depth=3,
+        zigzag_deviation_points=3.0,
+        zigzag_back_step=3,
+        min_structure_candles=1,
+        max_structure_candles=20,
+        ema_cross_window_candles=15,
+        rr_ratio=2.0,
+        pending_expiry_candles=7,
+        sl_buffer_price=0.05,
+        entry_buffer_price=0.02,
+    )
+
+    assert signal is None
+
+
 def test_annotate_structure_labels_lower_highs_and_lower_lows():
     structured = annotate_structure(SELL_PIVOTS)
 
-    assert structured[2]["structure_label"] == "LL"
-    assert structured[3]["structure_label"] == "LH"
+    assert structured[2]["structure_label"] == "LH"
+    assert structured[3]["structure_label"] == "LL"
     assert detect_structure_bias(SELL_PIVOTS) == "SELL"
 
 
@@ -241,8 +864,8 @@ def test_build_stop_order_signal_offsets_buy_and_sell_entry_by_entry_buffer():
     )
     sell_signal = build_stop_order_signal(
         direction="SELL",
-        swing_high=SELL_PIVOTS[-1],
-        swing_low=SELL_PIVOTS[-2],
+        swing_high=SELL_PIVOTS[-2],
+        swing_low=SELL_PIVOTS[-1],
         point_size=0.1,
         entry_buffer_price=0.2,
         rr_ratio=2.0,
@@ -269,6 +892,28 @@ def test_entry_buffer_does_not_change_stop_loss_buffer():
 
     assert signal["entry_price"] == pytest.approx(115.2)
     assert signal["stop_loss"] == pytest.approx(103.7)
+
+
+@pytest.mark.parametrize(
+    ("direction", "entry_price", "previous_candle", "expected_sl", "expected_tp"),
+    [
+        ("BUY", 105.0, {"low": 100.0, "high": 106.0}, 99.0, 117.0),
+        ("SELL", 95.0, {"low": 94.0, "high": 100.0}, 101.0, 83.0),
+    ],
+)
+def test_swing_exit_levels_use_last_closed_candle_before_fill(
+    direction, entry_price, previous_candle, expected_sl, expected_tp
+):
+    levels = calculate_swing_exit_levels(
+        direction=direction,
+        entry_price=entry_price,
+        previous_candle=previous_candle,
+        buffer_price=1.0,
+        rr_ratio=2.0,
+    )
+
+    assert levels["stop_loss"] == pytest.approx(expected_sl)
+    assert levels["take_profit"] == pytest.approx(expected_tp)
 
 
 def test_evaluate_ema_exit_checks_close_side_of_exit_ema():
@@ -317,6 +962,32 @@ def test_evaluate_swing_ema_signal_combines_structure_and_ema_filters():
         "cross_index": 6,
         "bars_since_cross": 5,
     }
+
+
+def test_evaluate_swing_ema_signal_calculates_latest_cross_once(monkeypatch):
+    close_values = pd.DataFrame({"close": [10, 9, 8, 7, 6, 7, 8, 9, 10, 11, 12, 13]})
+    original = swing_strategy.find_latest_ema_cross
+    calls = []
+
+    def count_cross_calculations(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        swing_strategy, "find_latest_ema_cross", count_cross_calculations
+    )
+
+    evaluate_swing_ema_signal(
+        pivots=BUY_PIVOTS,
+        close_values=close_values,
+        point_size=0.1,
+        ema_periods={"fast": 2, "medium": 3, "slow": 5},
+        cross_fast_period=2,
+        cross_slow_period=4,
+        cross_window=5,
+    )
+
+    assert len(calls) == 1
 
 
 def test_evaluate_swing_ema_signal_returns_none_when_ema_consensus_fails():

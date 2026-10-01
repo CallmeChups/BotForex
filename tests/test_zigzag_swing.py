@@ -1,6 +1,9 @@
 import pandas as pd
 
-from src.zigzag_swing import detect_confirmed_pivots
+from src.zigzag_swing import (
+    detect_confirmed_pivots,
+    precompute_confirmed_pivot_candidates,
+)
 
 
 def test_detect_confirmed_pivots_waits_for_right_side_confirmation():
@@ -107,3 +110,36 @@ def test_detect_confirmed_pivots_uses_back_step_to_allow_later_same_side_pivots(
 
     assert [pivot["index"] for pivot in tight_back_step] == [2, 4, 7]
     assert [pivot["index"] for pivot in wide_back_step] == [2]
+
+
+def test_cached_pivot_candidates_match_direct_detection_for_rolling_windows():
+    data = pd.DataFrame(
+        {
+            "high": [10, 12, 15, 13, 11, 12, 16, 14, 13, 15, 18, 17, 16, 19, 15],
+            "low": [8, 9, 10, 7, 6, 7, 9, 8, 5, 6, 10, 11, 9, 12, 8],
+        }
+    )
+    depth = 2
+    candidates = precompute_confirmed_pivot_candidates(data, depth)
+
+    for end in range(depth * 2 + 1, len(data) + 1):
+        start = max(0, end - 8)
+        window = data.iloc[start:end].reset_index(drop=True)
+        expected = detect_confirmed_pivots(
+            window,
+            point_size=0.1,
+            depth=depth,
+            deviation_points=3.0,
+            back_step=2,
+        )
+        actual = detect_confirmed_pivots(
+            window,
+            point_size=0.1,
+            depth=depth,
+            deviation_points=3.0,
+            back_step=2,
+            candidate_pivots=candidates,
+            index_offset=start,
+        )
+
+        assert actual == expected

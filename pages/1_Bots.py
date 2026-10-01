@@ -475,6 +475,13 @@ def show_create_bot():
     swing_ema_periods = dict(params.get(
         "swing_ema_periods", {"fast": 13, "medium": 21, "slow": 55}
     ))
+    swing_fallback_ema_periods = dict(params.get(
+        "swing_fallback_ema_periods", {"fast": 13, "medium": 21, "slow": 55}
+    ))
+    swing_use_pivot2_for_buy = bool(params.get("use_pivot2_for_buy", True))
+    swing_use_pivot2_for_sell = bool(params.get("use_pivot2_for_sell", True))
+    swing_ema_consensus_enabled = bool(params.get("ema_consensus_enabled", True))
+    swing_ema_fallback_enabled = bool(params.get("ema_fallback_enabled", False))
     swing_zigzag_depth = int(params.get("zigzag_depth", 3))
     swing_zigzag_deviation_points = float(params.get("zigzag_deviation_points", 3.0))
     swing_zigzag_back_step = int(params.get("zigzag_back_step", 3))
@@ -547,10 +554,47 @@ def show_create_bot():
                         _map[f"{sk}_risk_amt"] = float(_cfg.get('risk_amount', 5.0))
                     if is_swing_ema:
                         _swing_emas = _cfg.get("swing_ema_periods", swing_ema_periods)
+                        _swing_fallback_emas = _cfg.get(
+                            "swing_fallback_ema_periods",
+                            swing_fallback_ema_periods,
+                        )
                         _map.update({
                             f"{sk}_swing_ema_fast": int(_swing_emas["fast"]),
                             f"{sk}_swing_ema_medium": int(_swing_emas["medium"]),
                             f"{sk}_swing_ema_slow": int(_swing_emas["slow"]),
+                            f"{sk}_swing_pivot2_buy": bool(
+                                _cfg.get(
+                                    "swing_use_pivot2_for_buy",
+                                    swing_use_pivot2_for_buy,
+                                )
+                            ),
+                            f"{sk}_swing_pivot2_sell": bool(
+                                _cfg.get(
+                                    "swing_use_pivot2_for_sell",
+                                    swing_use_pivot2_for_sell,
+                                )
+                            ),
+                            f"{sk}_swing_ema_consensus_enabled": bool(
+                                _cfg.get(
+                                    "swing_ema_consensus_enabled",
+                                    swing_ema_consensus_enabled,
+                                )
+                            ),
+                            f"{sk}_swing_ema_fallback_enabled": bool(
+                                _cfg.get(
+                                    "swing_ema_fallback_enabled",
+                                    swing_ema_fallback_enabled,
+                                )
+                            ),
+                            f"{sk}_swing_fallback_ema_fast": int(
+                                _swing_fallback_emas["fast"]
+                            ),
+                            f"{sk}_swing_fallback_ema_medium": int(
+                                _swing_fallback_emas["medium"]
+                            ),
+                            f"{sk}_swing_fallback_ema_slow": int(
+                                _swing_fallback_emas["slow"]
+                            ),
                             f"{sk}_swing_zigzag_depth": int(
                                 _cfg.get("swing_zigzag_depth", swing_zigzag_depth)
                             ),
@@ -856,6 +900,69 @@ def show_create_bot():
                 st.error("EMA cần thỏa thứ tự: ngắn hạn < trung hạn < dài hạn.")
                 timeframe_relation_valid = False
 
+            pivot_cols = st.columns(2)
+            swing_use_pivot2_for_buy = pivot_cols[0].checkbox(
+                "BUY dùng Đỉnh 2",
+                value=swing_use_pivot2_for_buy,
+                key=f"{sk}_swing_pivot2_buy",
+                help=(
+                    "Tắt: không yêu cầu Đỉnh 2, đặt Stop Order tại Đỉnh 1 "
+                    "và bỏ kiểm tra Đỉnh 2 so với EMA."
+                ),
+            )
+            swing_use_pivot2_for_sell = pivot_cols[1].checkbox(
+                "SELL dùng Đáy 2",
+                value=swing_use_pivot2_for_sell,
+                key=f"{sk}_swing_pivot2_sell",
+                help=(
+                    "Tắt: không yêu cầu Đáy 2, đặt Stop Order tại Đáy 1 "
+                    "và bỏ kiểm tra Đáy 2 so với EMA."
+                ),
+            )
+            swing_ema_consensus_enabled = st.checkbox(
+                "Bật bộ lọc EMA đồng thuận",
+                value=swing_ema_consensus_enabled,
+                key=f"{sk}_swing_ema_consensus_enabled",
+                help=(
+                    "EMA ngắn > trung > dài cho BUY (ngược lại cho SELL), "
+                    "giao cắt EMA ngắn/trung còn mới và Pivot 2 nằm đúng phía 3 EMA."
+                ),
+            )
+            swing_ema_fallback_enabled = st.checkbox(
+                "Bật bộ lọc EMA fallback (Multi Flappy Bird)",
+                value=swing_ema_fallback_enabled,
+                key=f"{sk}_swing_ema_fallback_enabled",
+                help=(
+                    "Đường lọc độc lập; khi cả hai đường EMA bật, chỉ cần một "
+                    "đường đạt điều kiện."
+                ),
+            )
+            st.caption(
+                "Hai bộ lọc EMA chạy song song theo OR; tắt cả hai nghĩa là "
+                "không lọc EMA."
+            )
+            fallback_cols = st.columns(3)
+            for column, slot, label in zip(
+                fallback_cols,
+                ("fast", "medium", "slow"),
+                ("Fallback ngắn hạn", "Fallback trung hạn", "Fallback dài hạn"),
+            ):
+                swing_fallback_ema_periods[slot] = column.number_input(
+                    label,
+                    min_value=2,
+                    max_value=500,
+                    value=int(swing_fallback_ema_periods[slot]),
+                    key=f"{sk}_swing_fallback_ema_{slot}",
+                    disabled=not swing_ema_fallback_enabled,
+                )
+            if not (
+                swing_fallback_ema_periods["fast"]
+                < swing_fallback_ema_periods["medium"]
+                < swing_fallback_ema_periods["slow"]
+            ):
+                st.error("EMA fallback cần thỏa thứ tự: ngắn hạn < trung hạn < dài hạn.")
+                timeframe_relation_valid = False
+
             cols = st.columns(3)
             swing_zigzag_depth = cols[0].number_input(
                 "ZigZag — Độ sâu (Depth)",
@@ -888,6 +995,7 @@ def show_create_bot():
                 "Giới hạn từ giao cắt EMA (nến)",
                 min_value=1, max_value=1000, value=swing_ema_cross_window_candles,
                 key=f"{sk}_swing_ema_cross_window",
+                disabled=not swing_ema_consensus_enabled,
             )
             if swing_max_structure_candles < swing_min_structure_candles:
                 st.error("Tuổi cấu trúc tối đa phải >= tối thiểu.")
@@ -1611,6 +1719,30 @@ def show_create_bot():
                     ),
                     entry_buffer_pips=(
                         float(swing_entry_buffer_pips) if is_swing_ema else None
+                    ),
+                    use_pivot2_for_buy=(
+                        bool(swing_use_pivot2_for_buy) if is_swing_ema else None
+                    ),
+                    use_pivot2_for_sell=(
+                        bool(swing_use_pivot2_for_sell) if is_swing_ema else None
+                    ),
+                    ema_consensus_enabled=(
+                        bool(swing_ema_consensus_enabled) if is_swing_ema else None
+                    ),
+                    ema_fallback_enabled=(
+                        bool(swing_ema_fallback_enabled) if is_swing_ema else None
+                    ),
+                    fallback_ema_short_period=(
+                        int(swing_fallback_ema_periods["fast"])
+                        if is_swing_ema else None
+                    ),
+                    fallback_ema_medium_period=(
+                        int(swing_fallback_ema_periods["medium"])
+                        if is_swing_ema else None
+                    ),
+                    fallback_ema_long_period=(
+                        int(swing_fallback_ema_periods["slow"])
+                        if is_swing_ema else None
                     ),
                 )
 
