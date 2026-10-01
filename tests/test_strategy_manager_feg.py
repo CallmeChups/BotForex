@@ -35,9 +35,12 @@ def test_swing_ema_zigzag_params_have_runtime_defaults():
 
     assert params["entry_type"] == "pattern"
     assert params["swing_ema_periods"] == {"fast": 13, "medium": 21, "slow": 55}
-    assert params["zigzag_depth"] == 3
+    assert params["zigzag_depth"] == 2
     assert params["zigzag_deviation_points"] == 3.0
     assert params["zigzag_back_step"] == 3
+    assert params["pivot_detector"] == "zigzag"
+    assert params["min_pivot_distance_candles"] == 5
+    assert params["max_pivot_distance_candles"] == 15
     assert params["min_structure_candles"] == 10
     assert params["max_structure_candles"] == 20
     assert params["ema_cross_window_candles"] == 15

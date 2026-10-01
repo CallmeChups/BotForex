@@ -188,6 +188,7 @@ def build_bot_command(
     ema_short_period=None, ema_medium_period=None, ema_long_period=None,
     zigzag_depth=None, zigzag_deviation_points=None, zigzag_back_step=None,
     min_structure_candles=None, max_structure_candles=None,
+    min_pivot_distance_candles=None, max_pivot_distance_candles=None,
     ema_cross_window_candles=None,
     ema_exit_enabled=None, ema_exit_period=None,
     pending_expiry_candles=None, max_pending_orders_per_symbol=None,
@@ -197,6 +198,8 @@ def build_bot_command(
     ema_consensus_enabled=None, ema_fallback_enabled=None,
     fallback_ema_short_period=None, fallback_ema_medium_period=None,
     fallback_ema_long_period=None,
+    pivot_detector=None, fractal_strength=None,
+    breakout_enabled=None, breakout_by_close=None,
 ):
     """Build command list to run bot_runner (separated for testability)."""
     cmd = [
@@ -313,6 +316,8 @@ def build_bot_command(
         if value is not None:
             cmd.extend([f"--{name}", "1" if value else "0"])
     for name, value in (
+        ("pivot_detector", pivot_detector),
+        ("fractal_strength", fractal_strength),
         ("ema_short_period", ema_short_period),
         ("ema_medium_period", ema_medium_period),
         ("ema_long_period", ema_long_period),
@@ -321,6 +326,8 @@ def build_bot_command(
         ("zigzag_back_step", zigzag_back_step),
         ("min_structure_candles", min_structure_candles),
         ("max_structure_candles", max_structure_candles),
+        ("min_pivot_distance_candles", min_pivot_distance_candles),
+        ("max_pivot_distance_candles", max_pivot_distance_candles),
         ("ema_cross_window_candles", ema_cross_window_candles),
         ("ema_exit_period", ema_exit_period),
         ("pending_expiry_candles", pending_expiry_candles),
@@ -333,6 +340,12 @@ def build_bot_command(
     ):
         if value is not None:
             cmd.extend([f"--{name}", str(value)])
+    for name, value in (
+        ("breakout_enabled", breakout_enabled),
+        ("breakout_by_close", breakout_by_close),
+    ):
+        if value is not None:
+            cmd.extend([f"--{name}", "1" if value else "0"])
     if ema_exit_enabled is not None:
         cmd.extend(["--ema_exit_enabled", "1" if ema_exit_enabled else "0"])
     cmd.extend(["--be_enabled", "1" if be_enabled else "0"])
@@ -429,6 +442,8 @@ def _start_bot_unlocked(
     ema_long_period: int = None, zigzag_depth: int = None,
     zigzag_deviation_points: float = None, zigzag_back_step: int = None,
     min_structure_candles: int = None, max_structure_candles: int = None,
+    min_pivot_distance_candles: int = None,
+    max_pivot_distance_candles: int = None,
     ema_cross_window_candles: int = None, ema_exit_enabled: bool = None,
     ema_exit_period: int = None, pending_expiry_candles: int = None,
     max_pending_orders_per_symbol: int = None, sl_buffer_pips: float = None,
@@ -438,6 +453,8 @@ def _start_bot_unlocked(
     fallback_ema_short_period: int = None,
     fallback_ema_medium_period: int = None,
     fallback_ema_long_period: int = None,
+    pivot_detector: str = None, fractal_strength: int = None,
+    breakout_enabled: bool = None, breakout_by_close: bool = None,
 ) -> tuple:
     """
     Start a new bot process
@@ -496,6 +513,7 @@ def _start_bot_unlocked(
         ema_short_period, ema_medium_period, ema_long_period,
         zigzag_depth, zigzag_deviation_points, zigzag_back_step,
         min_structure_candles, max_structure_candles,
+        min_pivot_distance_candles, max_pivot_distance_candles,
         ema_cross_window_candles,
         ema_exit_enabled, ema_exit_period,
         pending_expiry_candles, max_pending_orders_per_symbol,
@@ -508,6 +526,10 @@ def _start_bot_unlocked(
         fallback_ema_short_period=fallback_ema_short_period,
         fallback_ema_medium_period=fallback_ema_medium_period,
         fallback_ema_long_period=fallback_ema_long_period,
+        pivot_detector=pivot_detector,
+        fractal_strength=fractal_strength,
+        breakout_enabled=breakout_enabled,
+        breakout_by_close=breakout_by_close,
     )
 
     try:
@@ -601,6 +623,8 @@ def _start_bot_unlocked(
             'zigzag_back_step': zigzag_back_step,
             'min_structure_candles': min_structure_candles,
             'max_structure_candles': max_structure_candles,
+            'min_pivot_distance_candles': min_pivot_distance_candles,
+            'max_pivot_distance_candles': max_pivot_distance_candles,
             'ema_cross_window_candles': ema_cross_window_candles,
             'ema_exit_enabled': ema_exit_enabled,
             'ema_exit_period': ema_exit_period,
@@ -615,6 +639,10 @@ def _start_bot_unlocked(
             'fallback_ema_short_period': fallback_ema_short_period,
             'fallback_ema_medium_period': fallback_ema_medium_period,
             'fallback_ema_long_period': fallback_ema_long_period,
+            'pivot_detector': pivot_detector,
+            'fractal_strength': fractal_strength,
+            'breakout_enabled': breakout_enabled,
+            'breakout_by_close': breakout_by_close,
             'be_enabled': be_enabled,
             'be_r': be_r,
             'ema_filter_enabled': ema_filter_enabled,
@@ -821,11 +849,17 @@ def switch_bot_mode(pid: int, live: bool) -> tuple:
         ema_short_period=bot.get('ema_short_period'),
         ema_medium_period=bot.get('ema_medium_period'),
         ema_long_period=bot.get('ema_long_period'),
+        pivot_detector=bot.get('pivot_detector'),
+        fractal_strength=bot.get('fractal_strength'),
+        breakout_enabled=bot.get('breakout_enabled'),
+        breakout_by_close=bot.get('breakout_by_close'),
         zigzag_depth=bot.get('zigzag_depth'),
         zigzag_deviation_points=bot.get('zigzag_deviation_points'),
         zigzag_back_step=bot.get('zigzag_back_step'),
         min_structure_candles=bot.get('min_structure_candles'),
         max_structure_candles=bot.get('max_structure_candles'),
+        min_pivot_distance_candles=bot.get('min_pivot_distance_candles'),
+        max_pivot_distance_candles=bot.get('max_pivot_distance_candles'),
         ema_cross_window_candles=bot.get('ema_cross_window_candles'),
         ema_exit_enabled=bot.get('ema_exit_enabled'),
         ema_exit_period=bot.get('ema_exit_period'),
@@ -970,11 +1004,17 @@ def restart_bot(pid: int) -> tuple:
         ema_short_period=bot.get('ema_short_period'),
         ema_medium_period=bot.get('ema_medium_period'),
         ema_long_period=bot.get('ema_long_period'),
+        pivot_detector=bot.get('pivot_detector'),
+        fractal_strength=bot.get('fractal_strength'),
+        breakout_enabled=bot.get('breakout_enabled'),
+        breakout_by_close=bot.get('breakout_by_close'),
         zigzag_depth=bot.get('zigzag_depth'),
         zigzag_deviation_points=bot.get('zigzag_deviation_points'),
         zigzag_back_step=bot.get('zigzag_back_step'),
         min_structure_candles=bot.get('min_structure_candles'),
         max_structure_candles=bot.get('max_structure_candles'),
+        min_pivot_distance_candles=bot.get('min_pivot_distance_candles'),
+        max_pivot_distance_candles=bot.get('max_pivot_distance_candles'),
         ema_cross_window_candles=bot.get('ema_cross_window_candles'),
         ema_exit_enabled=bot.get('ema_exit_enabled'),
         ema_exit_period=bot.get('ema_exit_period'),

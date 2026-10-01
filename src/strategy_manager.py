@@ -256,9 +256,18 @@ def get_strategy_parameters(strategy_id: str) -> dict:
         for slot, default in swing_ema_periods.items()
     }
     zigzag = entry.get('zigzag', {})
-    zigzag_depth = int(zigzag.get('depth', 3))
+    zigzag_depth = int(zigzag.get('depth', 2))
     zigzag_deviation_points = float(zigzag.get('deviation_points', 3))
     zigzag_back_step = int(zigzag.get('back_step', 3))
+    pivot_detector = str(entry.get('pivot_detector', 'zigzag'))
+    fractal = entry.get('fractal', {})
+    if not isinstance(fractal, dict):
+        fractal = {}
+    fractal_strength = int(fractal.get('strength', 2))
+    breakout_enabled = bool(fractal.get('breakout_enabled', True))
+    breakout_by_close = bool(fractal.get('breakout_by_close', False))
+    min_pivot_distance_candles = int(entry.get('min_pivot_distance_candles', 5))
+    max_pivot_distance_candles = int(entry.get('max_pivot_distance_candles', 15))
     min_structure_candles = int(entry.get('min_structure_candles', 10))
     max_structure_candles = int(entry.get('max_structure_candles', 20))
     ema_cross_window_candles = int(entry.get('ema_cross_window_candles', 15))
@@ -289,12 +298,25 @@ def get_strategy_parameters(strategy_id: str) -> dict:
             raise ValueError(
                 "Swing fallback EMA periods must satisfy 2 <= fast < medium < slow"
             )
-        if zigzag_depth <= 0:
-            raise ValueError("Swing zigzag depth must be positive")
-        if zigzag_deviation_points < 0:
-            raise ValueError("Swing zigzag deviation_points cannot be negative")
-        if zigzag_back_step < 0:
-            raise ValueError("Swing zigzag back_step cannot be negative")
+        if pivot_detector not in {"zigzag", "swing_trend_line_td"}:
+            raise ValueError(
+                "Swing pivot_detector must be 'zigzag' or 'swing_trend_line_td'"
+            )
+        if pivot_detector == "zigzag":
+            if zigzag_depth <= 0:
+                raise ValueError("Swing zigzag depth must be positive")
+            if zigzag_deviation_points < 0:
+                raise ValueError("Swing zigzag deviation_points cannot be negative")
+            if zigzag_back_step < 0:
+                raise ValueError("Swing zigzag back_step cannot be negative")
+        elif fractal_strength <= 0:
+            raise ValueError("Swing fractal strength must be positive")
+        if min_pivot_distance_candles <= 0:
+            raise ValueError("Swing min_pivot_distance_candles must be positive")
+        if max_pivot_distance_candles < min_pivot_distance_candles:
+            raise ValueError(
+                "Swing max_pivot_distance_candles must be >= min_pivot_distance_candles"
+            )
         if min_structure_candles <= 0:
             raise ValueError("Swing min_structure_candles must be positive")
         if max_structure_candles < min_structure_candles:
@@ -360,6 +382,12 @@ def get_strategy_parameters(strategy_id: str) -> dict:
         'zigzag_depth': zigzag_depth,
         'zigzag_deviation_points': zigzag_deviation_points,
         'zigzag_back_step': zigzag_back_step,
+        'pivot_detector': pivot_detector,
+        'fractal_strength': fractal_strength,
+        'breakout_enabled': breakout_enabled,
+        'breakout_by_close': breakout_by_close,
+        'min_pivot_distance_candles': min_pivot_distance_candles,
+        'max_pivot_distance_candles': max_pivot_distance_candles,
         'min_structure_candles': min_structure_candles,
         'max_structure_candles': max_structure_candles,
         'ema_cross_window_candles': ema_cross_window_candles,

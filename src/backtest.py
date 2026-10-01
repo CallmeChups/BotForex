@@ -378,11 +378,13 @@ def run_backtest(
     higher_ema_fallback_enabled: bool = True,
     current_timeframe_filter_enabled: bool = True,
     swing_ema_periods: dict[str, int] | None = None,
-    swing_zigzag_depth: int = 3,
+    swing_zigzag_depth: int = 2,
     swing_zigzag_deviation_points: float = 3.0,
     swing_zigzag_back_step: int = 3,
     swing_min_structure_candles: int = 10,
     swing_max_structure_candles: int = 20,
+    swing_min_pivot_distance_candles: int = 5,
+    swing_max_pivot_distance_candles: int = 15,
     swing_ema_cross_window_candles: int = 15,
     swing_ema_exit_enabled: bool = True,
     swing_ema_exit_period: int = 21,
@@ -395,6 +397,10 @@ def run_backtest(
     swing_ema_consensus_enabled: bool = True,
     swing_ema_fallback_enabled: bool = False,
     swing_fallback_ema_periods: dict[str, int] | None = None,
+    swing_pivot_detector: str = "zigzag",
+    swing_fractal_strength: int = 2,
+    swing_breakout_enabled: bool = True,
+    swing_breakout_by_close: bool = False,
 ) -> dict:
     """
     Run backtest on historical data
@@ -549,6 +555,8 @@ def run_backtest(
                 zigzag_back_step=swing_zigzag_back_step,
                 min_structure_candles=swing_min_structure_candles,
                 max_structure_candles=swing_max_structure_candles,
+                min_pivot_distance_candles=swing_min_pivot_distance_candles,
+                max_pivot_distance_candles=swing_max_pivot_distance_candles,
                 ema_cross_window_candles=swing_ema_cross_window_candles,
                 ema_exit_enabled=swing_ema_exit_enabled,
                 ema_exit_period=swing_ema_exit_period,
@@ -563,6 +571,10 @@ def run_backtest(
                 fallback_ema_periods=(
                     swing_fallback_ema_periods or swing_ema_periods
                 ),
+                pivot_detector=swing_pivot_detector,
+                fractal_strength=swing_fractal_strength,
+                breakout_enabled=swing_breakout_enabled,
+                breakout_by_close=swing_breakout_by_close,
                 progress_callback=progress_callback,
             )
         else:
@@ -1907,6 +1919,8 @@ def _run_swing_ema_zigzag_backtest(
     zigzag_back_step,
     min_structure_candles,
     max_structure_candles,
+    min_pivot_distance_candles,
+    max_pivot_distance_candles,
     ema_cross_window_candles,
     ema_exit_enabled,
     ema_exit_period,
@@ -1920,6 +1934,10 @@ def _run_swing_ema_zigzag_backtest(
     ema_fallback_enabled=False,
     fallback_ema_periods=None,
     progress_callback=None,
+    pivot_detector="zigzag",
+    fractal_strength=2,
+    breakout_enabled=True,
+    breakout_by_close=False,
 ):
     """Simulate Swing EMA stop orders using only candles available at each bar."""
     from src.swing_ema_strategy import (
@@ -1929,20 +1947,31 @@ def _run_swing_ema_zigzag_backtest(
         is_pending_signal_expired,
     )
     from src.zigzag_swing import precompute_confirmed_pivot_candidates
+    from src.pivot_detectors import precompute_swing_trend_data
     from src.flappy_bird_strategy import calculate_flappy_ema_series
 
     if rr_ratio <= 0:
         raise ValueError("rr_ratio must be positive")
-    if min(zigzag_depth, ema_exit_period, pending_expiry_candles) <= 0:
-        raise ValueError("Swing depth, EMA exit period, and pending expiry must be positive")
-    if min(zigzag_deviation_points, entry_buffer_pips, sl_buffer_pips) < 0:
-        raise ValueError("Swing deviation and buffers cannot be negative")
+    if min(ema_exit_period, pending_expiry_candles) <= 0:
+        raise ValueError("Swing EMA exit period and pending expiry must be positive")
+    if pivot_detector == "zigzag" and zigzag_depth <= 0:
+        raise ValueError("Swing zigzag depth must be positive")
+    if pivot_detector == "zigzag" and zigzag_deviation_points < 0:
+        raise ValueError("Swing zigzag deviation cannot be negative")
+    if min(entry_buffer_pips, sl_buffer_pips) < 0:
+        raise ValueError("Swing buffers cannot be negative")
     if min_structure_candles <= 0 or max_structure_candles < min_structure_candles:
         raise ValueError("Swing structure candle range is invalid")
+    if min_pivot_distance_candles <= 0 or max_pivot_distance_candles < min_pivot_distance_candles:
+        raise ValueError("Swing pivot distance candle range is invalid")
     if ema_cross_window_candles < 0 or max_pending_orders_per_symbol < 0:
         raise ValueError("Swing cross window and pending limit cannot be negative")
     if any(int(period) <= 0 for period in ema_periods.values()):
         raise ValueError("Swing EMA periods must be positive")
+    if pivot_detector not in {"zigzag", "swing_trend_line_td"}:
+        raise ValueError(f"Unsupported pivot detector: {pivot_detector}")
+    if fractal_strength <= 0:
+        raise ValueError("Fractal strength must be positive")
 
     df = df.reset_index(drop=True).copy()
     pip_value = get_pip_value(symbol)
@@ -1957,10 +1986,25 @@ def _run_swing_ema_zigzag_backtest(
         120,
         max(ema_periods.values()) * 4,
         fallback_lookback,
-        max_structure_candles + zigzag_depth * 6 + 30,
+        (
+            max_structure_candles + zigzag_depth * 6 + 30
+            if pivot_detector == "zigzag"
+            else max_structure_candles + fractal_strength * 2 + 30
+        ),
         ema_exit_period * 4,
     )
-    pivot_candidates = precompute_confirmed_pivot_candidates(df, zigzag_depth)
+    if pivot_detector == "swing_trend_line_td":
+        pivot_candidates, swing_lines, breakout_candidates = (
+            precompute_swing_trend_data(
+                df,
+                strength=fractal_strength,
+                breakout_by_close=breakout_by_close,
+            )
+        )
+    else:
+        pivot_candidates = precompute_confirmed_pivot_candidates(df, zigzag_depth)
+        swing_lines = []
+        breakout_candidates = []
     ema_exit_values = calculate_flappy_ema_series(
         df["close"], ema_exit_period, lookback
     )
@@ -2132,6 +2176,8 @@ def _run_swing_ema_zigzag_backtest(
                 zigzag_back_step=zigzag_back_step,
                 min_structure_candles=min_structure_candles,
                 max_structure_candles=max_structure_candles,
+                min_pivot_distance_candles=min_pivot_distance_candles,
+                max_pivot_distance_candles=max_pivot_distance_candles,
                 ema_cross_window_candles=ema_cross_window_candles,
                 rr_ratio=rr_ratio,
                 pending_expiry_candles=pending_expiry_candles,
@@ -2144,6 +2190,11 @@ def _run_swing_ema_zigzag_backtest(
                 fallback_ema_periods=fallback_ema_periods or ema_periods,
                 pivot_candidates=pivot_candidates,
                 data_index_offset=window_start,
+                pivot_detector=pivot_detector,
+                fractal_strength=fractal_strength,
+                breakout_enabled=breakout_enabled,
+                breakout_by_close=breakout_by_close,
+                breakout_candidates=breakout_candidates,
             )
             if signal is not None:
                 signal["created_bar_index"] = bar_index
@@ -2197,6 +2248,12 @@ def _run_swing_ema_zigzag_backtest(
     stats["starting_equity"] = starting_equity
     stats["ohlc_data"] = df
     stats["pending_orders_at_end"] = len(pending_orders)
+    stats["pivot_detector"] = pivot_detector
+    stats["fractal_strength"] = fractal_strength
+    stats["breakout_enabled"] = breakout_enabled
+    stats["breakout_by_close"] = breakout_by_close
+    stats["swing_trend_lines"] = swing_lines
+    stats["swing_breakout_events"] = breakout_candidates
     return stats
 
 

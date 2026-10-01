@@ -93,7 +93,7 @@ def precompute_confirmed_pivot_candidates(data, depth: int) -> list[Pivot]:
 def detect_confirmed_pivots(
     data,
     point_size: float,
-    depth: int = 3,
+    depth: int = 2,
     deviation_points: float = 3.0,
     back_step: int = 3,
     candidate_pivots: Sequence[Pivot] | None = None,

@@ -14,6 +14,11 @@ from src.zigzag_swing import (
     Pivot,
     detect_confirmed_pivots,
 )
+from src.pivot_detectors import (
+    BreakoutEvent,
+    detect_fractal_breakouts,
+    detect_fractal_pivots,
+)
 
 
 Direction = Literal["BUY", "SELL"]
@@ -662,6 +667,70 @@ def _bar_identity(data, index: int) -> str:
     return str(int(value))
 
 
+def get_swing_setup_pivots(signal: dict) -> list[dict]:
+    """Return labeled setup pivots, deriving them for signals without metadata."""
+    setup_pivots = signal.get("setup_pivots")
+    if setup_pivots:
+        return list(setup_pivots)
+
+    direction = signal.get("direction")
+    structure = signal.get("structure")
+    if direction not in {"BUY", "SELL"} or not isinstance(structure, list):
+        return []
+
+    side_kind = "low" if direction == "BUY" else "high"
+    middle_kind = "high" if direction == "BUY" else "low"
+    side_pivots = [
+        pivot for pivot in structure
+        if isinstance(pivot, dict) and pivot.get("kind") == side_kind
+    ]
+    if len(side_pivots) < 2:
+        return []
+
+    first, second = side_pivots[-2:]
+    middle = next(
+        (
+            pivot for pivot in reversed(structure)
+            if isinstance(pivot, dict)
+            and pivot.get("kind") == middle_kind
+            and first["index"] < pivot["index"] < second["index"]
+        ),
+        None,
+    )
+    if middle is None:
+        return []
+
+    if direction == "BUY":
+        labels = [("Đáy 1", first), ("Đỉnh 1", middle), ("Đáy 2", second)]
+        entry_index = signal.get("swing_high_index")
+        entry_label = "Đỉnh 2"
+    else:
+        labels = [("Đỉnh 1", first), ("Đáy 1", middle), ("Đỉnh 2", second)]
+        entry_index = signal.get("swing_low_index")
+        entry_label = "Đáy 2"
+
+    entry_pivot = next(
+        (
+            pivot for pivot in structure
+            if isinstance(pivot, dict) and pivot.get("index") == entry_index
+        ),
+        None,
+    )
+    if entry_pivot is not None and entry_pivot["index"] != middle["index"]:
+        labels.append((entry_label, entry_pivot))
+
+    return [
+        {
+            "label": label,
+            "index": int(pivot["index"]),
+            "kind": pivot["kind"],
+            "price": float(pivot["price"]),
+            "confirmed_index": int(pivot.get("confirmed_index", pivot["index"])),
+        }
+        for label, pivot in labels
+    ]
+
+
 def build_swing_ema_entry_signal(
     data,
     symbol_point_size: float,
@@ -683,21 +752,42 @@ def build_swing_ema_entry_signal(
     ema_consensus_enabled: bool = True,
     ema_fallback_enabled: bool = False,
     fallback_ema_periods: dict[str, int] | None = None,
+    min_pivot_distance_candles: int = 5,
+    max_pivot_distance_candles: int = 15,
+    pivot_detector: str = "zigzag",
+    fractal_strength: int = 2,
+    breakout_enabled: bool = True,
+    breakout_by_close: bool = False,
+    breakout_candidates: Sequence[BreakoutEvent] | None = None,
 ) -> dict | None:
     """Create a buffered stop-entry signal from confirmed pivots and EMA filters."""
     if len(data) == 0:
         return None
-    pivots = detect_confirmed_pivots(
-        data,
-        point_size=symbol_point_size,
-        depth=zigzag_depth,
-        deviation_points=zigzag_deviation_points,
-        back_step=zigzag_back_step,
-        candidate_pivots=pivot_candidates,
-        index_offset=data_index_offset,
-    )
+    if pivot_detector == "swing_trend_line_td":
+        pivots = detect_fractal_pivots(
+            data,
+            strength=fractal_strength,
+            candidate_pivots=pivot_candidates,
+            index_offset=data_index_offset,
+        )
+    elif pivot_detector == "zigzag":
+        pivots = detect_confirmed_pivots(
+            data,
+            point_size=symbol_point_size,
+            depth=zigzag_depth,
+            deviation_points=zigzag_deviation_points,
+            back_step=zigzag_back_step,
+            candidate_pivots=pivot_candidates,
+            index_offset=data_index_offset,
+        )
+    else:
+        raise ValueError(f"Unsupported pivot detector: {pivot_detector}")
     if len(pivots) < 3:
         return None
+    if min_pivot_distance_candles <= 0:
+        raise ValueError("Minimum pivot distance must be positive")
+    if max_pivot_distance_candles < min_pivot_distance_candles:
+        raise ValueError("Maximum pivot distance must be >= minimum")
 
     base_signal = evaluate_swing_ema_signal(
         pivots=pivots,
@@ -728,10 +818,54 @@ def build_swing_ema_entry_signal(
     if base_signal is None:
         return None
 
+    breakout_event = None
+    if pivot_detector == "swing_trend_line_td":
+        if breakout_candidates is None:
+            local_breakouts = detect_fractal_breakouts(
+                data,
+                pivots,
+                breakout_by_close=breakout_by_close,
+            )
+            current_index = len(data) - 1
+            breakout_event = next(
+                (
+                    event for event in local_breakouts
+                    if event["index"] == current_index
+                ),
+                None,
+            )
+        else:
+            current_index = len(data) - 1 + data_index_offset
+            breakout_event = next(
+                (
+                    event for event in breakout_candidates
+                    if int(event["index"]) == current_index
+                ),
+                None,
+            )
+        if breakout_enabled and breakout_event is None:
+            return None
+        if (
+            breakout_enabled
+            and breakout_event is not None
+            and breakout_event["direction"] != base_signal["direction"]
+        ):
+            return None
+
     pullback_structure = base_signal.get("pullback_structure")
     if pullback_structure is None:
         return None
     structure_pivots = pullback_structure
+    pivot_distance = (
+        int(pullback_structure[2]["index"])
+        - int(pullback_structure[0]["index"])
+    )
+    if not (
+        min_pivot_distance_candles
+        <= pivot_distance
+        <= max_pivot_distance_candles
+    ):
+        return None
     use_pivot2 = (
         use_pivot2_for_buy
         if base_signal["direction"] == "BUY"
@@ -773,6 +907,23 @@ def build_swing_ema_entry_signal(
     )
     if swing_high is None or swing_low is None:
         return None
+
+    if base_signal["direction"] == "BUY":
+        setup_pivots = [
+            ("Đáy 1", pullback_structure[0]),
+            ("Đỉnh 1", pullback_structure[1]),
+            ("Đáy 2", pullback_structure[2]),
+        ]
+        if use_pivot2:
+            setup_pivots.append(("Đỉnh 2", entry_pivot))
+    else:
+        setup_pivots = [
+            ("Đỉnh 1", pullback_structure[0]),
+            ("Đáy 1", pullback_structure[1]),
+            ("Đỉnh 2", pullback_structure[2]),
+        ]
+        if use_pivot2:
+            setup_pivots.append(("Đáy 2", entry_pivot))
 
     latest_high = float(data["high"].iloc[-1])
     latest_low = float(data["low"].iloc[-1])
@@ -817,6 +968,18 @@ def build_swing_ema_entry_signal(
             "swing_low_index": int(swing_low["index"]),
             "swing_high_time": _bar_identity(data, int(swing_high["index"])),
             "swing_low_time": _bar_identity(data, int(swing_low["index"])),
+            "setup_pivots": [
+                {
+                    "label": label,
+                    "index": int(pivot["index"]),
+                    "kind": pivot["kind"],
+                    "price": float(pivot["price"]),
+                    "confirmed_index": int(pivot["confirmed_index"]),
+                }
+                for label, pivot in setup_pivots
+            ],
+            "pivot_detector": pivot_detector,
+            "breakout_event": breakout_event,
         }
     )
     structure_identity = ":".join(
@@ -824,6 +987,31 @@ def build_swing_ema_entry_signal(
         for pivot in pullback_structure
     )
     signal["setup_id"] = f"{signal['direction']}:{structure_identity}"
+
+    if data_index_offset:
+        # Pivot/structure indices above are local to the rolling `data`
+        # window passed in; shift them back to absolute indices so callers
+        # (e.g. the chart) can look them up against the full dataset.
+        def _shift_pivot(pivot: dict) -> dict:
+            shifted = dict(pivot)
+            shifted["index"] = int(pivot["index"]) + data_index_offset
+            if "confirmed_index" in pivot:
+                shifted["confirmed_index"] = (
+                    int(pivot["confirmed_index"]) + data_index_offset
+                )
+            return shifted
+
+        signal["structure"] = [_shift_pivot(p) for p in signal["structure"]]
+        signal["setup_pivots"] = [_shift_pivot(p) for p in signal["setup_pivots"]]
+        signal["swing_high_index"] += data_index_offset
+        signal["swing_low_index"] += data_index_offset
+        if signal.get("breakout_event") is not None and breakout_candidates is None:
+            signal["breakout_event"] = {
+                **signal["breakout_event"],
+                "index": (
+                    int(signal["breakout_event"]["index"]) + data_index_offset
+                ),
+            }
     last_time = data["time"].iloc[-1] if "time" in data else None
     if last_time is not None:
         signal["signal_candle_time"] = (
@@ -831,4 +1019,5 @@ def build_swing_ema_entry_signal(
             if hasattr(last_time, "timestamp")
             else int(last_time)
         )
+        signal["signal_candle_index"] = len(data) - 1 + data_index_offset
     return signal

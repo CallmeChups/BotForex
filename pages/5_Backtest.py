@@ -197,7 +197,9 @@ def main():
             st.session_state["new_layout_strategy"] = loaded_strategy
 
     strategy_options = {s['name']: s['id'] for s in enabled_strategies}
-    default_end = now.date()
+    # Exclude the current day by default because its latest candles may still
+    # be incomplete while the market is open.
+    default_end = now.date() - timedelta(days=1)
     default_start = default_end - timedelta(days=30)
 
     # Strategy selection
@@ -232,11 +234,23 @@ def main():
     swing_use_pivot2_for_sell = bool(params.get("use_pivot2_for_sell", True))
     swing_ema_consensus_enabled = bool(params.get("ema_consensus_enabled", True))
     swing_ema_fallback_enabled = bool(params.get("ema_fallback_enabled", False))
-    swing_zigzag_depth = int(params.get("zigzag_depth", 3))
+    swing_zigzag_depth = int(params.get("zigzag_depth", 2))
     swing_zigzag_deviation_points = float(params.get("zigzag_deviation_points", 3.0))
     swing_zigzag_back_step = int(params.get("zigzag_back_step", 3))
+    swing_pivot_detector = str(
+        params.get("pivot_detector", "zigzag")
+    )
+    swing_fractal_strength = int(params.get("fractal_strength", 2))
+    swing_breakout_enabled = bool(params.get("breakout_enabled", True))
+    swing_breakout_by_close = bool(params.get("breakout_by_close", False))
     swing_min_structure_candles = int(params.get("min_structure_candles", 10))
     swing_max_structure_candles = int(params.get("max_structure_candles", 20))
+    swing_min_pivot_distance_candles = int(
+        params.get("min_pivot_distance_candles", 5)
+    )
+    swing_max_pivot_distance_candles = int(
+        params.get("max_pivot_distance_candles", 15)
+    )
     swing_ema_cross_window_candles = int(params.get("ema_cross_window_candles", 15))
     swing_ema_exit_enabled = bool(params.get("ema_exit_enabled", True))
     swing_ema_exit_period = int(params.get("ema_exit_period", 21))
@@ -625,29 +639,90 @@ def main():
                     )
                     timeframe_relation_valid = False
                 st.markdown("**ZigZag và bộ lọc cấu trúc**")
+                detector_options = {
+                    "SwingTrendLineTD / Fractal": "swing_trend_line_td",
+                    "Confirmed ZigZag": "zigzag",
+                }
+                detector_values = list(detector_options.values())
+                detector_label = st.selectbox(
+                    "Pivot Detector",
+                    options=list(detector_options),
+                    index=(
+                        detector_values.index(swing_pivot_detector)
+                        if swing_pivot_detector in detector_values
+                        else 0
+                    ),
+                    key="backtest_swing_pivot_detector",
+                    help=(
+                        "Chọn cơ chế xác định Đỉnh/Đáy cho strategy. "
+                        "Mỗi detector có bộ parameter riêng."
+                    ),
+                )
+                swing_pivot_detector = detector_options[detector_label]
+                if swing_pivot_detector == "swing_trend_line_td":
+                    swing_detector_cols = st.columns(3)
+                    swing_fractal_strength = swing_detector_cols[0].number_input(
+                        "Fractal Strength (nến mỗi bên)",
+                        min_value=1,
+                        max_value=100,
+                        value=swing_fractal_strength,
+                        key="backtest_swing_fractal_strength",
+                        help=(
+                            "Số nến mỗi bên dùng để xác nhận một Fractal "
+                            "High/Low. Mặc định 2."
+                        ),
+                    )
+                    swing_breakout_enabled = swing_detector_cols[1].checkbox(
+                        "Dùng Breakout làm điều kiện vào lệnh",
+                        value=swing_breakout_enabled,
+                        key="backtest_swing_breakout_enabled",
+                        help=(
+                            "Nếu bật, phải có Breakout đúng hướng thì setup "
+                            "mới được phép đặt Stop Order."
+                        ),
+                    )
+                    swing_breakout_by_close = swing_detector_cols[2].checkbox(
+                        "Xác nhận Breakout bằng Close",
+                        value=swing_breakout_by_close,
+                        key="backtest_swing_breakout_by_close",
+                        help=(
+                            "Tắt: dùng High/Low phá mức. Bật: dùng giá Close "
+                            "đóng vượt mức Fractal."
+                        ),
+                    )
                 swing_cols = st.columns(3)
-                swing_zigzag_depth = swing_cols[0].number_input(
+                if swing_pivot_detector == "zigzag":
+                    swing_zigzag_depth = swing_cols[0].number_input(
                     "Độ sâu (Depth)",
                     min_value=1,
                     max_value=100,
                     value=swing_zigzag_depth,
                     key="backtest_swing_zigzag_depth",
-                )
-                swing_zigzag_deviation_points = swing_cols[1].number_input(
+                    help=(
+                        "Số nến dùng để so sánh mỗi bên của pivot. "
+                        "Depth = 2 nghĩa là 2 nến bên trái và 2 nến bên phải."
+                    ),
+                    )
+                    swing_zigzag_deviation_points = swing_cols[1].number_input(
                     "Độ lệch (Deviation, point)",
                     min_value=0.0,
                     max_value=100000.0,
                     value=swing_zigzag_deviation_points,
                     step=0.5,
                     key="backtest_swing_zigzag_deviation",
-                )
-                swing_zigzag_back_step = swing_cols[2].number_input(
+                    help="Mức chênh lệch giá tối thiểu để phân biệt hai pivot.",
+                    )
+                    swing_zigzag_back_step = swing_cols[2].number_input(
                     "Khoảng lùi (Back Step)",
                     min_value=0,
                     max_value=100,
                     value=swing_zigzag_back_step,
                     key="backtest_swing_zigzag_back_step",
-                )
+                    help=(
+                        "Khoảng cách tối thiểu giữa các pivot cùng loại "
+                        "trước khi ZigZag nhận pivot mới."
+                    ),
+                    )
                 swing_cols = st.columns(3)
                 swing_min_structure_candles = swing_cols[0].number_input(
                     "Cấu trúc tối thiểu (nến)",
@@ -655,6 +730,7 @@ def main():
                     max_value=1000,
                     value=swing_min_structure_candles,
                     key="backtest_swing_min_structure",
+                    help="Số nến tối thiểu từ pivot đầu đến pivot cuối của cấu trúc.",
                 )
                 swing_max_structure_candles = swing_cols[1].number_input(
                     "Cấu trúc tối đa (nến)",
@@ -662,6 +738,7 @@ def main():
                     max_value=2000,
                     value=max(swing_max_structure_candles, swing_min_structure_candles),
                     key="backtest_swing_max_structure",
+                    help="Số nến tối đa từ pivot đầu đến pivot cuối của cấu trúc.",
                 )
                 swing_ema_cross_window_candles = swing_cols[2].number_input(
                     "Tuổi giao cắt EMA (nến)",
@@ -670,7 +747,37 @@ def main():
                     value=swing_ema_cross_window_candles,
                     key="backtest_swing_cross_window",
                     disabled=not swing_ema_consensus_enabled,
+                    help="Số nến tối đa từ lúc EMA ngắn cắt EMA trung đến nến tín hiệu.",
                 )
+                pivot_distance_cols = st.columns(2)
+                swing_min_pivot_distance_candles = pivot_distance_cols[0].number_input(
+                    "Khoảng cách 2 Đáy/Đỉnh tối thiểu (nến)",
+                    min_value=1,
+                    max_value=1000,
+                    value=swing_min_pivot_distance_candles,
+                    key="backtest_swing_min_pivot_distance",
+                    help=(
+                        "Số nến tối thiểu giữa Đáy 1 và Đáy 2 (BUY), "
+                        "hoặc giữa Đỉnh 1 và Đỉnh 2 (SELL)."
+                    ),
+                )
+                swing_max_pivot_distance_candles = pivot_distance_cols[1].number_input(
+                    "Khoảng cách 2 Đáy/Đỉnh tối đa (nến)",
+                    min_value=swing_min_pivot_distance_candles,
+                    max_value=2000,
+                    value=max(
+                        swing_max_pivot_distance_candles,
+                        swing_min_pivot_distance_candles,
+                    ),
+                    key="backtest_swing_max_pivot_distance",
+                    help=(
+                        "Số nến tối đa giữa Đáy 1 và Đáy 2 (BUY), "
+                        "hoặc giữa Đỉnh 1 và Đỉnh 2 (SELL)."
+                    ),
+                )
+                if swing_max_pivot_distance_candles < swing_min_pivot_distance_candles:
+                    st.error("Khoảng cách tối đa phải >= khoảng cách tối thiểu.")
+                    timeframe_relation_valid = False
                 ema_period = swing_ema_periods["medium"]
                 h2_exceed_pips = c2_gap_pips = ema_margin_pips = 0.0
                 ema_filter_enabled = True
@@ -1465,11 +1572,21 @@ def main():
                     higher_ema_fallback_enabled=bool(higher_ema_fallback_enabled),
                     current_timeframe_filter_enabled=bool(current_timeframe_filter_enabled),
                     swing_ema_periods=swing_ema_periods,
+                    swing_pivot_detector=swing_pivot_detector,
+                    swing_fractal_strength=int(swing_fractal_strength),
+                    swing_breakout_enabled=bool(swing_breakout_enabled),
+                    swing_breakout_by_close=bool(swing_breakout_by_close),
                     swing_zigzag_depth=int(swing_zigzag_depth),
                     swing_zigzag_deviation_points=float(swing_zigzag_deviation_points),
                     swing_zigzag_back_step=int(swing_zigzag_back_step),
                     swing_min_structure_candles=int(swing_min_structure_candles),
                     swing_max_structure_candles=int(swing_max_structure_candles),
+                    swing_min_pivot_distance_candles=int(
+                        swing_min_pivot_distance_candles
+                    ),
+                    swing_max_pivot_distance_candles=int(
+                        swing_max_pivot_distance_candles
+                    ),
                     swing_ema_cross_window_candles=int(swing_ema_cross_window_candles),
                     swing_ema_exit_enabled=bool(swing_ema_exit_enabled),
                     swing_ema_exit_period=int(swing_ema_exit_period),
@@ -1510,6 +1627,10 @@ def main():
                 'entry_body_percent': flappy_entry_body_percent,
                 'rr_ratio': rr_ratio,
                 'swing_ema_periods': dict(swing_ema_periods),
+                'swing_pivot_detector': swing_pivot_detector,
+                'swing_fractal_strength': int(swing_fractal_strength),
+                'swing_breakout_enabled': bool(swing_breakout_enabled),
+                'swing_breakout_by_close': bool(swing_breakout_by_close),
                 'swing_fallback_ema_periods': dict(swing_fallback_ema_periods),
                 'swing_use_pivot2_for_buy': bool(swing_use_pivot2_for_buy),
                 'swing_use_pivot2_for_sell': bool(swing_use_pivot2_for_sell),
@@ -1524,6 +1645,12 @@ def main():
                 'swing_zigzag_back_step': int(swing_zigzag_back_step),
                 'swing_min_structure_candles': int(swing_min_structure_candles),
                 'swing_max_structure_candles': int(swing_max_structure_candles),
+                'swing_min_pivot_distance_candles': int(
+                    swing_min_pivot_distance_candles
+                ),
+                'swing_max_pivot_distance_candles': int(
+                    swing_max_pivot_distance_candles
+                ),
                 'swing_ema_cross_window_candles': int(swing_ema_cross_window_candles),
                 'swing_ema_exit_enabled': bool(swing_ema_exit_enabled),
                 'swing_ema_exit_period': int(swing_ema_exit_period),
@@ -1790,7 +1917,14 @@ def display_results(
                 higher_consensus_enabled=config.get("higher_ema_consensus_enabled"),
                 higher_fallback_enabled=config.get("higher_ema_fallback_enabled"),
                 swing_ema_periods=config.get("swing_ema_periods"),
-                swing_zigzag_depth=config.get("swing_zigzag_depth", 3),
+                swing_pivot_detector=config.get(
+                    "swing_pivot_detector",
+                    config.get("pivot_detector", "zigzag"),
+                ),
+                swing_fractal_strength=config.get("swing_fractal_strength", 2),
+                swing_breakout_enabled=config.get("swing_breakout_enabled", True),
+                swing_breakout_by_close=config.get("swing_breakout_by_close", False),
+                swing_zigzag_depth=config.get("swing_zigzag_depth", 2),
                 swing_zigzag_deviation_points=config.get(
                     "swing_zigzag_deviation_points", 3.0
                 ),
@@ -1894,7 +2028,11 @@ def show_interactive_chart(
     higher_consensus_enabled: bool | None = None,
     higher_fallback_enabled: bool | None = None,
     swing_ema_periods: dict[str, int] | None = None,
-    swing_zigzag_depth: int = 3,
+    swing_pivot_detector: str = "zigzag",
+    swing_fractal_strength: int = 2,
+    swing_breakout_enabled: bool = True,
+    swing_breakout_by_close: bool = False,
+    swing_zigzag_depth: int = 2,
     swing_zigzag_deviation_points: float = 3.0,
     swing_zigzag_back_step: int = 3,
 ):
@@ -1948,6 +2086,10 @@ def show_interactive_chart(
     show_swing_ema = {slot: True for slot in ("fast", "medium", "slow")}
     show_swing_zigzag = True
     show_swing_pivots = True
+    show_swing_trend_lines = True
+    show_swing_breakouts = True
+    swing_trend_lines = []
+    swing_breakout_events = []
     if is_swing_chart:
         from src.swing_ema_strategy import build_swing_chart_overlays
 
@@ -1959,6 +2101,18 @@ def show_interactive_chart(
             zigzag_deviation_points=float(swing_zigzag_deviation_points),
             zigzag_back_step=int(swing_zigzag_back_step),
         )
+        if swing_pivot_detector == "swing_trend_line_td":
+            from src.pivot_detectors import precompute_swing_trend_data
+
+            (
+                swing_pivots,
+                swing_trend_lines,
+                swing_breakout_events,
+            ) = precompute_swing_trend_data(
+                chart_source,
+                strength=int(swing_fractal_strength),
+                breakout_by_close=bool(swing_breakout_by_close),
+            )
 
     # Show only the EMA group matching the selected trade and chart timeframe.
     canonical_flappy_ema_cols = [
@@ -1971,10 +2125,18 @@ def show_interactive_chart(
     ]
     ema_cols = []
     if is_swing_chart:
-        with st.expander("Swing EMA + ZigZag", expanded=False):
+        with st.expander(
+            "Swing EMA + "
+            + (
+                "SwingTrendLineTD"
+                if swing_pivot_detector == "swing_trend_line_td"
+                else "ZigZag"
+            ),
+            expanded=False,
+        ):
             st.caption(
-                "EMA: xanh ngọc / vàng cam / tím. ZigZag: đường xám; "
-                "đỉnh vàng, đáy hồng. Bỏ chọn lớp không cần xem."
+                "EMA: xanh ngọc / vàng cam / tím. Pivot: đỉnh vàng, đáy hồng. "
+                "Bỏ chọn lớp không cần xem."
             )
             swing_ema_cols = st.columns(3)
             for column, slot, label in zip(
@@ -1988,16 +2150,31 @@ def show_interactive_chart(
                     key=f"ind_swing_ema_{slot}",
                 )
             swing_overlay_cols = st.columns(2)
-            show_swing_zigzag = swing_overlay_cols[0].checkbox(
-                "Đường ZigZag",
-                value=True,
-                key="ind_swing_zigzag_line",
-            )
+            if swing_pivot_detector == "zigzag":
+                show_swing_zigzag = swing_overlay_cols[0].checkbox(
+                    "Đường ZigZag",
+                    value=True,
+                    key="ind_swing_zigzag_line",
+                )
             show_swing_pivots = swing_overlay_cols[1].checkbox(
                 "Dấu Đỉnh/Đáy",
                 value=True,
                 key="ind_swing_zigzag_pivots",
             )
+            if swing_pivot_detector == "swing_trend_line_td":
+                trend_overlay_cols = st.columns(2)
+                show_swing_trend_lines = trend_overlay_cols[0].checkbox(
+                    "Đường SwingTrend",
+                    value=True,
+                    key="ind_swing_trend_lines",
+                    help="Hiển thị các đoạn Lower High/Higher Low của Fractal.",
+                )
+                show_swing_breakouts = trend_overlay_cols[1].checkbox(
+                    "Dấu Breakout",
+                    value=True,
+                    key="ind_swing_breakouts",
+                    help="Hiển thị nến phá mức Fractal gần nhất.",
+                )
     elif use_higher_timeframe_chart:
         higher_prefix = f"ema_higher_{selected_mode}_"
         ema_cols = [
@@ -2081,6 +2258,10 @@ def show_interactive_chart(
     else:
         entry_positions = chart_source["time_naive"].searchsorted(trade_dt, side="right") - 1
         entry_idx = min(max(int(entry_positions), 0), len(chart_source) - 1)
+    if is_swing_chart:
+        recorded_entry_idx = trade.get("_entry_pos")
+        if isinstance(recorded_entry_idx, int) and 0 <= recorded_entry_idx < len(chart_source):
+            entry_idx = recorded_entry_idx
 
     # Get data range around Entry while preserving the full trade and forward context.
     start_idx = max(0, entry_idx - int(chart_lookback_candles))
@@ -2163,7 +2344,11 @@ def show_interactive_chart(
                 and pivot["confirmed_index"] < end_idx
             )
         ]
-        if show_swing_zigzag and visible_pivots:
+        if (
+            swing_pivot_detector == "zigzag"
+            and show_swing_zigzag
+            and visible_pivots
+        ):
             fig.add_trace(go.Scatter(
                 x=[chart_source.iloc[pivot["index"]]["time"] for pivot in visible_pivots],
                 y=[pivot["price"] for pivot in visible_pivots],
@@ -2172,6 +2357,94 @@ def show_interactive_chart(
                 name="ZigZag",
                 hoverinfo="skip",
             ))
+        if (
+            swing_pivot_detector == "swing_trend_line_td"
+            and show_swing_trend_lines
+            and swing_trend_lines
+        ):
+            visible_lines = [
+                line for line in swing_trend_lines
+                if (
+                    start_idx <= line["start_index"] < end_idx
+                    or start_idx <= line["end_index"] < end_idx
+                )
+            ]
+            if visible_lines:
+                line_x = []
+                line_y = []
+                for line in visible_lines:
+                    start = max(start_idx, int(line["start_index"]))
+                    end = min(end_idx - 1, int(line["end_index"]))
+                    if start > end:
+                        continue
+                    start_price = float(line["start_price"])
+                    end_price = float(line["end_price"])
+                    span = int(line["end_index"]) - int(line["start_index"])
+                    ratio_start = (
+                        (start - int(line["start_index"])) / span
+                        if span
+                        else 0.0
+                    )
+                    ratio_end = (
+                        (end - int(line["start_index"])) / span
+                        if span
+                        else 1.0
+                    )
+                    line_x.extend([
+                        chart_source.iloc[start]["time"],
+                        chart_source.iloc[end]["time"],
+                        None,
+                    ])
+                    line_y.extend([
+                        start_price + (end_price - start_price) * ratio_start,
+                        start_price + (end_price - start_price) * ratio_end,
+                        None,
+                    ])
+                fig.add_trace(go.Scatter(
+                    x=line_x,
+                    y=line_y,
+                    mode="lines",
+                    line=dict(color="#0EA5E9", width=1.4),
+                    name="SwingTrend lines",
+                    hoverinfo="skip",
+                ))
+        if (
+            swing_pivot_detector == "swing_trend_line_td"
+            and show_swing_breakouts
+            and swing_breakout_events
+        ):
+            visible_breakouts = [
+                event for event in swing_breakout_events
+                if start_idx <= int(event["index"]) < end_idx
+            ]
+            if visible_breakouts:
+                fig.add_trace(go.Scatter(
+                    x=[
+                        chart_source.iloc[int(event["index"])]["time"]
+                        for event in visible_breakouts
+                    ],
+                    y=[
+                        float(event["price"])
+                        for event in visible_breakouts
+                    ],
+                    mode="markers+text",
+                    marker=dict(
+                        symbol="x",
+                        size=11,
+                        color=[
+                            "#16A34A" if event["direction"] == "BUY" else "#DC2626"
+                            for event in visible_breakouts
+                        ],
+                        line=dict(color="#0F172A", width=0.8),
+                    ),
+                    text=["BO BUY" if event["direction"] == "BUY" else "BO SELL"
+                          for event in visible_breakouts],
+                    textposition="top center",
+                    name="Fractal Breakout",
+                    hovertemplate=(
+                        "%{text}<br>%{x}<br>Mức: %{y:.5f}<extra></extra>"
+                    ),
+                ))
         if show_swing_pivots and visible_pivots:
             fig.add_trace(go.Scatter(
                 x=[chart_source.iloc[pivot["index"]]["time"] for pivot in visible_pivots],
@@ -2206,6 +2479,47 @@ def show_interactive_chart(
                 ),
                 name="Swing pivots",
             ))
+        signal = trade.get("_signal")
+        if isinstance(signal, dict):
+            from src.swing_ema_strategy import get_swing_setup_pivots
+
+            pivot_styles = {
+                "Đáy 1": ("#EC4899", "circle", "bottom center"),
+                "Đỉnh 1": ("#EAB308", "square", "top center"),
+                "Đáy 2": ("#BE185D", "diamond", "bottom center"),
+                "Đỉnh 2": ("#B45309", "diamond", "top center"),
+            }
+            for pivot in get_swing_setup_pivots(signal):
+                pivot_idx = pivot.get("index")
+                style = pivot_styles.get(pivot.get("label"))
+                if (
+                    not style
+                    or not isinstance(pivot_idx, int)
+                    or not start_idx <= pivot_idx < end_idx
+                    or pivot_idx >= len(chart_source)
+                ):
+                    continue
+                color, marker_symbol, text_position = style
+                pivot_time = chart_source.iloc[pivot_idx]["time"]
+                fig.add_trace(go.Scatter(
+                    x=[pivot_time],
+                    y=[float(pivot["price"])],
+                    mode="markers+text",
+                    marker=dict(
+                        symbol=marker_symbol,
+                        size=13,
+                        color=color,
+                        line=dict(color="#0F172A", width=1),
+                    ),
+                    text=[pivot["label"]],
+                    textposition=text_position,
+                    textfont=dict(color=color, size=12),
+                    name=pivot["label"],
+                    hovertemplate=(
+                        f"{pivot['label']}<br>%{{x}}<br>"
+                        "Giá: %{y:.5f}<extra></extra>"
+                    ),
+                ))
     else:
         for col_name, enabled in show_ema.items():
             if enabled and col_name in chart_data.columns:
@@ -2246,6 +2560,41 @@ def show_interactive_chart(
             legendgroup="entry"
         )
     )
+
+    signal = trade.get("_signal")
+    if is_swing_chart and isinstance(signal, dict):
+        signal_idx = signal.get("signal_candle_index")
+        if (
+            isinstance(signal_idx, int)
+            and 0 <= signal_idx < len(chart_source)
+            and start_idx <= signal_idx < end_idx
+        ):
+            signal_row = chart_source.iloc[signal_idx]
+            signal_time = signal_row["time"]
+            signal_price = (
+                float(signal_row["high"])
+                if trade["direction"] == "BUY"
+                else float(signal_row["low"])
+            )
+            fig.add_trace(go.Scatter(
+                x=[signal_time],
+                y=[signal_price],
+                mode="markers+text",
+                marker=dict(
+                    symbol="star",
+                    size=14,
+                    color="#2563EB",
+                    line=dict(color="white", width=1),
+                ),
+                text=["Nến BO (tạo tín hiệu)"],
+                textposition="top center" if trade["direction"] == "BUY" else "bottom center",
+                textfont=dict(color="#2563EB", size=11),
+                name="Nến BO (tạo tín hiệu)",
+                hovertemplate=(
+                    "Nến BO (tạo tín hiệu)<br>%{x}<br>"
+                    "%{y:.5f}<extra></extra>"
+                ),
+            ))
 
     # Entry price line (toggleable)
     fig.add_trace(
@@ -2342,6 +2691,12 @@ def show_interactive_chart(
     st.caption(
         "Kéo để dịch chuyển biểu đồ · cuộn con lăn để zoom · nhấp đúp để khôi phục."
     )
+    if is_swing_chart:
+        st.caption(
+            "Đỉnh/Đáy 1–2 đánh dấu cấu trúc setup. "
+            "Nến BO (tạo tín hiệu) là nến đóng khi setup được xác nhận và đặt Stop Order; "
+            "Entry (BUY/SELL) là nến chạm mức Stop Order để khớp lệnh."
+        )
     st.plotly_chart(
         fig,
         width="stretch",

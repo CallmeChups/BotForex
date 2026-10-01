@@ -18,6 +18,10 @@ def swing_backtest_widget_values(config: Mapping[str, Any]) -> dict[str, Any]:
             })
 
     scalar_keys = {
+        "swing_pivot_detector": "backtest_swing_pivot_detector",
+        "swing_fractal_strength": "backtest_swing_fractal_strength",
+        "swing_breakout_enabled": "backtest_swing_breakout_enabled",
+        "swing_breakout_by_close": "backtest_swing_breakout_by_close",
         "swing_use_pivot2_for_buy": "backtest_swing_pivot2_buy",
         "swing_use_pivot2_for_sell": "backtest_swing_pivot2_sell",
         "swing_ema_consensus_enabled": "backtest_swing_ema_consensus_enabled",
@@ -27,6 +31,8 @@ def swing_backtest_widget_values(config: Mapping[str, Any]) -> dict[str, Any]:
         "swing_zigzag_back_step": "backtest_swing_zigzag_back_step",
         "swing_min_structure_candles": "backtest_swing_min_structure",
         "swing_max_structure_candles": "backtest_swing_max_structure",
+        "swing_min_pivot_distance_candles": "backtest_swing_min_pivot_distance",
+        "swing_max_pivot_distance_candles": "backtest_swing_max_pivot_distance",
         "swing_ema_cross_window_candles": "backtest_swing_cross_window",
         "swing_entry_buffer_pips": "backtest_swing_entry_buffer",
         "swing_sl_buffer_pips": "backtest_swing_sl_buffer",

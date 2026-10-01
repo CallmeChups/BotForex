@@ -482,11 +482,23 @@ def show_create_bot():
     swing_use_pivot2_for_sell = bool(params.get("use_pivot2_for_sell", True))
     swing_ema_consensus_enabled = bool(params.get("ema_consensus_enabled", True))
     swing_ema_fallback_enabled = bool(params.get("ema_fallback_enabled", False))
-    swing_zigzag_depth = int(params.get("zigzag_depth", 3))
+    swing_zigzag_depth = int(params.get("zigzag_depth", 2))
     swing_zigzag_deviation_points = float(params.get("zigzag_deviation_points", 3.0))
     swing_zigzag_back_step = int(params.get("zigzag_back_step", 3))
+    swing_pivot_detector = str(
+        params.get("pivot_detector", "zigzag")
+    )
+    swing_fractal_strength = int(params.get("fractal_strength", 2))
+    swing_breakout_enabled = bool(params.get("breakout_enabled", True))
+    swing_breakout_by_close = bool(params.get("breakout_by_close", False))
     swing_min_structure_candles = int(params.get("min_structure_candles", 10))
     swing_max_structure_candles = int(params.get("max_structure_candles", 20))
+    swing_min_pivot_distance_candles = int(
+        params.get("min_pivot_distance_candles", 5)
+    )
+    swing_max_pivot_distance_candles = int(
+        params.get("max_pivot_distance_candles", 15)
+    )
     swing_ema_cross_window_candles = int(params.get("ema_cross_window_candles", 15))
     swing_ema_exit_enabled = bool(params.get("ema_exit_enabled", True))
     swing_ema_exit_period = int(params.get("ema_exit_period", 21))
@@ -559,6 +571,28 @@ def show_create_bot():
                             swing_fallback_ema_periods,
                         )
                         _map.update({
+                            f"{sk}_swing_pivot_detector": _cfg.get(
+                                "swing_pivot_detector",
+                                _cfg.get("pivot_detector", swing_pivot_detector),
+                            ),
+                            f"{sk}_swing_fractal_strength": int(
+                                _cfg.get(
+                                    "swing_fractal_strength",
+                                    _cfg.get("fractal_strength", swing_fractal_strength),
+                                )
+                            ),
+                            f"{sk}_swing_breakout_enabled": bool(
+                                _cfg.get(
+                                    "swing_breakout_enabled",
+                                    _cfg.get("breakout_enabled", swing_breakout_enabled),
+                                )
+                            ),
+                            f"{sk}_swing_breakout_by_close": bool(
+                                _cfg.get(
+                                    "swing_breakout_by_close",
+                                    _cfg.get("breakout_by_close", swing_breakout_by_close),
+                                )
+                            ),
                             f"{sk}_swing_ema_fast": int(_swing_emas["fast"]),
                             f"{sk}_swing_ema_medium": int(_swing_emas["medium"]),
                             f"{sk}_swing_ema_slow": int(_swing_emas["slow"]),
@@ -617,6 +651,18 @@ def show_create_bot():
                                 _cfg.get(
                                     "swing_max_structure_candles",
                                     swing_max_structure_candles,
+                                )
+                            ),
+                            f"{sk}_swing_min_pivot_distance": int(
+                                _cfg.get(
+                                    "swing_min_pivot_distance_candles",
+                                    swing_min_pivot_distance_candles,
+                                )
+                            ),
+                            f"{sk}_swing_max_pivot_distance": int(
+                                _cfg.get(
+                                    "swing_max_pivot_distance_candles",
+                                    swing_max_pivot_distance_candles,
                                 )
                             ),
                             f"{sk}_swing_ema_cross_window": int(
@@ -963,39 +1009,130 @@ def show_create_bot():
                 st.error("EMA fallback cần thỏa thứ tự: ngắn hạn < trung hạn < dài hạn.")
                 timeframe_relation_valid = False
 
+            detector_options = {
+                "SwingTrendLineTD / Fractal": "swing_trend_line_td",
+                "Confirmed ZigZag": "zigzag",
+            }
+            detector_values = list(detector_options.values())
+            detector_label = st.selectbox(
+                "Pivot Detector",
+                options=list(detector_options),
+                index=(
+                    detector_values.index(swing_pivot_detector)
+                    if swing_pivot_detector in detector_values
+                    else 0
+                ),
+                key=f"{sk}_swing_pivot_detector",
+                help=(
+                    "Chọn cơ chế xác định Đỉnh/Đáy cho strategy. "
+                    "Mỗi detector có bộ parameter riêng."
+                ),
+            )
+            swing_pivot_detector = detector_options[detector_label]
+            if swing_pivot_detector == "swing_trend_line_td":
+                detector_cols = st.columns(3)
+                swing_fractal_strength = detector_cols[0].number_input(
+                    "Fractal Strength (nến mỗi bên)",
+                    min_value=1,
+                    max_value=100,
+                    value=swing_fractal_strength,
+                    key=f"{sk}_swing_fractal_strength",
+                    help=(
+                        "Số nến mỗi bên dùng để xác nhận một Fractal "
+                        "High/Low. Mặc định 2."
+                    ),
+                )
+                swing_breakout_enabled = detector_cols[1].checkbox(
+                    "Dùng Breakout làm điều kiện vào lệnh",
+                    value=swing_breakout_enabled,
+                    key=f"{sk}_swing_breakout_enabled",
+                    help=(
+                        "Nếu bật, phải có Breakout đúng hướng thì setup "
+                        "mới được phép đặt Stop Order."
+                    ),
+                )
+                swing_breakout_by_close = detector_cols[2].checkbox(
+                    "Xác nhận Breakout bằng Close",
+                    value=swing_breakout_by_close,
+                    key=f"{sk}_swing_breakout_by_close",
+                    help=(
+                        "Tắt: dùng High/Low phá mức. Bật: dùng giá Close "
+                        "đóng vượt mức Fractal."
+                    ),
+                )
+
             cols = st.columns(3)
-            swing_zigzag_depth = cols[0].number_input(
+            if swing_pivot_detector == "zigzag":
+                swing_zigzag_depth = cols[0].number_input(
                 "ZigZag — Độ sâu (Depth)",
                 min_value=1, max_value=100, value=swing_zigzag_depth,
                 key=f"{sk}_swing_zigzag_depth",
-            )
-            swing_zigzag_deviation_points = cols[1].number_input(
+                help=(
+                    "Số nến dùng để so sánh mỗi bên của pivot. "
+                    "Depth = 2 nghĩa là 2 nến bên trái và 2 nến bên phải."
+                ),
+                )
+                swing_zigzag_deviation_points = cols[1].number_input(
                 "ZigZag — Độ lệch (Deviation, points)",
                 min_value=0.0, max_value=10000.0, value=swing_zigzag_deviation_points,
                 key=f"{sk}_swing_zigzag_deviation",
-            )
-            swing_zigzag_back_step = cols[2].number_input(
+                help="Mức chênh lệch giá tối thiểu để phân biệt hai pivot.",
+                )
+                swing_zigzag_back_step = cols[2].number_input(
                 "ZigZag — Khoảng lùi (Back Step)",
                 min_value=1, max_value=100, value=swing_zigzag_back_step,
                 key=f"{sk}_swing_zigzag_back_step",
-            )
+                help=(
+                    "Khoảng cách tối thiểu giữa các pivot cùng loại "
+                    "trước khi ZigZag nhận pivot mới."
+                ),
+                )
 
             cols = st.columns(3)
             swing_min_structure_candles = cols[0].number_input(
                 "Tuổi cấu trúc tối thiểu (nến)",
                 min_value=1, max_value=500, value=swing_min_structure_candles,
                 key=f"{sk}_swing_min_structure",
+                help="Số nến tối thiểu từ pivot đầu đến pivot cuối của cấu trúc.",
             )
             swing_max_structure_candles = cols[1].number_input(
                 "Tuổi cấu trúc tối đa (nến)",
                 min_value=1, max_value=1000, value=swing_max_structure_candles,
                 key=f"{sk}_swing_max_structure",
+                help="Số nến tối đa từ pivot đầu đến pivot cuối của cấu trúc.",
             )
             swing_ema_cross_window_candles = cols[2].number_input(
                 "Giới hạn từ giao cắt EMA (nến)",
                 min_value=1, max_value=1000, value=swing_ema_cross_window_candles,
                 key=f"{sk}_swing_ema_cross_window",
                 disabled=not swing_ema_consensus_enabled,
+                help="Số nến tối đa từ lúc EMA ngắn cắt EMA trung đến nến tín hiệu.",
+            )
+            pivot_distance_cols = st.columns(2)
+            swing_min_pivot_distance_candles = pivot_distance_cols[0].number_input(
+                "Khoảng cách 2 Đáy/Đỉnh tối thiểu (nến)",
+                min_value=1,
+                max_value=1000,
+                value=swing_min_pivot_distance_candles,
+                key=f"{sk}_swing_min_pivot_distance",
+                help=(
+                    "Số nến tối thiểu giữa Đáy 1 và Đáy 2 (BUY), "
+                    "hoặc giữa Đỉnh 1 và Đỉnh 2 (SELL)."
+                ),
+            )
+            swing_max_pivot_distance_candles = pivot_distance_cols[1].number_input(
+                "Khoảng cách 2 Đáy/Đỉnh tối đa (nến)",
+                min_value=swing_min_pivot_distance_candles,
+                max_value=2000,
+                value=max(
+                    swing_max_pivot_distance_candles,
+                    swing_min_pivot_distance_candles,
+                ),
+                key=f"{sk}_swing_max_pivot_distance",
+                help=(
+                    "Số nến tối đa giữa Đáy 1 và Đáy 2 (BUY), "
+                    "hoặc giữa Đỉnh 1 và Đỉnh 2 (SELL)."
+                ),
             )
             if swing_max_structure_candles < swing_min_structure_candles:
                 st.error("Tuổi cấu trúc tối đa phải >= tối thiểu.")
@@ -1683,6 +1820,18 @@ def show_create_bot():
                     ema_long_period=(
                         int(swing_ema_periods["slow"]) if is_swing_ema else None
                     ),
+                    pivot_detector=(
+                        swing_pivot_detector if is_swing_ema else None
+                    ),
+                    fractal_strength=(
+                        int(swing_fractal_strength) if is_swing_ema else None
+                    ),
+                    breakout_enabled=(
+                        bool(swing_breakout_enabled) if is_swing_ema else None
+                    ),
+                    breakout_by_close=(
+                        bool(swing_breakout_by_close) if is_swing_ema else None
+                    ),
                     zigzag_depth=(
                         int(swing_zigzag_depth) if is_swing_ema else None
                     ),
@@ -1697,6 +1846,14 @@ def show_create_bot():
                     ),
                     max_structure_candles=(
                         int(swing_max_structure_candles) if is_swing_ema else None
+                    ),
+                    min_pivot_distance_candles=(
+                        int(swing_min_pivot_distance_candles)
+                        if is_swing_ema else None
+                    ),
+                    max_pivot_distance_candles=(
+                        int(swing_max_pivot_distance_candles)
+                        if is_swing_ema else None
                     ),
                     ema_cross_window_candles=(
                         int(swing_ema_cross_window_candles) if is_swing_ema else None

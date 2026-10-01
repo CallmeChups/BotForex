@@ -131,6 +131,19 @@ def get_args():
                         help="Swing EMA medium period override")
     parser.add_argument("--ema_long_period", type=int, default=None,
                         help="Swing EMA slow period override")
+    parser.add_argument(
+        "--pivot_detector",
+        type=str,
+        choices=("zigzag", "swing_trend_line_td"),
+        default=None,
+        help="Swing pivot detector override",
+    )
+    parser.add_argument("--fractal_strength", type=int, default=None,
+                        help="SwingTrendLineTD fractal strength override")
+    parser.add_argument("--breakout_enabled", type=int, default=None,
+                        help="SwingTrendLineTD breakout filter: 1=enabled, 0=disabled")
+    parser.add_argument("--breakout_by_close", type=int, default=None,
+                        help="SwingTrendLineTD breakout confirmation: 1=Close, 0=High/Low")
     parser.add_argument("--zigzag_depth", type=int, default=None,
                         help="Swing zigzag depth override")
     parser.add_argument("--zigzag_deviation_points", type=float, default=None,
@@ -141,6 +154,10 @@ def get_args():
                         help="Minimum candles spanned by latest swing structure")
     parser.add_argument("--max_structure_candles", type=int, default=None,
                         help="Maximum candles spanned by latest swing structure")
+    parser.add_argument("--min_pivot_distance_candles", type=int, default=None,
+                        help="Minimum candles between the two swing lows/highs")
+    parser.add_argument("--max_pivot_distance_candles", type=int, default=None,
+                        help="Maximum candles between the two swing lows/highs")
     parser.add_argument("--ema_cross_window_candles", type=int, default=None,
                         help="Maximum candles since fast/medium EMA cross")
     parser.add_argument("--ema_exit_enabled", type=int, default=None,
@@ -843,11 +860,17 @@ def swing_ema_zigzag_entry_decision(
     ema_consensus_enabled: bool = True,
     ema_fallback_enabled: bool = False,
     fallback_ema_periods: dict[str, int] | None = None,
+    min_pivot_distance_candles: int = 5,
+    max_pivot_distance_candles: int = 15,
+    pivot_detector: str = "zigzag",
+    fractal_strength: int = 2,
+    breakout_enabled: bool = True,
+    breakout_by_close: bool = False,
 ):
     """Build a swing EMA zigzag stop-order signal from recent closed candles."""
     from src.swing_ema_strategy import build_swing_ema_entry_signal
 
-    return build_swing_ema_entry_signal(
+    build_kwargs = dict(
         data=df,
         symbol_point_size=get_pip_value(symbol),
         ema_periods=ema_periods,
@@ -856,6 +879,8 @@ def swing_ema_zigzag_entry_decision(
         zigzag_back_step=zigzag_back_step,
         min_structure_candles=min_structure_candles,
         max_structure_candles=max_structure_candles,
+        min_pivot_distance_candles=min_pivot_distance_candles,
+        max_pivot_distance_candles=max_pivot_distance_candles,
         ema_cross_window_candles=ema_cross_window_candles,
         rr_ratio=rr_ratio,
         pending_expiry_candles=pending_expiry_candles,
@@ -867,6 +892,19 @@ def swing_ema_zigzag_entry_decision(
         ema_fallback_enabled=ema_fallback_enabled,
         fallback_ema_periods=fallback_ema_periods or ema_periods,
     )
+    if (
+        pivot_detector != "zigzag"
+        or fractal_strength != 2
+        or not breakout_enabled
+        or breakout_by_close
+    ):
+        build_kwargs.update(
+            pivot_detector=pivot_detector,
+            fractal_strength=fractal_strength,
+            breakout_enabled=breakout_enabled,
+            breakout_by_close=breakout_by_close,
+        )
+    return build_swing_ema_entry_signal(**build_kwargs)
 
 
 def get_recent_candles(mt5, symbol: str, timeframe_str: str, count: int = 120):
@@ -1271,7 +1309,27 @@ def run_swing_ema_zigzag_bot(
         if args.ema_fallback_enabled is not None
         else bool(params.get("ema_fallback_enabled", False))
     )
-    zigzag_depth = args.zigzag_depth or params.get("zigzag_depth", 3)
+    pivot_detector = (
+        getattr(args, "pivot_detector", None)
+        if getattr(args, "pivot_detector", None) is not None
+        else params.get("pivot_detector", "zigzag")
+    )
+    fractal_strength = (
+        getattr(args, "fractal_strength", None)
+        if getattr(args, "fractal_strength", None) is not None
+        else params.get("fractal_strength", 2)
+    )
+    breakout_enabled = (
+        bool(getattr(args, "breakout_enabled", None))
+        if getattr(args, "breakout_enabled", None) is not None
+        else bool(params.get("breakout_enabled", True))
+    )
+    breakout_by_close = (
+        bool(getattr(args, "breakout_by_close", None))
+        if getattr(args, "breakout_by_close", None) is not None
+        else bool(params.get("breakout_by_close", False))
+    )
+    zigzag_depth = args.zigzag_depth or params.get("zigzag_depth", 2)
     zigzag_deviation_points = (
         args.zigzag_deviation_points
         if args.zigzag_deviation_points is not None
@@ -1291,6 +1349,16 @@ def run_swing_ema_zigzag_bot(
         args.max_structure_candles
         if args.max_structure_candles is not None
         else params.get("max_structure_candles", 20)
+    )
+    min_pivot_distance_candles = (
+        getattr(args, "min_pivot_distance_candles", None)
+        if getattr(args, "min_pivot_distance_candles", None) is not None
+        else params.get("min_pivot_distance_candles", 5)
+    )
+    max_pivot_distance_candles = (
+        getattr(args, "max_pivot_distance_candles", None)
+        if getattr(args, "max_pivot_distance_candles", None) is not None
+        else params.get("max_pivot_distance_candles", 15)
     )
     ema_cross_window_candles = (
         args.ema_cross_window_candles
@@ -1369,6 +1437,9 @@ def run_swing_ema_zigzag_bot(
         ),
         int(ema_exit_period) * 4,
         int(max_structure_candles) + int(zigzag_depth) * 6 + 30,
+        int(fractal_strength) * 2 + 30
+        if pivot_detector == "swing_trend_line_td"
+        else 0,
     )
     sl_buffer_price = sl_buffer_pips * get_pip_value(args.symbol)
     entry_buffer_price = entry_buffer_pips * get_pip_value(args.symbol)
@@ -1384,6 +1455,9 @@ def run_swing_ema_zigzag_bot(
     log(
         "Swing EMA ZigZag params: "
         f"EMA={ema_periods['fast']}/{ema_periods['medium']}/{ema_periods['slow']}, "
+        f"detector={pivot_detector}, fractal_strength={fractal_strength}, "
+        f"breakout={'ON' if breakout_enabled else 'OFF'}"
+        f"({'close' if breakout_by_close else 'wick'}), "
         f"zigzag={zigzag_depth}/{zigzag_deviation_points}/{zigzag_back_step}, "
         f"structure={min_structure_candles}-{max_structure_candles}, "
         f"cross_window={ema_cross_window_candles}, expiry={pending_expiry_candles}, "
@@ -1728,6 +1802,8 @@ def run_swing_ema_zigzag_bot(
                         zigzag_back_step=int(zigzag_back_step),
                         min_structure_candles=int(min_structure_candles),
                         max_structure_candles=int(max_structure_candles),
+                        min_pivot_distance_candles=int(min_pivot_distance_candles),
+                        max_pivot_distance_candles=int(max_pivot_distance_candles),
                         ema_cross_window_candles=int(ema_cross_window_candles),
                         rr_ratio=float(rr_ratio),
                         pending_expiry_candles=int(pending_expiry_candles),
@@ -1738,6 +1814,10 @@ def run_swing_ema_zigzag_bot(
                         ema_consensus_enabled=ema_consensus_enabled,
                         ema_fallback_enabled=ema_fallback_enabled,
                         fallback_ema_periods=fallback_ema_periods,
+                        pivot_detector=pivot_detector,
+                        fractal_strength=int(fractal_strength),
+                        breakout_enabled=breakout_enabled,
+                        breakout_by_close=breakout_by_close,
                     )
                     if (
                         signal

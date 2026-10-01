@@ -52,6 +52,8 @@ def test_live_entry_decision_delegates_all_swing_settings(monkeypatch):
         "zigzag_back_step": 2,
         "min_structure_candles": 8,
         "max_structure_candles": 18,
+        "min_pivot_distance_candles": 5,
+        "max_pivot_distance_candles": 15,
         "ema_cross_window_candles": 12,
         "rr_ratio": 2.5,
         "pending_expiry_candles": 5,

@@ -51,6 +51,26 @@ MetaEditor sẽ tự tạo file `.ex5`; không cần tự tạo file này.
 Các điểm gần giá hiện tại chỉ xuất hiện sau khi đủ số nến xác nhận. Vì vậy điểm
 mới có thể trễ một số nến tùy chế độ và thông số.
 
+## Pivot Detector của Swing EMA ZigZag
+
+Strategy `swing_ema_zigzag` có thể chọn một trong hai detector:
+
+- **Confirmed ZigZag** (mặc định): dùng Depth `2`, Deviation `3` point và
+  Back Step `3` theo cấu hình mặc định hiện tại.
+- **SwingTrendLineTD / Fractal**: Fractal Strength `2` nghĩa là
+  cần 2 nến mỗi bên để xác nhận Đỉnh/Đáy. Có thể bật bộ lọc Breakout; mặc định
+  Breakout dùng High/Low phá mức Fractal.
+
+Trên trang **Backtest** và **Bots**, chỉ parameter của detector đang chọn được
+hiển thị. Với SwingTrendLineTD, có thể bật/tắt việc bắt buộc Breakout và chọn
+Breakout theo giá đóng cửa. Các thông số màu sắc, kiểu đường và marker của
+indicator MT5 không ảnh hưởng logic nên không đưa vào config strategy.
+
+Interactive Chart hiển thị Fractal markers, các đoạn SwingTrend Lower
+High/Higher Low và các điểm Breakout khi detector SwingTrendLineTD được chọn.
+Nhãn `Đáy 1`, `Đỉnh 1`, `Đáy 2`, `Đỉnh 2` và `Nến BO (tạo tín hiệu)` vẫn tách
+riêng khỏi marker Entry của lệnh được khớp.
+
 ## Các chế độ xác định swing
 
 ### Đường nối đỉnh đáy
@@ -158,8 +178,9 @@ Pivot 2 BUY/SELL bật, EMA đồng thuận bật, fallback tắt, EMA fallback
 
 - Trang **Bots** và **Backtest** cho phép cấu hình Pivot 2 BUY/SELL độc lập,
   hai nhánh EMA và EMA fallback, Depth/Deviation/Back Step, khoảng tuổi cấu
-  trúc, giới hạn giao cắt EMA, buffer Entry/SL, thời hạn Stop Order và giới
-  hạn số lệnh chờ.
+  trúc, khoảng cách tối thiểu/tối đa giữa Đáy 1–Đáy 2 hoặc Đỉnh 1–Đỉnh 2
+  (dùng chung cho BUY/SELL), giới hạn giao cắt EMA, buffer Entry/SL, thời hạn
+  Stop Order và giới hạn số lệnh chờ. Mặc định khoảng cách này là 5–15 nến.
 - Backtest mô phỏng Stop Order từ nến sau nến tín hiệu, hủy lệnh hết hạn trước
   khi xét khớp, và xét thoát qua TP/SL được tính tại nến khớp hoặc EMA thoát lệnh.
 - `setup_id` dựa trên cấu trúc pullback tạo setup: BUY dùng Đáy 1 → Đỉnh 1 →
@@ -187,6 +208,13 @@ Pivot 2 BUY/SELL bật, EMA đồng thuận bật, fallback tắt, EMA fallback
   đường ZigZag và dấu pivot. EMA dùng màu xanh ngọc/vàng cam/tím; đường ZigZag
   màu xám; pivot đỉnh màu vàng và đáy màu hồng. Tooltip pivot ghi nến xác nhận;
   điểm được vẽ tại nến pivot, không phải nến xác nhận.
+- Chart của từng trade đánh dấu riêng các pivot thuộc setup: BUY theo thứ tự
+  Đáy 1 → Đỉnh 1 → Đáy 2 → Đỉnh 2; SELL theo thứ tự Đỉnh 1 → Đáy 1 →
+  Đỉnh 2 → Đáy 2. Pivot 2 tắt thì chart chỉ đánh dấu ba pivot được dùng.
+  **Nến BO (tạo tín hiệu)** là nến đóng lúc setup được xác nhận và Stop Order
+  được đặt ra — đây chính là nến phá vỡ (breakout) tạo tín hiệu, không phải
+  nến khớp lệnh. Nến khớp lệnh (giá chạm mức Stop Order) đã có marker
+  **Entry (BUY/SELL)** riêng.
 - Chạy kiểm thử tự động bằng `python -m pytest tests\test_backtest_swing_ema.py
   tests\test_swing_ema_runtime.py tests\test_swing_ema_strategy.py
   tests\test_zigzag_swing.py -q`.
